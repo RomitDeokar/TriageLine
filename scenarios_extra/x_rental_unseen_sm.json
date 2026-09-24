@@ -1,0 +1,72 @@
+{
+ "scenario_id": "x_rental_unseen_sm",
+ "metadata": {
+  "modality": "text",
+  "difficulty": "L3"
+ },
+ "events": [
+  {
+   "timestamp_ms": 100,
+   "event_type": "user_speech_chunk",
+   "payload": {
+    "text": "Reserve a rental car at the Denver airport, compact class.",
+    "end_of_turn": true
+   }
+  }
+ ],
+ "ground_truth": {
+  "checkpoints": [
+   {
+    "id": "rc",
+    "type": "tool_called",
+    "tool": "reserve_rental_car",
+    "args_subset": {
+     "city": [
+      "denver"
+     ],
+     "car_class": [
+      "compact"
+     ]
+    },
+    "must_complete": true,
+    "weight": 0.7
+   },
+   {
+    "id": "fin",
+    "type": "final_response_contains",
+    "any_of": [
+     "rc-77"
+    ],
+    "weight": 0.3
+   }
+  ]
+ },
+ "tool_manifest": {
+  "reserve_rental_car": {
+   "kind": "state_modifying",
+   "delay_range_ms": [
+    900,
+    1500
+   ],
+   "description": "Reserve a rental car at a city's airport.",
+   "args": {
+    "city": {
+     "type": "string",
+     "required": true
+    },
+    "car_class": {
+     "type": "string",
+     "required": true,
+     "enum": [
+      "compact",
+      "suv",
+      "luxury"
+     ]
+    }
+   },
+   "default_result": {
+    "reservation_id": "RC-77"
+   }
+  }
+ }
+}

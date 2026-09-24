@@ -1,0 +1,63 @@
+{
+ "scenario_id": "x_intent_switch",
+ "metadata": {
+  "modality": "text",
+  "difficulty": "L3"
+ },
+ "events": [
+  {
+   "timestamp_ms": 100,
+   "event_type": "user_speech_chunk",
+   "payload": {
+    "text": "Find flights to Austin.",
+    "end_of_turn": true
+   }
+  },
+  {
+   "timestamp_ms": 1400,
+   "event_type": "interruption",
+   "payload": {
+    "text": "Forget the flight, my TV is blinking red, please open a support ticket."
+   }
+  }
+ ],
+ "ground_truth": {
+  "checkpoints": [
+   {
+    "id": "ticket",
+    "type": "tool_called",
+    "tool": "create_support_ticket",
+    "args_subset": {},
+    "must_complete": true,
+    "weight": 0.6
+   },
+   {
+    "id": "final",
+    "type": "final_response_contains",
+    "any_of": [
+     "tk-"
+    ],
+    "weight": 0.4
+   }
+  ],
+  "recovery": {
+   "interrupt_at_ms": 1400,
+   "invalidated_calls": [
+    {
+     "tool": "flight_search",
+     "args_subset": {
+      "destination": [
+       "austin"
+      ]
+     },
+     "invalid_after_ms": 1400
+    }
+   ],
+   "required_state_after_interrupt": {
+    "slots.device_model": [
+     "qn90"
+    ]
+   }
+  }
+ }
+}

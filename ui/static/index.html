@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TriageLine — interruptible agent console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Ccircle cx=%225%22 cy=%225%22 r=%225%22 fill=%22%23c2571a%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>TriageLine</h1>
+      <p>Dual-process interruptible agent · Theme 05 · Samsung PRISM</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-view="run">Run</button>
+    <button class="tab" data-view="compose">Compose</button>
+    <button class="tab" data-view="suite">Suite</button>
+    <button class="tab" data-view="about">Architecture</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============================== RUN -->
+  <section id="view-run" class="view active">
+    <aside class="side">
+      <div class="side-head">
+        <h2>Scenarios</h2>
+        <div class="seg" id="agent-seg">
+          <button class="on" data-agent="triageline">TriageLine</button>
+          <button data-agent="baseline">Baseline</button>
+        </div>
+      </div>
+      <ul id="scenario-list" class="slist"></ul>
+      <label class="speed">Time scale
+        <select id="ts"><option value="1">1× (official)</option><option value="2" selected>2×</option><option value="4">4×</option></select>
+      </label>
+    </aside>
+
+    <div class="stage">
+      <div class="stage-head">
+        <div>
+          <div class="eyebrow" id="sc-meta">—</div>
+          <h2 id="sc-title">Pick a scenario</h2>
+          <p id="sc-desc" class="muted"></p>
+        </div>
+        <button id="run-btn" class="primary" disabled>Run scenario</button>
+      </div>
+
+      <div id="score-strip" class="strip hidden"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>Timeline</h3><span class="muted small" id="tl-note">virtual ms · hover for details</span></div>
+        <div id="timeline" class="timeline empty">Run a scenario to see the fast path and slow path play out against the user.</div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><h3>Transcript</h3></div>
+          <ol id="transcript" class="transcript"><li class="muted">—</li></ol>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Scorer checkpoints</h3></div>
+          <div id="checks" class="checks"><p class="muted">—</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== COMPOSE -->
+  <section id="view-compose" class="view">
+    <div class="stage narrow">
+      <div class="eyebrow">Try to break it</div>
+      <h2>Compose a conversation</h2>
+      <p class="muted">Write a request, then barge in. Nothing here is scripted for the agent — it sees the same event stream the official harness sends.</p>
+
+      <div class="card form">
+        <label>User says
+          <input id="c-utt" value="Find me flights to Chicago for Friday.">
+        </label>
+        <div class="row">
+          <label class="grow">Interruption <span class="muted small">(optional)</span>
+            <input id="c-int" value="Actually, make it Seattle instead.">
+          </label>
+          <label class="w140">at +ms
+            <input id="c-at" type="number" value="1600" min="200" step="100">
+          </label>
+        </div>
+        <label class="check"><input type="checkbox" id="c-tool"> Add an unseen tool <span class="muted small">(hotel_search, read-only)</span></label>
+        <div class="presets">
+          <span class="muted small">Presets:</span>
+          <button class="chip" data-p='["Find flights to Miami please.","Never mind, forget it.",1500,false]'>retraction</button>
+          <button class="chip" data-p='["Find flights to Austin.","Forget the flight, my TV is blinking red, open a support ticket.",1400,false]'>intent switch</button>
+          <button class="chip" data-p='["Find a flight to Denver and book the 2 PM one for Priya.","",0,false]'>chained booking</button>
+          <button class="chip" data-p='["Can you find a hotel in Boston?","",0,true]'>unseen tool</button>
+          <button class="chip" data-p='["Book a flight to Boston, sorry I mean Denver, for tomorrow.","",0,false]'>self-repair</button>
+        </div>
+        <button id="c-run" class="primary">Run conversation</button>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Timeline</h3></div>
+        <div id="c-timeline" class="timeline empty">—</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Transcript</h3></div>
+        <ol id="c-transcript" class="transcript"><li class="muted">—</li></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== SUITE -->
+  <section id="view-suite" class="view">
+    <div class="stage">
+      <div class="stage-head">
+        <div>
+          <div class="eyebrow">Official scorer</div>
+          <h2>Benchmark</h2>
+          <p class="muted">Runs every scenario through both agents with <code>harness/scorer.py</code>. Audio and visual rows need the kit's media files in <code>audio/</code> and <code>frames/</code>. Without them the agent falls back safely, and those rows score lower.</p>
+        </div>
+        <button id="suite-btn" class="primary">Run all</button>
+      </div>
+      <div class="card">
+        <table class="table" id="suite-table">
+          <thead><tr><th>Scenario</th><th>Mode</th><th class="num">Baseline</th><th class="num">TriageLine</th><th>Δ</th><th class="bar-col"></th></tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== ABOUT -->
+  <section id="view-about" class="view">
+    <div class="stage narrow prose">
+      <div class="eyebrow">How it works</div>
+      <h2>One event loop, two speeds, one epoch counter</h2>
+      <figure class="arch">
+<pre>
+ events ─▶ ┌──────────── FAST PATH  (&lt; 5 ms, inline) ────────────┐
+           │ turn buffer · self-repair resolver · interruption    │──▶ filler / clarify
+           │ classifier (revise · retract · switch) · snapshot    │    + state_snapshot
+           └──────────────┬───────────────────────────────────────┘
+                          │ spawn (never await on the loop)
+           ┌──────────────▼───────── SLOW PATH  (background) ─────┐
+           │ ASR ensemble (base.en ⟂ tiny.en) · OCR + CLIP frame  │──▶ tool_call
+           │ schema-driven args · 1× read-only retry · plans      │    final_response
+           └──────────────┬───────────────────────────────────────┘
+                          │ results tagged with epoch
+           ┌──────────────▼───────── COORDINATION ────────────────┐
+           │ in-flight ledger → targeted cancel_tool              │
+           │ epoch++ on interrupt → stale results dropped         │
+           │ idempotence ledger → no duplicate state-modifying    │
+           └──────────────────────────────────────────────────────┘
+</pre>
+      </figure>
+      <h3>What each piece does</h3>
+      <dl class="defs">
+        <dt>Interruption taxonomy</dt>
+        <dd>Every barge-in is classified in under a millisecond as a <b>slot revision</b> ("make it New York"), a <b>retraction</b> ("never mind") or an <b>intent switch</b> ("forget the flight, my TV is broken"). Each one gets its own cancel-and-replan policy, so a slot revision only redoes the work that depended on the changed slot.</dd>
+        <dt>Epoch-guarded grounding</dt>
+        <dd>Each interruption increments an epoch. Perception and tool outputs carry the epoch they were started in, and any stale output is dropped. That covers the race where a call slips through cancellation.</dd>
+        <dt>Uncertainty-aware ASR</dt>
+        <dd>Two independent Whisper decoders run. When they disagree, or the word-level probability on a slot value is low, the agent asks "did you say Austin or Boston?" instead of acting on a guess. The candidates come from what was actually heard.</dd>
+        <dt>Zero-shot tools</dt>
+        <dd>Tools are ranked by overlap with the manifest's name, description and arguments, plus a bonus when every required argument can be filled. Arguments are built by what each schema field means (city, date, name, enum, nested object). Answers come from whatever fields the result returns.</dd>
+        <dt>Visual grounding</dt>
+        <dd>Printed-label OCR (tried at several rotations, including inverted) is combined with CLIP zero-shot on a centre crop. The 512-d CLIP embedding is passed to <code>lookup_manual</code> for hybrid search. If vision finds nothing, the agent asks the user rather than guessing a port type.</dd>
+        <dt>Safety by construction</dt>
+        <dd>At most 3 fillers, never the same one twice. State-modifying calls are deduplicated by argument hash. Replies promise actions ("booking it now") and only claim them once the tool has finished. Every spoken action carries a snapshot.</dd>
+      </dl>
+    </div>
+  </section>
+</main>
+
+<div id="tip" class="tip hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

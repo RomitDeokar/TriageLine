@@ -1,0 +1,54 @@
+{
+ "scenario_id": "x_retraction",
+ "metadata": {
+  "modality": "text",
+  "difficulty": "L3"
+ },
+ "events": [
+  {
+   "timestamp_ms": 100,
+   "event_type": "user_speech_chunk",
+   "payload": {
+    "text": "Find flights to Miami please.",
+    "end_of_turn": true
+   }
+  },
+  {
+   "timestamp_ms": 1500,
+   "event_type": "interruption",
+   "payload": {
+    "text": "Actually, never mind."
+   }
+  }
+ ],
+ "ground_truth": {
+  "checkpoints": [
+   {
+    "id": "no_final_miami_search_after",
+    "type": "tool_not_called",
+    "tool": "flight_search",
+    "after_ms": 1500,
+    "weight": 1
+   }
+  ],
+  "recovery": {
+   "interrupt_at_ms": 1500,
+   "invalidated_calls": [
+    {
+     "tool": "flight_search",
+     "args_subset": {
+      "destination": [
+       "miami"
+      ]
+     },
+     "invalid_after_ms": 1500
+    }
+   ],
+   "required_state_after_interrupt": {
+    "intent": [
+     "cancelled"
+    ]
+   }
+  }
+ }
+}

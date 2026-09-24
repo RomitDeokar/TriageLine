@@ -1,0 +1,66 @@
+{
+ "scenario_id": "x_hotel_unseen",
+ "metadata": {
+  "modality": "text",
+  "difficulty": "L3"
+ },
+ "events": [
+  {
+   "timestamp_ms": 100,
+   "event_type": "user_speech_chunk",
+   "payload": {
+    "text": "Can you find me a hotel in Seattle for Friday?",
+    "end_of_turn": true
+   }
+  }
+ ],
+ "ground_truth": {
+  "checkpoints": [
+   {
+    "id": "hotel",
+    "type": "tool_called",
+    "tool": "hotel_search",
+    "args_subset": {
+     "city": [
+      "seattle"
+     ]
+    },
+    "must_complete": true,
+    "weight": 0.6
+   },
+   {
+    "id": "fin",
+    "type": "final_response_contains",
+    "any_of": [
+     "marriott",
+     "189"
+    ],
+    "weight": 0.4
+   }
+  ]
+ },
+ "tool_manifest": {
+  "hotel_search": {
+   "kind": "read_only",
+   "delay_range_ms": [
+    900,
+    1500
+   ],
+   "description": "Search hotels in a city.",
+   "args": {
+    "city": {
+     "type": "string",
+     "required": true
+    },
+    "check_in": {
+     "type": "string",
+     "required": false
+    }
+   },
+   "default_result": {
+    "hotel_name": "Seattle Marriott",
+    "nightly_usd": 189
+   }
+  }
+ }
+}

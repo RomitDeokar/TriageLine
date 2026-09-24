@@ -1,5 +1,8 @@
-# Offline replay, FastAPI/WebSocket event bridge, and test client.
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-pytest>=7
+# agent runtime (all optional — the agent degrades gracefully without them)
+faster-whisper>=1.0
+onnxruntime>=1.17
+huggingface_hub
+tokenizers
+numpy
+pillow
+# system: tesseract-ocr (optional, printed-label OCR for visual grounding)
