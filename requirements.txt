@@ -1,0 +1,2 @@
+# Phase 2 — provider interfaces + offline mocks.
+pytest>=7
