@@ -65,7 +65,7 @@ export default function ConversationPanel({ events }) {
           <div key={item.key} className={isCaller ? "text-left" : "text-right"}>
             <div
               className={`text-[10px] font-semibold uppercase tracking-wider ${
-                isCaller ? "text-sky-400" : "text-emerald-400"
+                isCaller ? "text-amber-400" : "text-emerald-400"
               }`}
             >
               {item.speaker ?? "unknown"}

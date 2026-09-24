@@ -14,6 +14,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: [".sandbox.novita.ai"],
     proxy: {
       // Matches the routes api/app.py actually exposes (see docs/UI_SPEC.md
       // section 3 and api/app.py's module docstring) — there is no /api

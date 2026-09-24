@@ -53,7 +53,7 @@ function ActionCard({ action }) {
         </span>
       </div>
 
-      <div className="mt-2 flex items-center gap-1">
+      <div className="mt-2 flex flex-wrap items-center gap-1">
         {STEPS.map((step, i) => (
           <StepChip
             key={step}
@@ -102,7 +102,7 @@ function StepChip({ label, active, done, aborted, isLast }) {
     : "bg-slate-800 text-slate-500 border-slate-700";
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 whitespace-nowrap">
       <span className={`rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${color}`}>
         {label}
       </span>
