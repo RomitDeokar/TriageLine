@@ -26,38 +26,45 @@ async function api(path, body) {
 
 // ---------------------------------------------------------------- scenario list
 async function loadScenarios() {
-  SCEN = await api("/api/scenarios");
+  try { SCEN = await api("/api/scenarios"); }
+  catch (e) { $("#scenario-list").innerHTML = `<li class="neg">Could not load scenarios: ${esc(e.message)}</li>`; return; }
+  if (!SCEN.length) { $("#scenario-list").innerHTML = `<li class="muted">No scenarios found.</li>`; return; }
   const ul = $("#scenario-list");
   ul.innerHTML = SCEN.map((s, i) => `
     <li data-i="${i}">
       <span class="sid">${esc(s.id)}</span>
-      <span class="tag">${esc(s.modality || "text")} · ${esc(s.difficulty || "")}${s.path.includes("extra") ? " · extra" : ""}</span>
+      <span class="tag">${esc(s.modality || "text")} · ${esc(s.difficulty || "")}${s.path.includes("extra") ? " · extra" : ""}${s.missing_media && s.missing_media.length ? ' · <b class="neg">media missing</b>' : ""}</span>
       <span class="sc" id="sc-${i}"></span>
     </li>`).join("");
   $$("li", ul).forEach((li) => li.onclick = () => select(+li.dataset.i));
-  select(1);
+  select(Math.min(1, SCEN.length - 1));
 }
 function select(i) {
   SEL = SCEN[i];
   $$("#scenario-list li").forEach((li) => li.classList.toggle("sel", +li.dataset.i === i));
   $("#sc-title").textContent = SEL.id;
   $("#sc-meta").textContent = `${SEL.modality || "text"} · ${SEL.difficulty || ""} · ${SEL.events.length} events`;
-  $("#sc-desc").textContent = SEL.description;
+  $("#sc-desc").textContent = SEL.description + (SEL.missing_media && SEL.missing_media.length ? `  ⚠ Missing media: ${SEL.missing_media.join(", ")}` : "");
   $("#run-btn").disabled = false;
 }
 
+let RUN_ID = 0;
 $("#run-btn").onclick = async () => {
   if (!SEL) return;
   const btn = $("#run-btn");
+  // capture everything at submission: a later selection change must not relabel this run
+  const req = { sc: SEL, i: SCEN.indexOf(SEL), agent: AGENT, ts: +$("#ts").value, id: ++RUN_ID };
   btn.classList.add("busy"); btn.textContent = "Running…"; btn.disabled = true;
   try {
-    const res = await api("/api/run", { path: SEL.path, agent: AGENT, time_scale: +$("#ts").value });
+    const res = await api("/api/run", { path: req.sc.path, agent: req.agent, time_scale: req.ts });
+    if (res.score) $("#sc-" + req.i).textContent = res.score.total.toFixed(0);
+    if (req.id !== RUN_ID || SEL !== req.sc) return;       // stale response: keep only its list score
     renderAll(res, "#timeline", "#transcript");
-    renderScore(res.score);
-    const i = SCEN.indexOf(SEL);
-    if (res.score) $("#sc-" + i).textContent = res.score.total.toFixed(0);
+    renderScore(res.score, res);
   } catch (e) {
-    $("#timeline").innerHTML = `<span class="neg">${esc(e.message)}</span>`;
+    if (req.id !== RUN_ID) return;
+    $("#timeline").innerHTML = `<span class="neg">Run failed (${esc(e.message)}) — no score for this run.</span>`;
+    $("#transcript").innerHTML = ""; $("#checks").innerHTML = ""; $("#score-strip").classList.add("hidden");
   } finally {
     btn.classList.remove("busy"); btn.textContent = "Run scenario"; btn.disabled = false;
   }
@@ -84,8 +91,6 @@ function parseTrace(trace) {
       if (a === "tool_call") {
         calls[e.call_id] = { id: e.call_id, api: e.api_name, args: e.args, t0: t, t1: null, st: "pending" };
         rows.push({ t, who: "tool call", cls: "tool", msg: `<code>${esc(e.api_name)}</code> <span class="muted">${esc(shortArgs(e.args))}</span>` });
-      } else if (a === "cancel_tool") {
-        rows.push({ t, who: "cancel", cls: "cancel", msg: `<code>${esc(e.call_id || (e.payload || {}).call_id)}</code>` });
       } else {
         const txt = (e.payload || {}).text || "";
         const cls = a === "filler_speech" ? "fill" : a === "clarification_request" ? "clar" : "final";
@@ -98,8 +103,11 @@ function parseTrace(trace) {
     } else if (e.kind === "tool_completed") {
       const c = calls[e.call_id]; if (c) { c.t1 = t; c.st = e.status === "success" ? "ok" : "err"; c.res = e.result; }
       rows.push({ t, who: "result", cls: "tool", msg: `<code>${esc(e.api_name)}</code> ${e.status === "success" ? "✓" : "✕ " + esc((e.result || {}).error)} <span class="muted">${esc(shortArgs(e.result, 90))}</span>` });
-    } else if (e.kind === "tool_cancelled") {
-      const c = calls[e.call_id]; if (c) { c.t1 = t; c.st = "cancelled"; }
+    } else if (e.kind === "tool_cancelled" || e.kind === "cancel_noop") {
+      const c = calls[e.call_id];
+      if (c && e.kind === "tool_cancelled") { c.t1 = t; c.st = "cancelled"; }
+      rows.push({ t, who: "cancel", cls: "cancel", msg: `<code>${esc(e.call_id)}</code> ${c ? esc(c.api) : ""} <span class="muted">${
+        e.kind === "tool_cancelled" ? "cancelled (confirmed by harness)" : "cancel requested — call had already finished"}</span>` });
     } else if (e.kind === "tool_abandoned") {
       const c = calls[e.call_id]; if (c) { c.t1 = tEnd; c.st = "abandoned"; }
     }
@@ -160,10 +168,16 @@ function renderAll(res, tlSel, trSel) {
     `<li><span class="t">+${Math.round(r.t)}</span><span class="who ${r.cls}">${r.who}</span><span class="msg">${r.msg}</span></li>`).join("") || "<li class='muted'>no output</li>";
 }
 
-function renderScore(s) {
+function renderScore(s, res) {
   const strip = $("#score-strip"), box = $("#checks");
   if (!s) { strip.classList.add("hidden"); box.innerHTML = "<p class='muted'>No ground truth for this run.</p>"; return; }
   strip.classList.remove("hidden");
+  const cfg = (res && res.config) || {}, st = (res && res.status) || {};
+  const warn = [];
+  if (!cfg.official) warn.push(`development preview (${cfg.time_scale}× speed) — not comparable to official 1× timing`);
+  if (st.missing_media && st.missing_media.length) warn.push("input media missing: " + st.missing_media.join(", "));
+  if (st.runner_stopped_with_pending_calls && st.runner_stopped_with_pending_calls.length) warn.push("runner stopped with calls still pending: " + st.runner_stopped_with_pending_calls.join(", "));
+  if (st.agent_crash && st.agent_crash.length) warn.push("agent crashed: " + st.agent_crash.join("; "));
   const b = s.breakdown;
   const cell = (k, d) => d ? `<div><div class="k">${k}</div><div class="v">${d.points.toFixed(1)}<span class="muted small"> / ${d.weight.toFixed(0)}</span></div><div class="meter"><i style="width:${100 * d.fraction}%"></i></div></div>`
                            : `<div><div class="k">${k}</div><div class="v muted">n/a</div></div>`;
@@ -175,7 +189,8 @@ function renderScore(s) {
   if (b.recovery) out.push(group("Recovery", b.recovery.detail.checks.map((c) => ck(c.passed, c.check, "", c.note))));
   if (b.latency) out.push(group("Latency", b.latency.detail.responses.map((r) => ck(r.fraction >= 0.99, `event #${r.event_index}`, r.delta_ms == null ? "no reply" : `${Math.round(r.delta_ms)} ms`, ""))));
   if (b.safety) out.push(group("Safety", b.safety.detail.notes.map((n) => ck(n === "clean", n, "", ""))));
-  box.innerHTML = out.join("");
+  box.innerHTML = `<p class="small muted">config: ${esc(cfg.agent)} · ${cfg.time_scale}× · tail ${cfg.tail_ms} ms${cfg.official ? " · official-style" : ""}</p>` +
+    warn.map((w) => `<p class="small neg">⚠ ${esc(w)}</p>`).join("") + out.join("");
 }
 const group = (t, items) => `<div><h4>${t}</h4>${items.join("")}</div>`;
 const ck = (ok, name, right, note) =>
@@ -183,22 +198,27 @@ const ck = (ok, name, right, note) =>
 
 // ---------------------------------------------------------------- tooltip
 const tip = $("#tip");
-document.addEventListener("mousemove", (e) => {
+function showTip(e) {
   const t = e.target.closest("[data-tip]");
   if (!t) { tip.classList.add("hidden"); return; }
   tip.textContent = t.dataset.tip; tip.classList.remove("hidden");
   const w = tip.offsetWidth;
   tip.style.left = Math.min(e.clientX + 12, innerWidth - w - 10) + "px";
   tip.style.top = e.clientY + 14 + "px";
-});
+}
+document.addEventListener("mousemove", showTip);
+document.addEventListener("click", showTip);   // touch devices: tap a marker to see its details
 
 // ---------------------------------------------------------------- compose
 $$(".chip").forEach((c) => c.onclick = () => {
   const [u, i, at, tool] = JSON.parse(c.dataset.p);
   $("#c-utt").value = u; $("#c-int").value = i; $("#c-at").value = at || 1600; $("#c-tool").checked = tool;
 });
+let composing = false;
 $("#c-run").onclick = async () => {
-  const btn = $("#c-run"); btn.classList.add("busy"); btn.textContent = "Running…";
+  if (composing) return;
+  composing = true;
+  const btn = $("#c-run"); btn.classList.add("busy"); btn.textContent = "Running…"; btn.disabled = true;
   const utt = $("#c-utt").value.trim(), it = $("#c-int").value.trim(), at = +$("#c-at").value || 1600;
   const words = utt.split(" "), half = Math.ceil(words.length / 2);
   const events = [
@@ -211,10 +231,11 @@ $("#c-run").onclick = async () => {
     args: { city: { type: "string", required: true }, nights: { type: "number", required: false } },
     default_result: { hotels: [{ hotel_id: "HT-0042", name: "Harborview Inn", price_usd: 179 }] } } };
   try {
-    const res = await api("/api/run", { scenario, agent: AGENT, time_scale: 2 });
+    const res = await api("/api/run", { scenario, agent: AGENT, time_scale: 1 });
     renderAll(res, "#c-timeline", "#c-transcript");
-  } catch (e) { $("#c-timeline").innerHTML = `<span class="neg">${esc(e.message)}</span>`; }
-  btn.classList.remove("busy"); btn.textContent = "Run conversation";
+  } catch (e) { $("#c-timeline").innerHTML = `<span class="neg">${esc(e.message)}</span>`; $("#c-transcript").innerHTML = ""; }
+  composing = false;
+  btn.classList.remove("busy"); btn.textContent = "Run conversation"; btn.disabled = false;
 };
 
 // ---------------------------------------------------------------- suite
@@ -222,22 +243,28 @@ $("#suite-btn").onclick = async () => {
   const btn = $("#suite-btn"); btn.disabled = true;
   const tb = $("#suite-table tbody"), tf = $("#suite-table tfoot");
   tb.innerHTML = SCEN.map((s, i) => `<tr id="r${i}"><td class="id">${esc(s.id)}</td><td>${esc(s.modality || "text")}</td><td class="num b">…</td><td class="num t">…</td><td class="dl"></td><td><div class="dual"><i class="b" style="width:0"></i><i class="t" style="width:0"></i></div></td></tr>`).join("");
-  const sums = { b: 0, t: 0, n: 0 };
+  const sums = { b: 0, t: 0, n: 0, fail: 0, missing: 0 };
   for (let i = 0; i < SCEN.length; i++) {
     btn.textContent = `Running ${i + 1}/${SCEN.length}…`;
     const row = $("#r" + i);
     try {
-      const [b, t] = [await api("/api/run", { path: SCEN[i].path, agent: "baseline", time_scale: 4 }),
-                      await api("/api/run", { path: SCEN[i].path, agent: "triageline", time_scale: 4 })];
+      const [b, t] = [await api("/api/run", { path: SCEN[i].path, agent: "baseline", time_scale: 1 }),
+                      await api("/api/run", { path: SCEN[i].path, agent: "triageline", time_scale: 1 })];
+      if ((t.status?.missing_media || []).length) { sums.missing++; $(".id", row).innerHTML += ' <span class="neg small">media missing</span>'; }
       const bs = b.score?.total ?? 0, ts = t.score?.total ?? 0;
       $(".b", row).textContent = bs.toFixed(1); $(".t", row).textContent = ts.toFixed(1);
       const d = ts - bs; $(".dl", row).innerHTML = `<span class="${d >= 0 ? "pos" : "neg"}">${d >= 0 ? "+" : ""}${d.toFixed(1)}</span>`;
       $(".dual i.b", row).style.width = bs + "%"; $(".dual i.t", row).style.width = ts + "%";
       sums.b += bs; sums.t += ts; sums.n++;
-    } catch (e) { $(".t", row).textContent = "error"; }
+    } catch (e) { sums.fail++; $(".t", row).textContent = "error"; $(".dl", row).innerHTML = `<span class="neg small">${esc(e.message)}</span>`; }
   }
-  const mb = sums.b / sums.n, mt = sums.t / sums.n;
-  tf.innerHTML = `<tr><td>Mean</td><td></td><td class="num">${mb.toFixed(1)}</td><td class="num">${mt.toFixed(1)}</td><td><span class="pos">+${(mt - mb).toFixed(1)}</span></td><td></td></tr>`;
+  const note = `${SCEN.length} attempted · ${sums.n} completed · ${sums.fail} failed · ${sums.missing} with missing media · 1× official timing`;
+  if (!sums.n) tf.innerHTML = `<tr><td colspan="6" class="neg">No completed runs. ${note}</td></tr>`;
+  else {
+    const mb = sums.b / sums.n, mt = sums.t / sums.n, d = mt - mb;
+    tf.innerHTML = `<tr><td>Mean of completed runs</td><td></td><td class="num">${mb.toFixed(1)}</td><td class="num">${mt.toFixed(1)}</td><td><span class="${d >= 0 ? "pos" : "neg"}">${d >= 0 ? "+" : ""}${d.toFixed(1)}</span></td><td></td></tr>
+      <tr><td colspan="6" class="small muted">${note}</td></tr>`;
+  }
   btn.textContent = "Run all"; btn.disabled = false;
 };
 

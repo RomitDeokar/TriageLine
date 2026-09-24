@@ -7,3 +7,4 @@ ui/dist/
 generated/
 results.json
 *.log
+live_uploads/

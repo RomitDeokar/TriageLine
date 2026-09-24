@@ -26,7 +26,11 @@ CITIES = {
     "mumbai": "Mumbai", "singapore": "Singapore", "sydney": "Sydney", "dubai": "Dubai",
 }
 _CITY_RE = re.compile(r"\b(" + "|".join(sorted(map(re.escape, CITIES), key=len, reverse=True)) + r")\b", re.I)
-_CAP_AFTER_PREP = re.compile(r"\b(?:to|in|for|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
+_CAP_AFTER_PREP = re.compile(r"\b(?:to|in|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
+# lowercase unknown place after a travel cue ("flights to kochi", "weather in pune")
+_LOW_PLACE = re.compile(r"\b(?:flights?|fly|flying|trip|travel|going|weather|hotels?|forecast|rental)\b[^.?!]*?"
+                        r"\b(?:to|in)\s+([a-z][a-z]{2,})\b", re.I)
+_FROM_RE = re.compile(r"\bfrom\s*$", re.I)
 
 # self-repair / correction markers — the value AFTER the last marker wins
 REPAIR_MARKERS = re.compile(
@@ -36,14 +40,21 @@ REPAIR_MARKERS = re.compile(
 RETRACTION = re.compile(
     r"\b(never ?mind|forget (?:it|about it|that)|cancel (?:that|it|everything)|don'?t bother|"
     r"stop(?: that)?|no need|skip it|call it off)\b", re.I)
-INTENT_SWITCH = re.compile(r"\b(forget the \w+|instead|different question|something else)\b", re.I)
+INTENT_SWITCH = re.compile(r"\b(forget the \w+|different question|something else)\b", re.I)
 GREETING = re.compile(r"\b(hi|hello|hey|what can you (?:do|help)|who are you|help me with)\b", re.I)
 WEEKDAYS = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
 DATE_RE = re.compile(
     r"\b(today|tonight|tomorrow|day after tomorrow|this weekend|next week|(?:next |this )?" + WEEKDAYS +
     r"|\d{4}-\d{2}-\d{2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2}(?:st|nd|rd|th)?)\b", re.I)
 TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)", re.I)
+TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 NAME_RE = re.compile(r"\b(?:for|passenger|name is|named|i am|i'm|under)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
+ID_RE = re.compile(r"\b([A-Za-z]{2,4}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\b")
+ID_PREFIX = {"booking_id": "BK", "flight_id": "FL", "ticket_id": "TK"}
+NEG_BOOK = re.compile(r"\b(?:do not|don'?t|dont|never|no need to|without|not)\s+(?:\w+\s+){0,2}?(?:book|booking|reserve)\b|"
+                      r"\b(?:only|just)\s+(?:search|show|look|check|find)|\bshow (?:me )?(?:the )?options\b", re.I)
+YES_RE = re.compile(r"^\W*(yes|yeah|yep|yup|correct|right|sure|that'?s right|exactly)\b", re.I)
+NO_RE = re.compile(r"^\W*(no|nope|nah|wrong|incorrect)\b", re.I)
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 STOP = set("""a an the to for of in on at and or is are be me my i you your it this that
 please can could would will do does what whats what's how with like right now just some any
@@ -81,18 +92,31 @@ def _stem(w: str) -> str:
 
 
 # --------------------------------------------------------------------------- slots
+_NOT_PLACE = set("""tomorrow today tonight morning evening afternoon night week weekend flight flights book
+booking the a an my me him her them it this that there here help go get see buy check""".split())
+
+
 def cities_in(text: str) -> List[Tuple[int, str]]:
-    out = [(m.start(), CITIES[m.group(1).lower()]) for m in _CITY_RE.finditer(text or "")]
+    text = text or ""
+    out = [(m.start(), CITIES[m.group(1).lower()]) for m in _CITY_RE.finditer(text)]
     if not out:
-        for m in _CAP_AFTER_PREP.finditer(text or ""):
+        for m in _CAP_AFTER_PREP.finditer(text):
             cand = m.group(1)
             if cand.lower() not in STOP and not re.match(WEEKDAYS, cand, re.I):
                 out.append((m.start(1), cand))
+    if not out:
+        for m in _LOW_PLACE.finditer(text):
+            cand = m.group(1)
+            if cand.lower() not in STOP and cand.lower() not in _NOT_PLACE and not re.match(WEEKDAYS, cand, re.I):
+                out.append((m.start(1), cand[0].upper() + cand[1:]))
     return out
 
 
-def extract_city(text: str) -> Optional[str]:
-    found = cities_in(text)
+def _is_origin(text: str, pos: int) -> bool:
+    return bool(_FROM_RE.search(text[:pos]))
+
+
+def _pick_after_repair(text: str, found: List[Tuple[int, str]]) -> Optional[str]:
     if not found:
         return None
     last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(text)), default=-1)
@@ -100,28 +124,82 @@ def extract_city(text: str) -> Optional[str]:
     return after[-1] if after else found[-1][1]
 
 
+def extract_city(text: str) -> Optional[str]:
+    """Destination-role city: the last city after the last self-repair marker, never an origin."""
+    text = text or ""
+    found = [(p, c) for p, c in cities_in(text) if not _is_origin(text, p)]
+    return _pick_after_repair(text, found)
+
+
+def extract_origin(text: str) -> Optional[str]:
+    text = text or ""
+    return _pick_after_repair(text, [(p, c) for p, c in cities_in(text) if _is_origin(text, p)])
+
+
 def extract_date(text: str) -> Optional[str]:
     m = list(DATE_RE.finditer(text or ""))
     return m[-1].group(1) if m else None
 
 
-def extract_time(text: str) -> Optional[int]:
-    m = TIME_RE.search(text or "")
-    if not m:
-        return None
-    h = int(m.group(1)) % 12
-    if m.group(3).lower().startswith("p"):
-        h += 12
-    return h
+def extract_time(text: str) -> Optional[str]:
+    """Full time constraint as 'HH:MM' (minutes preserved), or None."""
+    ms = list(TIME_RE.finditer(text or ""))
+    if ms:
+        m = ms[-1]
+        h = int(m.group(1)) % 12
+        if m.group(3).lower().startswith("p"):
+            h += 12
+        return f"{h:02d}:{int(m.group(2) or 0):02d}"
+    ms = list(TIME24_RE.finditer(text or ""))
+    if ms:
+        return f"{int(ms[-1].group(1)):02d}:{ms[-1].group(2)}"
+    return None
+
+
+def _bad_name(cand: str) -> bool:
+    first = cand.split()[0].lower()
+    return (cand.lower() in CITIES or first in CITIES or re.match(WEEKDAYS, cand, re.I) is not None
+            or first in STOP or first in _NOT_PLACE)
 
 
 def extract_name(text: str) -> Optional[str]:
-    for m in NAME_RE.finditer(text or ""):
+    """Passenger-role name; repair-aware ("for Alice, actually for Priya" -> Priya)."""
+    text = text or ""
+    found = []
+    for m in NAME_RE.finditer(text):
         cand = m.group(1)
-        if cand.lower() in CITIES or re.match(WEEKDAYS, cand, re.I) or cand.lower() in STOP:
+        parts = cand.split()
+        if len(parts) == 2 and _bad_name(parts[1]):
+            cand = parts[0]
+        if _bad_name(cand):
             continue
-        return cand
-    return None
+        found.append((m.start(1), cand))
+    return _pick_after_repair(text, found)
+
+
+def parse_name_answer(text: str) -> Optional[str]:
+    """Name given as a clarification answer: case-insensitive, full name kept."""
+    t = re.sub(r"(?i)^\W*(?:(?:it'?s|it is|my name is|name is|the name is|under|for|book it under|passenger)\s+)+", "", text or "")
+    if re.match(r"(?i)^\W*(?:i said|i mean|i meant|no[, ]|yes[, ]|actually)", t) or cities_in(t):
+        return None
+    t = re.sub(r"(?i)\b(please|thanks|thank you)\b", "", t)
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z'\-]*", t)]
+    words = [w for w in words if w.lower() not in STOP][:3]
+    if not words or _bad_name(words[0]):
+        return None
+    return " ".join(w[0].upper() + w[1:].lower() for w in words)
+
+
+def extract_id(text: str, field: str = "") -> Optional[str]:
+    ids = [m.group(1).upper() for m in ID_RE.finditer(text or "")]
+    pre = ID_PREFIX.get(field)
+    if pre:
+        ids = [i for i in ids if i.startswith(pre + "-")]
+    return ids[-1] if ids else None
+
+
+def negates_booking(text: str) -> bool:
+    return bool(NEG_BOOK.search(text or ""))
 
 
 def extract_device(text: str, hint: Optional[str] = None) -> Optional[str]:
@@ -163,8 +241,18 @@ def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
     return ranked
 
 
-def is_smalltalk(text: str) -> bool:
-    return bool(GREETING.search(text or "")) and len(tokens(text)) <= 6
+def is_smalltalk(text: str, tools: Optional[Dict[str, Any]] = None) -> bool:
+    """Greeting/capability talk ONLY when no actionable request remains in the turn."""
+    if not GREETING.search(text or ""):
+        return False
+    rest = GREETING.sub(" ", text or "")
+    if tools and (cities_in(rest) or extract_id(rest)):
+        return False
+    if tools:
+        r = score_tools(rest, tools)
+        if r and r[0][0] >= 2.5:
+            return False
+    return len(tokens(text)) <= 8
 
 
 # --------------------------------------------------------------------------- args
@@ -189,22 +277,29 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
         if lname in ("model", "device_model") and ctx.get("device_model") in enum:
             return ctx["device_model"]
         return None
-    if typ == "number":
-        m = NUMBER_RE.search(text)
-        return float(m.group()) if m else None
+    if typ in ("number", "integer"):
+        return extract_number(text, name, spec, integer=(typ == "integer"))
     if typ == "boolean":
-        return None
+        return extract_bool(text, name)
     if typ == "array":
-        return None
+        items = spec.get("items")
+        ienum = (items or {}).get("enum") if isinstance(items, dict) else None
+        if ienum:
+            low = text.lower()
+            hits = [e for e in ienum if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low)]
+            return hits or None
+        return ctx.get(lname)
     # strings: match by semantic role of the arg name
-    if any(k in lname for k in ("city", "destination", "location", "place", "origin", "town")):
+    if "origin" in lname or lname.startswith("from") or "departure_city" in lname:
+        return ctx.get("origin") or extract_origin(text)
+    if any(k in lname for k in ("city", "destination", "location", "place", "town", "to_")):
         return ctx.get("destination") or extract_city(text)
     if "date" in lname or "day" in lname or "when" in lname:
         return ctx.get("date") or extract_date(text)
     if "passenger" in lname or lname in ("name", "customer", "guest", "full_name"):
         return ctx.get("passenger_name") or extract_name(text)
     if lname.endswith("_id") or lname == "id":
-        return ctx.get(lname)
+        return extract_id(text, lname) or ctx.get(lname)
     if lname in ("model", "device", "device_model"):
         return ctx.get("device_model")
     if lname in ("query", "summary", "question", "text", "message", "description", "issue"):
@@ -212,24 +307,123 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     return None
 
 
+_UNSET = (None, "")
+
+
+def _fill(props: Dict[str, Any], text: str, ctx: Dict[str, Any], prefix: str,
+          parent_required: bool) -> Tuple[Dict[str, Any], List[str]]:
+    """Recursive schema fill. False / 0 / [] are valid values, only None/'' are unresolved."""
+    out, missing = {}, []
+    for name, aspec in (props or {}).items():
+        path = f"{prefix}{name}"
+        req = bool(aspec.get("required")) and parent_required
+        if aspec.get("type") == "object":
+            sub, gaps = _fill(aspec.get("properties") or {}, text, ctx, path + ".", True)
+            if gaps:
+                if req:
+                    missing += gaps
+                continue
+            if sub or req:
+                out[name] = sub
+            continue
+        v = ctx.get(path) if ctx.get(path) not in _UNSET else _arg_for(name, aspec, text, ctx)
+        if v not in _UNSET:
+            out[name] = v
+        elif req:
+            missing.append(path)
+    return out, missing
+
+
 def build_args(spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """Fill a tool call from its schema. Returns (args, missing_required)."""
-    args, missing = {}, []
-    for name, aspec in (spec.get("args") or {}).items():
-        v = _arg_for(name, aspec, text, ctx)
-        if aspec.get("type") == "object":
-            req = [s for s, ss in (aspec.get("properties") or {}).items() if ss.get("required")]
-            gaps = [s for s in req if v.get(s) in (None, "")]
-            if gaps and aspec.get("required"):
-                missing += [f"{name}.{g}" for g in gaps]
-            if v and not gaps:
-                args[name] = v
-            continue
-        if v not in (None, ""):
-            args[name] = v
-        elif aspec.get("required"):
-            missing.append(name)
-    return args, missing
+    return _fill(spec.get("args") or {}, text, ctx, "", True)
+
+
+def field_spec(spec: Dict[str, Any], path: str) -> Dict[str, Any]:
+    node: Dict[str, Any] = {"properties": spec.get("args") or {}}
+    for part in path.split("."):
+        node = (node.get("properties") or {}).get(part) or {}
+    return node
+
+
+def parse_field_answer(answer: str, name: str, fspec: Dict[str, Any]) -> Any:
+    """Parse a clarification answer specifically for the field that was asked about."""
+    lname = name.split(".")[-1].lower()
+    typ = fspec.get("type", "string")
+    enum = fspec.get("enum")
+    low = (answer or "").lower()
+    if enum:
+        for e in enum:
+            if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low):
+                return e
+        close = difflib.get_close_matches(low.strip(" .!"), [str(e).lower() for e in enum], n=1, cutoff=0.7)
+        return next((e for e in enum if str(e).lower() == close[0]), None) if close else None
+    if typ in ("number", "integer"):
+        return extract_number(answer, "", fspec, integer=(typ == "integer"))
+    if typ == "boolean":
+        if YES_RE.search(answer or ""):
+            return True
+        if NO_RE.search(answer or ""):
+            return False
+        return extract_bool(answer, lname)
+    if typ == "array":
+        return [x.strip() for x in re.split(r",|\band\b", answer or "") if x.strip()] or None
+    if lname.endswith("_id") or lname == "id":
+        return extract_id(answer, lname) or (norm(answer).strip(" .") or None)
+    if "passenger" in lname or "name" in lname or lname in ("customer", "guest"):
+        return parse_name_answer(answer)
+    if "date" in lname or "day" in lname or "when" in lname:
+        return extract_date(answer) or norm(answer).strip(" .") or None
+    if "origin" in lname:
+        return extract_origin("from " + answer) or extract_city("to " + answer)
+    if any(k in lname for k in ("city", "destination", "location", "place", "town")):
+        return extract_city(answer) or extract_city("to " + answer.strip())
+    v = norm(re.sub(r"(?i)^\W*(?:it'?s|it is|use|make it|the|a|an)\s+", "", answer or "")).strip(" .!")
+    return v or None
+
+
+WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+            "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
+
+
+def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = False) -> Optional[float]:
+    """Prefer the number next to a word from the field's name/description ("3 nights" for nights)."""
+    t = text or ""
+    for w, n in WORD_NUM.items():
+        t = re.sub(r"\b" + w + r"\b", str(n), t, flags=re.I)
+    t = TIME_RE.sub(" ", t)
+    t = ID_RE.sub(" ", t)
+    nums = [(m.start(), m.end(), m.group()) for m in NUMBER_RE.finditer(t)]
+    if not nums:
+        return None
+    cues = {_stem(w) for w in tokens(name.replace("_", " "))} or \
+        {_stem(w) for w in tokens(str(spec.get("description", "")))}
+    words = [(m.start(), _stem(m.group().lower())) for m in re.finditer(r"[A-Za-z]+", t)]
+    best, bd = None, 10 ** 9
+    for a, b, g in nums:
+        for pos, w in words:
+            if w in cues:
+                d = (pos - b) if pos >= b else (a - pos) + 5   # unit after the number preferred
+                if d < bd and d <= 25:
+                    best, bd = g, d
+    if best is None:
+        if len(nums) > 1 and cues:
+            return None  # several numbers and none tied to this field: ask rather than guess
+        best = nums[0][2]
+    v = float(best)
+    return int(v) if integer or v.is_integer() else v
+
+
+def extract_bool(text: str, name: str) -> Optional[bool]:
+    low = (text or "").lower()
+    words = [w for w in tokens(name.replace("_", " ")) if len(w) > 2 and w not in ("include", "has", "with", "is")]
+    for w in words:
+        sw = _stem(w)
+        if re.search(r"\b(?:no|without|not|don'?t want|exclude)\s+(?:\w+\s+)?" + re.escape(sw), low):
+            return False
+        if re.search(r"\b" + re.escape(sw), low):
+            return True
+    return None
 
 
 def similar_city(heard: str) -> Optional[str]:

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#16181d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>TriageLine — Live Assistant</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="live.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="dot" aria-hidden="true"></span><b>TriageLine</b></div>
+  <span id="mode" class="badge" title="Tools are simulated — no real bookings or tickets are created">LIVE INPUT + MOCK TOOLS</span>
+  <button id="menu" class="icon" aria-label="Menu">⋯</button>
+</header>
+
+<div id="sheet" class="sheet hidden" role="dialog" aria-label="Session menu">
+  <button id="m-ready">Device readiness check</button>
+  <button id="m-export">Export session (JSON)</button>
+  <button id="m-new">New session</button>
+  <a href="/" class="btnlike">Open evaluation console</a>
+  <label class="row"><input type="checkbox" id="m-tts" checked> Speak replies aloud</label>
+  <label class="row"><input type="checkbox" id="m-hands"> Hands-free (auto-listen after reply)</label>
+  <label class="row"><input type="checkbox" id="m-server-asr"> Use server ASR (Whisper) instead of phone</label>
+  <div id="ready" class="ready"></div>
+</div>
+
+<main id="chat" aria-live="polite">
+  <div class="hello">
+    <h2>Talk to me</h2>
+    <p>Tap the mic and ask — e.g. <i>"Find a flight to Denver and book the 8 AM one for Alice"</i>.
+      Interrupt any time: tap the mic while I'm talking or working, and say <i>"actually, make it Seattle"</i>
+      or <i>"never mind"</i>.</p>
+    <p class="muted small">Point the camera at a port and ask <i>"what is this port used for?"</i></p>
+  </div>
+</main>
+
+<section id="tasks" class="tasks" aria-label="Task progress"></section>
+
+<div id="cam" class="cam hidden">
+  <video id="video" playsinline muted autoplay></video>
+  <div class="camctl">
+    <button id="snap" class="primary">Send frame</button>
+    <button id="camclose">Close</button>
+  </div>
+</div>
+
+<footer class="dock">
+  <div id="interim" class="interim"></div>
+  <div class="row">
+    <button id="camera" class="icon big" aria-label="Camera">📷</button>
+    <form id="form" class="text">
+      <input id="text" autocomplete="off" placeholder="Type or tap the mic…" aria-label="Message">
+    </form>
+    <button id="mic" class="mic" aria-label="Talk"><span></span></button>
+  </div>
+  <div id="status" class="status small muted">Connecting…</div>
+</footer>
+<input id="file" type="file" accept="image/*" capture="environment" hidden>
+<script src="live.js"></script>
+</body>
+</html>

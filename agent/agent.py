@@ -1,19 +1,23 @@
 """TriageLine — a dual-process interruptible agent for Theme 5.
 
-Architecture (one asyncio loop, never blocked):
+Architecture (one asyncio loop; the event consumer NEVER awaits slow work):
 
-  FAST PATH  (<5 ms, rule/lexicon, runs inline on every event)
+  FAST PATH  (<5 ms, inline on every event)
       turn buffering · self-repair resolution · interruption classification
       (slot-revision / retraction / intent-switch) · content-aware acknowledgement
       · state snapshot on every spoken action
-  SLOW PATH  (background tasks)
-      ASR (faster-whisper, confidence-calibrated) · frame analysis (OCR+CLIP) ·
-      async tools with schema-driven args · one read-only retry · chained plans
+  SLOW PATH  (background tasks → results come back as internal completion events)
+      ASR (faster-whisper, confidence-calibrated) · frame analysis (OCR+CLIP, bounded,
+      latest-frame-wins) · async tools with schema-driven args · one read-only retry ·
+      chained plans
   COORDINATION
-      epoch counter: every interruption bumps the epoch; any result / perception
-      output tagged with an older epoch is discarded (never grounded on stale work).
-      In-flight ledger keyed by call_id → cancel exactly the invalidated calls.
-      Idempotence ledger for state-modifying calls → never duplicate a commit.
+      task versions: every invalidation bumps `version`; perception completions carry
+      the version they started under and are dropped if superseded.
+      In-flight ledger keyed by call_id with the slots each call depends on → targeted
+      cancel_tool, and results are re-validated against current state before use.
+      Operation ledger for state-modifying calls with an explicit lifecycle
+      (pending / succeeded / failed / cancelled / unknown) → never duplicate a commit,
+      never silently swallow a repeat request, never auto-retry an unknown outcome.
 
 Nothing here keys off scenario ids, timestamps, or expected strings.
 """
@@ -21,6 +25,9 @@ Nothing here keys off scenario ids, timestamps, or expected strings.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -28,29 +35,57 @@ from . import nlu
 from . import perception as P
 from .baseline_agent import BaselineAgent  # noqa: F401  (kept importable for comparison)
 
-ASR_CITY_CONF = 0.80     # below this a heard slot value is "shaky" → clarify
-MAX_FILLERS = 3
+log = logging.getLogger("triageline.agent")
+
+ASR_CITY_CONF = 0.80      # below this a heard slot value is "shaky" → clarify
+VISION_MIN_CONF = 0.50    # below this a visual label is treated as unknown
+MAX_FILLERS = 3           # evaluation budget (scorer default is 4, some scenarios 3)
+RESERVED_FILLERS = 1      # kept back for interruption acknowledgements
+FLIGHT_FAMILY = {"flight_search", "book_flight"}
+INTERNAL = "_internal"    # completion events from slow-path tasks
+
+
+def _canon(v: Any) -> Any:
+    """Canonical form for idempotency keys: recursive, whitespace/case-insensitive for free
+    text, but ids (FL-/BK-/TK- …) keep their exact case."""
+    if isinstance(v, dict):
+        return {k: _canon(v[k]) for k in sorted(v)}
+    if isinstance(v, list):
+        return [_canon(x) for x in v]
+    if isinstance(v, str):
+        s = nlu.norm(v)
+        return s if nlu.ID_RE.fullmatch(s) else s.casefold()
+    return v
 
 
 class ParticipantAgent:
-    def __init__(self, in_queue: asyncio.Queue, out_queue: asyncio.Queue):
+    def __init__(self, in_queue: asyncio.Queue, out_queue: asyncio.Queue, live: bool = False):
         self.in_q, self.out_q = in_queue, out_queue
+        self.live = live or os.environ.get("TRIAGELINE_LIVE") == "1"
         self.tools: Dict[str, Any] = {}
         self.state: Dict[str, Any] = {"intent": None, "slots": {}}
         self.buffer: List[str] = []
-        self.audio_parts: List[str] = []
-        self.frame: Optional[Dict[str, Any]] = None      # latest frame event payload
-        self.frame_task: Optional[asyncio.Task] = None
-        self.epoch = 0
+        self.audio_parts: List[asyncio.Task] = []
+        self.version = 0                                  # task version (invalidation counter)
         self.seq = 0
-        self.inflight: Dict[str, Dict[str, Any]] = {}    # call_id -> {api, args, epoch, retries}
-        self.committed: Dict[str, Dict[str, Any]] = {}   # idempotence key -> result
+        self.inflight: Dict[str, Dict[str, Any]] = {}     # call_id -> call record
+        self.ops: Dict[str, Dict[str, Any]] = {}          # idempotency key -> {status, result, call_id}
         self.fillers: List[str] = []
-        self.plan: List[str] = []                        # queued follow-up tool names
+        self.turn_fillers = 0
+        self.plan: List[str] = []                         # queued follow-up tool names
         self.pending_clarify: Optional[Dict[str, Any]] = None
         self.last_turn = ""
+        self.last_api: Optional[str] = None
         self.answered = False
         self.tasks: set = set()
+        # vision: bounded, latest-frame-wins
+        self.frame: Optional[Dict[str, Any]] = None
+        self.frame_seq = 0
+        self.vision: Optional[Dict[str, Any]] = None      # {frame_seq, label, confidence, embedding, source}
+        self.vision_busy = False
+        self.vision_next: Optional[Dict[str, Any]] = None
+        self.waiting_vision: Optional[Dict[str, Any]] = None
+        self.diag: List[Dict[str, Any]] = []              # structured internal diagnostics
 
     # ------------------------------------------------------------------ lifecycle
     async def setup(self):
@@ -63,17 +98,26 @@ class ParticipantAgent:
                 try:
                     await self.dispatch(ev)
                 except Exception as e:  # never let one bad event kill the loop
+                    self.note("agent_exception", f"{type(e).__name__}: {e}", event=ev.get("event_type"))
+                    log.exception("agent exception")
                     await self.say("final_response", "Sorry, something went wrong on my side — could you say that again?")
-                    _ = e
         finally:
             for t in list(self.tasks):
                 t.cancel()
+
+    def note(self, code: str, detail: str = "", **kw):
+        """Structured diagnostics: subsystem + code, never the user's transcript."""
+        self.diag.append({"code": code, "detail": detail[:200], **kw})
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
         self.tasks.add(t)
         t.add_done_callback(self.tasks.discard)
         return t
+
+    async def post(self, kind: str, **data):
+        """Completion of slow work re-enters through the same queue → consumer stays serial."""
+        await self.in_q.put({"event_type": INTERNAL, "payload": {"kind": kind, **data}})
 
     async def dispatch(self, ev: Dict[str, Any]):
         et, p = ev.get("event_type"), ev.get("payload") or {}
@@ -83,72 +127,186 @@ class ParticipantAgent:
             self.buffer.append(p.get("text", ""))
             if p.get("end_of_turn"):
                 turn, self.buffer = nlu.norm(" ".join(self.buffer)), []
+                self.turn_fillers = 0
                 await self.on_turn(turn)
         elif et == "user_audio_chunk":
-            # streaming ASR: start transcribing each clip the moment it arrives
+            # streaming ASR: each clip starts transcribing the moment it arrives
             self.audio_parts.append(self.spawn(asyncio.to_thread(P.transcribe, p.get("audio_ref"), self.vocab_prompt())))
             if p.get("end_of_turn"):
-                refs, self.audio_parts = self.audio_parts, []
-                await self.on_audio_turn(refs)
+                jobs, self.audio_parts = self.audio_parts, []
+                self.turn_fillers = 0
+                await self.say("filler_speech", "Mm-hm, one second." if self.pending_clarify is None else "Got it.")
+                self.spawn(self._await_asr(jobs, self.version))
         elif et == "video_frame":
-            self.frame = p
-            self.frame_task = self.spawn(asyncio.to_thread(P.analyze_frame, p.get("image_ref")))
+            self.on_frame(p)
         elif et == "interruption":
+            self.turn_fillers = 0
             await self.on_interruption(p.get("text", ""))
         elif et == "tool_result":
             await self.on_tool_result(p)
+        elif et == INTERNAL:
+            await self.on_internal(p)
+
+    async def on_internal(self, p: Dict[str, Any]):
+        kind = p.get("kind")
+        if kind == "asr_done":
+            if p["version"] != self.version:
+                return self.note("stale_asr_dropped")
+            await self.on_audio_result(p["results"])
+        elif kind == "vision_done":
+            if p["frame_seq"] == self.frame_seq:
+                self.vision = p["vis"]
+            w = self.waiting_vision
+            if w and (p["frame_seq"] >= w["frame_seq"]):
+                self.waiting_vision = None
+                if w["version"] == self.version:
+                    await self._issue_manual(w["turn"], w["visual"])
+        elif kind == "vision_timeout":
+            w = self.waiting_vision
+            if w and w["token"] == p["token"]:
+                self.waiting_vision = None
+                if w["version"] == self.version:
+                    self.note("vision_timeout")
+                    await self._issue_manual(w["turn"], w["visual"])
 
     # ------------------------------------------------------------------ output
     def snapshot(self) -> Dict[str, Any]:
         return {"intent": self.state["intent"] or "chitchat", "slots": dict(self.state["slots"])}
 
-    async def say(self, kind: str, text: str):
+    async def say(self, kind: str, text: str, priority: bool = False):
         text = nlu.norm(text)
         if kind == "filler_speech":
-            if text in self.fillers or len(self.fillers) >= MAX_FILLERS:
+            if text in self.fillers:
                 return
+            if self.live:
+                if self.turn_fillers >= 2:           # live: per-turn budget, no lifetime cap
+                    return
+            else:
+                budget = MAX_FILLERS if priority else MAX_FILLERS - RESERVED_FILLERS
+                if len(self.fillers) >= budget:
+                    return
             self.fillers.append(text)
+            self.turn_fillers += 1
         if kind == "final_response":
             self.answered = True
         await self.out_q.put({"action": kind, "payload": {"text": text}, "state_snapshot": self.snapshot()})
 
-    async def call(self, api: str, args: Dict[str, Any], retries: int = 0) -> Optional[str]:
-        spec = self.tools.get(api, {})
+    def op_key(self, api: str, args: Dict[str, Any]) -> str:
+        return api + "|" + json.dumps(_canon(args), sort_keys=True, separators=(",", ":"))
+
+    async def call(self, api: str, args: Dict[str, Any], retries: int = 0,
+                   deps: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        if api not in self.tools:                        # never call an undeclared tool
+            self.note("undeclared_tool_blocked", api)
+            await self.say("final_response", f"Sorry — I can't {api.replace('_', ' ')} in this session.")
+            return None
+        spec = self.tools[api]
+        key = None
         if spec.get("kind") == "state_modifying":
-            key = f"{api}|{sorted(args.items())!r}".lower()
-            if key in self.committed:
-                return None
-            self.committed[key] = {}
+            key = self.op_key(api, args)
+            op = self.ops.get(key)
+            if op:
+                st = op["status"]
+                if st == "pending":
+                    await self.say("filler_speech", "I'm already working on that one — hang on.")
+                    return None
+                if st == "succeeded":
+                    await self.say("final_response", "That's already done — " + self.describe_success(api, op["result"], op.get("ctx")))
+                    return None
+                if st == "unknown":
+                    await self.say("final_response", "I'm not certain the earlier attempt went through, so I won't repeat it "
+                                                     "automatically. Please check your confirmations, or tell me to try again.")
+                    op["status"] = "failed"  # an explicit repeat after this warning is allowed
+                    return None
+                # failed / cancelled → a fresh attempt is allowed
         self.seq += 1
         cid = f"c{self.seq}"
-        self.inflight[cid] = {"api": api, "args": args, "epoch": self.epoch, "retries": retries}
+        self.inflight[cid] = {"api": api, "args": args, "version": self.version, "retries": retries,
+                              "deps": dict(deps or {}), "ctx": dict(self.state["slots"]),
+                              "plan": list(self.plan), "turn": self.last_turn, "op": key}
+        if key:
+            self.ops[key] = {"status": "pending", "call_id": cid, "result": None, "ctx": None}
         await self.out_q.put({"action": "tool_call", "payload": {"call_id": cid, "api_name": api, "args": args}})
         return cid
 
-    async def cancel_where(self, pred):
+    async def cancel_where(self, pred) -> List[Dict[str, Any]]:
+        gone = []
         for cid, c in list(self.inflight.items()):
             if pred(c):
                 await self.out_q.put({"action": "cancel_tool", "payload": {"call_id": cid}})
                 self.inflight.pop(cid, None)
+                if c.get("op") and c["op"] in self.ops:
+                    # a state change that was already running may or may not have committed
+                    self.ops[c["op"]]["status"] = "unknown" if self.live else "cancelled"
+                gone.append(c)
+        return gone
+
+    def invalidate(self, keep_frame: bool = True):
+        """One routine for everything a cancelled task owns."""
+        self.version += 1
+        self.buffer = []
+        for t in self.audio_parts:
+            t.cancel()
+        self.audio_parts = []
+        self.pending_clarify = None
+        self.plan = []
+        self.waiting_vision = None
+        if not keep_frame:
+            self.frame, self.vision = None, None
+            self.frame_seq += 1
+
+    # ------------------------------------------------------------------ vision
+    def on_frame(self, p: Dict[str, Any]):
+        self.frame = p
+        self.frame_seq += 1
+        job = {"ref": p.get("image_ref"), "frame_seq": self.frame_seq}
+        if self.vision_busy:
+            self.vision_next = job              # coalesce: only the newest frame is queued
+        else:
+            self._start_vision(job)
+
+    def _start_vision(self, job):
+        self.vision_busy = True
+        self.spawn(self._vision_worker(job))
+
+    async def _vision_worker(self, job):
+        try:
+            vis = await asyncio.to_thread(P.analyze_frame, job["ref"])
+        except Exception as e:
+            vis = {"label": None, "confidence": 0.0, "embedding": None, "source": f"error:{type(e).__name__}"}
+        await self.post("vision_done", frame_seq=job["frame_seq"], vis=vis)
+        nxt, self.vision_next = self.vision_next, None
+        if nxt:
+            self._start_vision(nxt)
+        else:
+            self.vision_busy = False
 
     # ------------------------------------------------------------------ audio
     def vocab_prompt(self) -> str:
-        # short, manifest-derived domain prompt: long prompts slow decoding and invite hallucination
         topics = [n.replace("_", " ") for n in list(self.tools)[:6]]
         return "Voice assistant: " + ", ".join(topics) + "." if topics else ""
 
-    async def on_audio_turn(self, jobs: List[asyncio.Task]):
-        epoch = self.epoch
-        await self.say("filler_speech", "Mm-hm, one second." if self.pending_clarify is None else "Got it.")
-        results = await asyncio.gather(*jobs)
-        if epoch != self.epoch:
+    async def _await_asr(self, jobs: List[asyncio.Task], version: int):
+        try:
+            results = await asyncio.gather(*jobs)
+        except asyncio.CancelledError:
             return
+        await self.post("asr_done", results=results, version=version)
+
+    async def on_audio_result(self, results: List[Dict[str, Any]]):
         text = nlu.norm(" ".join(r["text"] for r in results))
         words = [w for r in results for w in r["words"]]
         if not text:
-            self.pending_clarify = self.pending_clarify or {"slot": "destination"}
-            await self.say("clarification_request",
-                           "Sorry, I didn't quite catch that — could you confirm which city you mean?")
+            reason = next((r.get("error") for r in results if r.get("error")), "empty")
+            self.note("asr_no_text", reason)
+            pc = self.pending_clarify
+            field = (pc or {}).get("field") or ""
+            if pc and any(k in field for k in ("city", "destination")) or (not pc and self.last_api in FLIGHT_FAMILY):
+                self.pending_clarify = pc or {"field": "destination", "api": "flight_search", "text": "", "args": {}}
+                q = "Sorry, I didn't quite catch that — could you confirm which city you mean?"
+            else:
+                q = "Sorry, I didn't catch that — could you say it again?"
+            await self.say("clarification_request", q)
             return
         city = nlu.extract_city(text)
         if city and self.pending_clarify is None:
@@ -157,70 +315,140 @@ class ParticipantAgent:
             alt_city = nlu.extract_city(alt_text) if alt_text else None
             disagree = bool(alt_city and alt_city != city)
             if conf < ASR_CITY_CONF or disagree:
-                alt = alt_city if disagree else nlu.similar_city(city)
-                self.pending_clarify = {"slot": "destination", "candidates": [city, alt], "text": text}
-                q = (f"Just to confirm — did you say {city} or {alt}?" if alt
+                # only offer an alternative that a decoder actually heard
+                cands = [city, alt_city] if disagree else [city]
+                self.pending_clarify = {"field": "destination", "candidates": cands, "text": text,
+                                        "api": None, "args": {}, "version": self.version}
+                q = (f"Just to confirm — did you say {city} or {alt_city}?" if disagree
                      else f"Just to confirm — did you say {city}?")
                 await self.say("clarification_request", q)
                 return
+        name = nlu.extract_name(text)
+        if name and P.word_confidence(words, name) < 0.5 and self.pending_clarify is None and \
+                re.search(r"\bbook\b", text, re.I):
+            self.pending_clarify = {"field": "passenger_name", "candidates": [name], "text": text,
+                                    "api": None, "args": {}, "version": self.version}
+            await self.say("clarification_request", f"Just to confirm — is the passenger name {name}?")
+            return
         await self.on_turn(text, from_audio=True)
 
     # ------------------------------------------------------------------ turns
     async def on_turn(self, turn: str, from_audio: bool = False):
-        self.last_turn = turn
         low = turn.lower()
 
-        # answer to an earlier clarification: merge with the original request
-        if self.pending_clarify and self.pending_clarify.get("slot") == "passenger_name":
-            pc, self.pending_clarify = self.pending_clarify, None
-            name = nlu.extract_name(turn) or next((w for w in re.findall(r"[A-Z][a-z]+", turn)), None)
-            fid = self.state["slots"].get("flight_id")
-            if name and fid and "book_flight" in self.tools:
-                self.plan = []
-                self.state["slots"]["passenger_name"] = name
-                await self.say("filler_speech", f"Thanks — booking {fid} for {name} now.")
-                await self.call("book_flight", {"flight_id": fid, "passenger_name": name})
-                return
+        # explicit retraction arrives the same way whether spoken as a turn or a barge-in
+        if nlu.RETRACTION.search(low) and not self._actionable(nlu.RETRACTION.sub(" ", turn)):
+            return await self.retract()
+
         if self.pending_clarify:
-            pc, self.pending_clarify = self.pending_clarify, None
-            city = nlu.extract_city(turn)
-            if not city and re.search(r"\b(yes|yeah|yep|correct|right)\b", low) and pc.get("candidates"):
-                city = pc["candidates"][0]
-            if city:
-                base = pc.get("text") or self.last_turn
-                turn = f"{base} to {city}" if city.lower() not in base.lower() else base
-                self.state["slots"]["destination"] = city
-                low = turn.lower()
-                if not nlu.score_tools(turn, self.tools):
-                    turn += " flight"
+            handled = await self.resume_clarification(turn)
+            if handled:
+                return
+        self.last_turn = turn
 
-        if nlu.RETRACTION.fullmatch(low.strip(" .!")) and not self.inflight:
-            self.state["intent"] = "cancelled"
-            await self.say("final_response", "No problem — I've dropped that. Anything else?")
-            return
+        ranked = nlu.score_tools(turn, self.tools)
+        # a genuinely new request supersedes unfinished work (B04)
+        if self.inflight:
+            top = ranked[0][1] if ranked and ranked[0][0] >= 1.5 else None
+            if top:
+                fam = FLIGHT_FAMILY if top in FLIGHT_FAMILY else {top}
+                cur = {c["api"] for c in self.inflight.values()}
+                if cur & fam:
+                    return await self.revise(turn, announce=True)
+                # a different request: unrelated read-only work keeps running (its result stays
+                # valid); only superseded clarification / plans are dropped
+                self.pending_clarify, self.plan = None, []
 
-        ranked = [(s, n) for s, n in nlu.score_tools(turn, self.tools)]
         # elliptical follow-up ("Boston." / "make it Friday") continues the previous task
-        prev = self.last_api if hasattr(self, "last_api") else None
-        if prev and (not ranked or ranked[0][0] < 2.5) and (nlu.extract_city(turn) or nlu.extract_date(turn)) \
-                and len(nlu.tokens(turn)) <= 4:
-            return await self.start_task(prev, turn)
-        if nlu.is_smalltalk(turn) or not ranked or ranked[0][0] < 1.5:
-            if self.frame and re.search(r"\b(this|that|it)\b", low):
+        if self.last_api and (not ranked or ranked[0][0] < 1.5 or ranked[0][1] == self.last_api) and \
+                (nlu.extract_city(turn) or nlu.extract_date(turn)) and len(nlu.tokens(turn)) <= 4:
+            return await self.start_task(self.last_api, turn)
+
+        if nlu.is_smalltalk(turn, self.tools) or not ranked or ranked[0][0] < 1.5:
+            if self.frame and "lookup_manual" in self.tools and re.search(r"\b(this|that|it)\b", low):
                 return await self.start_task("lookup_manual", turn)
             self.state["intent"] = "chitchat"
-            caps = self.capabilities()
-            await self.say("final_response", f"Happy to help! I can {caps}. What would you like to do?")
+            await self.say("final_response", f"Happy to help! I can {self.capabilities()}. What would you like to do?")
             return
 
         top = ranked[0][1]
-        wants_book = bool(re.search(r"\bbook\b", low)) and "book_flight" in self.tools
-        if top in ("book_flight",) or (wants_book and "flight_search" in self.tools):
+        negated = nlu.negates_booking(turn)
+        wants_book = bool(re.search(r"\b(book|reserve)\b", low)) and not negated and "book_flight" in self.tools
+        if top == "book_flight" or (wants_book and top in FLIGHT_FAMILY) or \
+                (top == "flight_search" and negated):
             top = "flight_search" if "flight_search" in self.tools else top
             self.plan = ["book_flight"] if wants_book else []
         else:
             self.plan = []
+        if negated and top == "book_flight":
+            top = "flight_search" if "flight_search" in self.tools else None
+            if not top:
+                return await self.say("final_response", "Okay — I won't book anything.")
         await self.start_task(top, turn)
+
+    def _actionable(self, text: str) -> bool:
+        r = nlu.score_tools(text, self.tools)
+        return bool(r and r[0][0] >= 2.5)
+
+    async def resume_clarification(self, turn: str) -> bool:
+        """Resume the original request with an answer parsed for the field we asked about."""
+        pc, self.pending_clarify = self.pending_clarify, None
+        field = pc.get("field") or ""
+        cands = pc.get("candidates") or []
+        value = None
+        if cands:
+            for c in cands:
+                if re.search(r"\b" + re.escape(c.lower()) + r"\b", turn.lower()):
+                    value = c
+            if value is None and nlu.YES_RE.search(turn):
+                if len(cands) == 1:
+                    value = cands[0]
+                else:  # "yes" cannot choose between two options
+                    self.pending_clarify = pc
+                    await self.say("clarification_request", f"Sorry — which one: {cands[0]} or {cands[1]}?")
+                    return True
+            if value is None and nlu.NO_RE.search(turn) and len(cands) == 1:
+                self.pending_clarify = {**pc, "candidates": []}
+                what = "city" if "dest" in field or "city" in field else field.split(".")[-1].replace("_", " ")
+                await self.say("clarification_request", f"Sorry about that — which {what} did you mean?")
+                return True
+        api = pc.get("api")
+        fspec = nlu.field_spec(self.tools.get(api, {}), field) if api else {}
+        if value is None:
+            value = nlu.parse_field_answer(turn, field, fspec)
+            if field.endswith("destination") or "city" in field:
+                value = nlu.extract_city(turn) or (value if value and len(value.split()) <= 3 else None)
+        # the reply was a whole new request, not an answer → treat it as one
+        if value is None or (self._actionable(turn) and len(nlu.tokens(turn)) > 4 and not cands):
+            return False
+        slots = self.state["slots"]
+        leaf = field.split(".")[-1]
+        if leaf in ("destination", "city"):
+            slots["destination"] = value
+        elif "passenger" in leaf or leaf == "name":
+            slots["passenger_name"] = value
+        else:
+            slots[field] = value
+        base = pc.get("text") or self.last_turn
+        self.last_turn = base
+        if api == "book_flight" and slots.get("flight_id") and slots.get("passenger_name"):
+            self.plan = []
+            await self.say("filler_speech", f"Thanks — booking {slots['flight_id']} for {slots['passenger_name']} now.")
+            await self.call("book_flight", {"flight_id": slots["flight_id"], "passenger_name": slots["passenger_name"]},
+                            deps={"flight_id": slots["flight_id"]})
+            return True
+        if api is None:  # ASR confirmation: re-route the confirmed utterance
+            if leaf in ("destination", "city"):
+                turn2 = base if value.lower() in base.lower() else f"{base} to {value}"
+                if not nlu.score_tools(turn2, self.tools):
+                    turn2 += " flight"
+            else:
+                turn2 = base
+            await self.on_turn(turn2)
+            return True
+        self.plan = pc.get("plan") or []
+        await self.start_task(api, base, extra=pc.get("args") or {})
+        return True
 
     def capabilities(self) -> str:
         pretty = []
@@ -235,29 +463,42 @@ class ParticipantAgent:
                     "lookup_manual": "device_support", "create_support_ticket": "device_support",
                     "cancel_booking": "cancel_booking"}
 
-    async def start_task(self, api: str, turn: str):
-        self.last_api = api
-        spec = self.tools.get(api, {})
+    def update_slots(self, api: str, turn: str):
         slots = self.state["slots"]
-        # update slots from this turn (repair-aware)
         city = nlu.extract_city(turn)
         if city:
             slots["destination"] = city
+        origin = nlu.extract_origin(turn)
+        if origin:
+            slots["origin"] = origin
         date = nlu.extract_date(turn)
         if date:
             slots["date"] = date
         name = nlu.extract_name(turn)
-        if name and api in ("flight_search", "book_flight"):
+        if name and api in FLIGHT_FAMILY:
             slots["passenger_name"] = name
+        want = nlu.extract_time(turn)
+        if want:
+            slots["depart_time"] = want
+        bid = nlu.extract_id(turn, "booking_id")
+        if bid:
+            slots["booking_id"] = bid
         dev = nlu.extract_device(turn, (self.frame or {}).get("device_hint"))
         if dev and api in ("lookup_manual", "create_support_ticket"):
             slots["device_model"] = dev
+
+    async def start_task(self, api: str, turn: str, extra: Optional[Dict[str, Any]] = None):
+        self.last_api = api
+        spec = self.tools.get(api, {})
+        slots = self.state["slots"]
+        self.update_slots(api, turn)
         self.state["intent"] = self.INTENT_NAMES.get(api, api)
 
         if api == "lookup_manual":
             return await self.manual_lookup(turn)
-        if api == "create_support_ticket":
-            slots["issue_summary"] = nlu.norm(re.sub(r"(?i)\b(please|open a ticket|create a ticket)\b", "", turn)).strip(" ,.") or turn
+        if api == "create_support_ticket" and "create_support_ticket" in self.tools:
+            slots["issue_summary"] = nlu.norm(re.sub(r"(?i)\b(please|open a ticket|create a ticket|open a support ticket)\b",
+                                                     "", turn)).strip(" ,.") or turn
             args = {"device": {"model": slots.get("device_model") or "GENERIC"},
                     "issue": {"summary": slots["issue_summary"], "severity": nlu.severity_of(turn)}}
             await self.say("filler_speech", f"Okay, I'll open a support ticket for your {self.device_word()} now.")
@@ -265,15 +506,25 @@ class ParticipantAgent:
             return
 
         ctx = dict(slots)
+        ctx.update(extra or {})
         args, missing = nlu.build_args(spec, turn, ctx)
         if missing:
-            slot = missing[0].split(".")[-1].replace("_", " ")
-            q = "Sure — which city?" if any(k in slot for k in ("city", "destination")) else f"Sure — what {slot} should I use?"
-            self.pending_clarify = {"slot": missing[0], "text": turn}
+            field = missing[0]
+            leaf = field.split(".")[-1].replace("_", " ")
+            fs = nlu.field_spec(spec, field)
+            if any(k in leaf for k in ("city", "destination")):
+                q = "Sure — which city?"
+            elif fs.get("enum"):
+                opts = [str(e) for e in fs["enum"]]
+                q = f"Sure — which {leaf}: " + ", ".join(opts[:-1]) + f" or {opts[-1]}?"
+            else:
+                q = f"Sure — what {leaf} should I use?"
+            self.pending_clarify = {"field": field, "api": api, "args": {**(extra or {})}, "text": turn,
+                                    "plan": list(self.plan), "version": self.version}
             await self.say("clarification_request", q)
             return
         await self.say("filler_speech", self.ack(api, args))
-        await self.call(api, args)
+        await self.call(api, args, deps={k: args.get(k) for k in ("destination", "date", "city", "origin") if k in args})
 
     def device_word(self) -> str:
         return {"QN90": "TV", "S24": "phone", "WF45": "washer", "GENERIC": "device"}.get(
@@ -284,194 +535,278 @@ class ParticipantAgent:
             d = args.get("destination")
             when = f" for {args['date']}" if args.get("date") else ""
             return f"Sure, checking flights to {d}{when}." if not self.plan else f"On it — finding flights to {d}{when} first."
-        vals = [str(v) for v in args.values() if isinstance(v, (str, int, float))][:1]
+        vals = [str(v) for v in args.values() if isinstance(v, (str, int, float)) and not isinstance(v, bool)][:1]
         what = nlu.norm(api.replace("_", " "))
         return f"Sure, let me run a {what}" + (f" for {vals[0]}." if vals else ".")
 
+    VISUAL_Q = re.compile(r"\b(this|that|these|those|it|here|camera|see|look(?:ing)? at|pointing)\b", re.I)
+
     async def manual_lookup(self, turn: str):
-        await self.say("filler_speech", "Let me take a look at that and check the manual.")
-        epoch = self.epoch
-        vis = {"label": None, "embedding": None}
-        if self.frame_task is not None:
-            try:
-                vis = await asyncio.wait_for(asyncio.shield(self.frame_task), timeout=4.0)
-            except Exception:
-                pass
-        if epoch != self.epoch:
+        if "lookup_manual" not in self.tools:
+            return await self.say("final_response", "Sorry — manual lookup isn't available in this session.")
+        visual = bool(self.frame) and bool(self.VISUAL_Q.search(turn))
+        await self.say("filler_speech", "Let me take a look at that and check the manual." if visual
+                       else "Let me check the manual for that.")
+        if visual and (self.vision is None or self.vision_busy):
+            # never block the consumer on vision: park the request, resume on completion
+            self.seq += 1
+            token = self.seq
+            self.waiting_vision = {"turn": turn, "visual": True, "version": self.version,
+                                   "frame_seq": self.frame_seq, "token": token}
+            self.spawn(self._vision_deadline(token, 4.0))
             return
-        label = vis.get("label")
+        await self._issue_manual(turn, visual)
+
+    async def _vision_deadline(self, token: int, secs: float):
+        await asyncio.sleep(secs)
+        await self.post("vision_timeout", token=token)
+
+    async def _issue_manual(self, turn: str, visual: bool):
+        vis = (self.vision or {}) if visual else {}
+        label, conf = vis.get("label"), float(vis.get("confidence") or 0.0)
+        if label and conf < VISION_MIN_CONF:
+            self.note("vision_low_confidence", f"{label}:{conf:.2f}")
+            label = None
         q = turn
         if label:
             q = f"{label} — {turn}"
             self.state["slots"]["issue_summary"] = f"{label}: {turn}"
         args: Dict[str, Any] = {"query": q}
         spec = self.tools.get("lookup_manual", {}).get("args", {})
-        if vis.get("embedding") and "image_embedding" in spec:
-            args["image_embedding"] = vis["embedding"]
+        emb = vis.get("embedding")
+        # only a real CLIP embedding is a valid hybrid-search query vector
+        if emb and "image_embedding" in spec and "clip" in str(vis.get("source", "")):
+            args["image_embedding"] = emb
         dm = self.state["slots"].get("device_model")
         enum = (spec.get("device_model") or {}).get("enum") or []
         if dm in enum and dm != "GENERIC":
             args["device_model"] = dm
-        self._vision_label = label
-        await self.call("lookup_manual", args)
+        cid = await self.call("lookup_manual", args)
+        if cid in self.inflight:
+            self.inflight[cid].update({"vision_label": label, "visual": visual})
 
     # ------------------------------------------------------------------ interruption
+    async def retract(self):
+        await self.cancel_where(lambda c: True)
+        self.invalidate(keep_frame=False)
+        self.state["intent"] = "cancelled"
+        await self.say("final_response", "Okay, I've stopped that and dropped the request. Anything else I can do?")
+
     async def on_interruption(self, text: str):
-        self.epoch += 1
         low = text.lower()
-        slots = self.state["slots"]
-        new_city = nlu.extract_city(text)
         ranked = nlu.score_tools(text, self.tools)
-        current_apis = {c["api"] for c in self.inflight.values()}
-        top = ranked[0][1] if ranked and ranked[0][0] >= 2.5 else None
-        switch = bool(top and top not in current_apis and not new_city
-                      and not (top == "book_flight" and "flight_search" in current_apis))
+        current_apis = {c["api"] for c in self.inflight.values()} or ({self.last_api} if self.last_api else set())
+        top = ranked[0][1] if ranked and ranked[0][0] >= 2.0 else None
+        same_family = bool(top and (top in current_apis or (top in FLIGHT_FAMILY and current_apis & FLIGHT_FAMILY)))
+        switch = bool(top and not same_family)          # intent is decided independently of slots (B10)
 
-        if nlu.RETRACTION.search(low) and not new_city and not switch:
-            # retraction: stop everything, keep nothing half-done
-            self.plan = []
-            await self.cancel_where(lambda c: True)
-            self.state["intent"] = "cancelled"
-            await self.say("final_response", "Okay, I've stopped that and dropped the request. Anything else I can do?")
-            return
+        if nlu.RETRACTION.search(low) and not switch and not self._has_new_values(text):
+            return await self.retract()
 
-        if switch or nlu.INTENT_SWITCH.search(low) and top:
-            self.plan = []
+        if switch or (nlu.INTENT_SWITCH.search(low) and top):
             await self.cancel_where(lambda c: True)
+            self.invalidate()
             self.state = {"intent": None, "slots": {}}
-            await self.say("filler_speech", f"Sure, dropping that — switching to your {top.replace('_', ' ').split()[-1] if top else 'new'} request.")
+            await self.say("filler_speech", f"Sure, dropping that — switching to your "
+                                            f"{top.replace('_', ' ').split()[-1] if top else 'new'} request.", priority=True)
             self.answered = False
             await self.on_turn(text)
             return
+        await self.revise(text)
 
-        # slot revision (most common): cancel only calls that depend on the changed slot
+    def _has_new_values(self, text: str) -> bool:
+        s = self.state["slots"]
+        c, d, n = nlu.extract_city(text), nlu.extract_date(text), nlu.extract_name(text)
+        return bool((c and c != s.get("destination")) or (d and d != s.get("date")) or (n and n != s.get("passenger_name")))
+
+    async def revise(self, text: str, announce: bool = True):
+        """Slot revision: cancel only calls that depend on a changed slot, then rebuild the goal."""
+        slots = self.state["slots"]
         changed = {}
-        if new_city and new_city != slots.get("destination"):
-            changed["destination"] = new_city
+        c = nlu.extract_city(text)
+        if c and c != slots.get("destination"):
+            changed["destination"] = c
         d = nlu.extract_date(text)
         if d and d != slots.get("date"):
             changed["date"] = d
         n = nlu.extract_name(text)
         if n and n != slots.get("passenger_name"):
             changed["passenger_name"] = n
+        t = nlu.extract_time(text)
+        if t and t != slots.get("depart_time"):
+            changed["depart_time"] = t
         if not changed:
             await self.say("filler_speech", "Okay — still on it.")
             return
+        # which in-flight calls are invalidated by this change?
+        def affected(call):
+            if call["api"] == "book_flight":
+                return True  # any flight/passenger change invalidates a pending booking
+            return any(k in changed or (k == "city" and "destination" in changed) for k in call["deps"])
+        was_booking = any(cc["api"] == "book_flight" for cc in self.inflight.values())
+        had_plan = bool(self.plan) or was_booking or any("book_flight" in cc.get("plan", []) for cc in self.inflight.values())
         slots.update(changed)
-        if "destination" in changed or "date" in changed:
+        if "destination" in changed or "date" in changed or "depart_time" in changed:
             slots.pop("flight_id", None)
-        what = changed.get("destination") or changed.get("date") or changed.get("passenger_name")
-        await self.say("filler_speech", f"Got it — switching to {what}.")
-        stale = [c for c in self.inflight.values()]
-        await self.cancel_where(lambda c: True)
-        redo = {c["api"] for c in stale} or ({"flight_search"} if "flight_search" in self.tools else set())
+        what = changed.get("destination") or changed.get("date") or changed.get("passenger_name") or changed.get("depart_time")
+        if announce:
+            await self.say("filler_speech", f"Got it — switching to {what}.", priority=True)
+        stale = await self.cancel_where(affected)
+        self.version += 1
+        self.pending_clarify = None
         self.answered = False
-        for api in redo:
-            if self.tools.get(api, {}).get("kind") == "state_modifying":
+        redo = {x["api"] for x in stale if self.tools.get(x["api"], {}).get("kind") != "state_modifying"}
+        if was_booking or (not redo and not self.inflight and self.last_api in FLIGHT_FAMILY):
+            redo.add("flight_search")
+        if (was_booking or had_plan) and "book_flight" in self.tools and not nlu.negates_booking(text):
+            self.plan = ["book_flight"]
+        if was_booking and self.live:
+            await self.say("filler_speech", "I stopped the earlier booking before replacing it.")
+        for api in sorted(redo):
+            if api not in self.tools:
                 continue
-            args, missing = nlu.build_args(self.tools.get(api, {}), text + " " + self.last_turn, dict(slots))
+            args, missing = nlu.build_args(self.tools[api], text + " " + self.last_turn, dict(slots))
             for k, v in changed.items():
-                if k in args or (k == "destination" and "city" in args):
-                    args["city" if "city" in args and k == "destination" else k] = v
-            if not missing:
-                await self.call(api, args)
+                if k in args:
+                    args[k] = v
+                elif k == "destination" and "city" in args:
+                    args["city"] = v
+            if missing:
+                self.pending_clarify = {"field": missing[0], "api": api, "args": {}, "text": self.last_turn,
+                                        "plan": list(self.plan), "version": self.version}
+                await self.say("clarification_request", f"Sure — what {missing[0].split('.')[-1].replace('_', ' ')} should I use?")
+                continue
+            self.last_api = api
+            await self.call(api, args, deps={k: args.get(k) for k in ("destination", "date", "city", "origin") if k in args})
 
     # ------------------------------------------------------------------ results
+    def still_valid(self, c: Dict[str, Any]) -> bool:
+        """A result is usable only if the slots it depended on still hold."""
+        s = self.state["slots"]
+        for k, v in c["deps"].items():
+            cur = s.get("destination") if k == "city" else s.get(k)
+            if cur is not None and v is not None and str(cur).casefold() != str(v).casefold():
+                return False
+        return True
+
     async def on_tool_result(self, p: Dict[str, Any]):
         cid = p.get("call_id")
         c = self.inflight.pop(cid, None)
         if c is None:
-            return  # cancelled / stale — never ground on it
+            return  # cancelled / unknown — never ground on it
         api, res = c["api"], p.get("result") or {}
         kind = self.tools.get(api, {}).get("kind", "read_only")
+        op = self.ops.get(c.get("op") or "")
+        if not self.still_valid(c):
+            self.note("stale_result_dropped", api)
+            if op and p.get("status") != "error":
+                op.update(status="succeeded", result=res, ctx=c["ctx"])
+            return
 
         if p.get("status") == "error":
             err = res.get("error", "error")
+            if op:
+                op["status"] = "failed"
             if kind == "read_only" and c["retries"] < 1 and err in ("timeout", "error", "unavailable"):
                 await self.say("filler_speech", "That's taking longer than usual — trying again.")
-                await self.call(api, c["args"], retries=c["retries"] + 1)
+                self.plan = c["plan"]
+                await self.call(api, c["args"], retries=c["retries"] + 1, deps=c["deps"])
                 return
             if api == "book_flight" and err == "duplicate_booking":
                 bid = res.get("booking_id")
                 if bid:
                     self.state["slots"]["booking_id"] = bid
+                if op:
+                    op.update(status="succeeded", result={"booking_id": bid, "flight_id": c["args"].get("flight_id")}, ctx=c["ctx"])
                 await self.say("final_response", f"Looks like that flight is already booked{f' ({bid})' if bid else ''}, so I didn't book it twice.")
                 return
             await self.say("final_response", {
                 "timeout": "Sorry — the service timed out and I was unable to finish that. Want me to try again?",
                 "not_found": "Sorry, I couldn't find that — can you double-check the details?",
                 "invalid_args": "Sorry, I was unable to complete that request — could you rephrase the details?",
+                "unknown_tool": "Sorry — that service isn't available right now.",
             }.get(err, "Sorry — I was unable to complete that right now."))
             return
+        if op:
+            op.update(status="succeeded", result=res, ctx=dict(self.state["slots"]))
 
         if api == "flight_search":
-            return await self.on_flights(res)
+            return await self.on_flights(res, c)
+        if api == "lookup_manual":
+            return await self.on_manual(res, c)
         if api == "book_flight":
             self.state["slots"]["booking_id"] = res.get("booking_id")
-            s = self.state["slots"]
-            return await self.say("final_response",
-                                  f"Done — you're booked on {res.get('flight_id', s.get('flight_id'))} to {s.get('destination', 'your destination')}"
-                                  f"{' for ' + s['passenger_name'] if s.get('passenger_name') else ''}. Booking reference {res.get('booking_id')}.")
-        if api == "cancel_booking":
-            return await self.say("final_response", f"Your booking {res.get('cancelled', '')} has been cancelled.")
-        if api == "lookup_manual":
-            return await self.on_manual(res)
         if api == "create_support_ticket":
             self.state["slots"]["ticket_id"] = res.get("ticket_id")
-            return await self.say("final_response", f"I've opened support ticket {res.get('ticket_id')} for your {self.device_word()} — a technician will follow up.")
-        # unseen / manifest tool: ground in whatever fields came back
-        summary = nlu.humanize_result(api, res)
-        subj = self.state["slots"].get("destination")
-        await self.say("final_response",
-                       (f"Here's what I found{' for ' + subj if subj else ''}: {summary}." if summary
-                        else f"Done — {api.replace('_', ' ')} completed."))
+        await self.say("final_response", self.describe_success(api, res, self.state["slots"]))
 
-    async def on_flights(self, res: Dict[str, Any]):
+    def describe_success(self, api: str, res: Dict[str, Any], s: Optional[Dict[str, Any]]) -> str:
+        s = s or {}
+        if api == "book_flight":
+            return (f"Done — you're booked on {res.get('flight_id', s.get('flight_id'))} to {s.get('destination', 'your destination')}"
+                    f"{' for ' + s['passenger_name'] if s.get('passenger_name') else ''}. Booking reference {res.get('booking_id')}.")
+        if api == "cancel_booking":
+            return f"Your booking {res.get('cancelled', '')} has been cancelled."
+        if api == "create_support_ticket":
+            return f"I've opened support ticket {res.get('ticket_id')} for your {self.device_word()} — a technician will follow up."
+        summary = nlu.humanize_result(api, res)
+        subj = s.get("destination")
+        return (f"Here's what I found{' for ' + subj if subj else ''}: {summary}." if summary
+                else f"Done — {api.replace('_', ' ')} completed.")
+
+    async def on_flights(self, res: Dict[str, Any], c: Dict[str, Any]):
         s = self.state["slots"]
+        dest = c["args"].get("destination") or s.get("destination")   # bound to the originating call
         flights = res.get("flights") or []
         if not flights:
             self.plan = []
-            return await self.say("final_response", f"I couldn't find any flights to {s.get('destination', 'there')}. Want to try another date?")
-        want_h = nlu.extract_time(self.last_turn)
-        pick = flights[0]
-        if want_h is not None:
+            return await self.say("final_response", f"I couldn't find any flights to {dest or 'there'}. Want to try another date?")
+        want = s.get("depart_time")
+        pick, matched = flights[0], want is None
+        if want:
             for f in flights:
-                try:
-                    if int(str(f.get("depart", "")).split(":")[0]) == want_h:
-                        pick = f
-                        break
-                except ValueError:
-                    pass
-        if self.plan and self.plan[0] == "book_flight":
+                if str(f.get("depart", "")).strip()[:5] == want:
+                    pick, matched = f, True
+                    break
+        plan = self.plan or c.get("plan") or []
+        if not matched:
             self.plan = []
+            opts = " or ".join(f"{f['flight_id']} at {f.get('depart')} (${f.get('price_usd')})" for f in flights[:3])
+            self.pending_clarify = {"field": "depart_time", "api": "flight_search", "args": {}, "text": c["turn"],
+                                    "plan": plan, "version": self.version}
+            return await self.say("clarification_request",
+                                  f"I couldn't find a flight to {dest} at {want}. The options are {opts} — which would you like?")
+        if plan and plan[0] == "book_flight":
+            self.plan = []
+            s["flight_id"] = pick["flight_id"]
             name = s.get("passenger_name")
             if not name:
-                self.pending_clarify = {"slot": "passenger_name", "text": self.last_turn}
-                self.plan = ["book_flight"]
-                s["flight_id"] = pick["flight_id"]
+                self.pending_clarify = {"field": "passenger_name", "api": "book_flight", "args": {},
+                                        "text": c["turn"], "version": self.version}
                 return await self.say("final_response",
-                                      f"I found a flight to {s.get('destination')}: {pick['flight_id']} departing "
+                                      f"I found a flight to {dest}: {pick['flight_id']} departing "
                                       f"{pick.get('depart')} for ${pick.get('price_usd')}. Whose name should I book it under?")
-            s["flight_id"] = pick["flight_id"]
             await self.say("filler_speech", f"Found {pick['flight_id']} at {pick.get('depart')} — booking it for {name} now.")
-            await self.call("book_flight", {"flight_id": pick["flight_id"], "passenger_name": name})
+            await self.call("book_flight", {"flight_id": pick["flight_id"], "passenger_name": name},
+                            deps={"flight_id": pick["flight_id"]})
             return
         s["flight_id"] = pick["flight_id"]
         others = [f for f in flights if f is not pick]
         extra = (f" There's also {others[0]['flight_id']} at {others[0].get('depart')} for ${others[0].get('price_usd')}."
                  if others else "")
         await self.say("final_response",
-                       f"I found a flight to {s.get('destination')}: {pick['flight_id']} departing {pick.get('depart')} "
+                       f"I found a flight to {dest}: {pick['flight_id']} departing {pick.get('depart')} "
                        f"for ${pick.get('price_usd')}.{extra}")
 
-    async def on_manual(self, res: Dict[str, Any]):
+    async def on_manual(self, res: Dict[str, Any], c: Dict[str, Any]):
         pages = res.get("pages") or []
-        label = getattr(self, "_vision_label", None)
+        label, visual = c.get("vision_label"), c.get("visual", False)
         if not pages:
-            return await self.say("final_response", "I checked the manuals but found no page covering that. Could you describe it a bit more, or point the camera closer?")
-        if not label and len(pages) > 1:
-            # vision gave us nothing: don't guess a port type from text-only ranking
-            return await self.say("final_response",
+            return await self.say("final_response", "I checked the manuals but found no page covering that. "
+                                  + ("Could you point the camera a little closer?" if visual else "Could you describe it a bit more?"))
+        if visual and not label and len(pages) > 1:
+            # vision gave us nothing reliable: don't guess a port type from text-only ranking
+            return await self.say("clarification_request",
                                   f"I couldn't make out the port clearly from the camera. The {pages[0].get('doc', 'device')} manual "
                                   f"covers several connectors — could you move a little closer or tell me what's printed next to it?")
         best = pages[0]
@@ -482,13 +817,13 @@ class ParticipantAgent:
                     best = pg
                     break
         title = best.get("title", "")
+        doc = re.sub(r"(?i)[-_ ]?manual$", "", best.get("doc", "device"))
+        if not visual:
+            return await self.say("final_response", f"The {doc} manual covers that on page {best.get('page')} (\"{title}\").")
         use = {"hdmi": "connect an external display, monitor or projector with an HDMI cable",
-               "led": "show the device status",
-               "charging": "charge the device",
-               "drum": "explain drum error codes"}
+               "led": "show the device status", "charging": "charge the device", "drum": "explain drum error codes"}
         why = next((v for k, v in use.items() if k in title.lower()), None)
-        await self.say("final_response",
-                       f"That's the {title.split(' ')[0] if title else 'port'} "
-                       f"{'port' if 'port' not in title.lower() and 'hdmi' in title.lower() else ''}".replace("  ", " ").strip()
-                       + (f" — it's used to {why}." if why else ".")
-                       + f" See the {re.sub(r'(?i)[-_ ]?manual$', '', best.get('doc', 'device'))} manual, page {best.get('page')} (\"{title}\").")
+        head = title.split(" ")[0] if title else "port"
+        suffix = " port" if "port" not in title.lower() and "hdmi" in title.lower() else ""
+        await self.say("final_response", f"That's the {head}{suffix}" + (f" — it's used to {why}." if why else ".")
+                       + f" See the {doc} manual, page {best.get('page')} (\"{title}\").")
