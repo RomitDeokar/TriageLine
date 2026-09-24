@@ -88,7 +88,9 @@ async def run_demo_scenario(
         # Called from the worker thread run_scenario executes on -- hand
         # the broadcast back to *this* request's event loop rather than
         # awaiting it directly (this function is sync and off-thread).
-        asyncio.run_coroutine_threadsafe(manager.broadcast(channel, payload), loop)
+        # Wait on the worker thread so subscribers see state transitions in
+        # EventBus order (a later pending/finalized event cannot overtake propose).
+        asyncio.run_coroutine_threadsafe(manager.broadcast(channel, payload), loop).result(timeout=10)
 
     result = await asyncio.to_thread(run_scenario, scenario, agent_type, on_event=on_event)
     return result

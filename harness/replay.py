@@ -35,7 +35,7 @@ from core.deliberation.constraints import default_constraint_registry
 from core.deliberation.engine import DeliberationEngine
 from core.deliberation.intents import default_intent_registry
 from core.event_bus import EventBus
-from core.events import Event, BargeIn
+from core.events import Event, BargeIn, FinalTranscript
 from harness.scenario import Scenario, StepType
 from providers.interfaces import ConversationTurn
 
@@ -196,6 +196,7 @@ async def _run_deliberative(
 
     for step in scenario.steps:
         if step.type == StepType.CALLER_SAYS:
+            await bus.publish(FinalTranscript(call_id=call_id, timestamp_ms=0, speaker="caller", text=step.text))
             context.append(ConversationTurn(speaker="caller", text=step.text))
             record = await engine.deliberate(call_id, context)
 
@@ -278,6 +279,7 @@ async def _run_naive(
 
     for step in scenario.steps:
         if step.type == StepType.CALLER_SAYS:
+            await bus.publish(FinalTranscript(call_id=call_id, timestamp_ms=0, speaker="caller", text=step.text))
             context.append(ConversationTurn(speaker="caller", text=step.text))
             if decided:
                 continue
