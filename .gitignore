@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 ui/node_modules/
 ui/dist/
+generated/
+results.json
+*.log
