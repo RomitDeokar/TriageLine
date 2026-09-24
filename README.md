@@ -1,4 +1,4 @@
-# TriageLine: an interruptible real-time agent (Samsung PRISM · Theme 05)
+# TriageLine: an interruptible real-time agent (Samsung PRISM · Theme 05) 
 
 TriageLine is a dual-process voice agent built on the official Theme 5 harness. A fast path answers within milliseconds. A slow path does the real work (ASR, vision, async tools). A coordination layer handles barge-ins without acting on stale results.
 
