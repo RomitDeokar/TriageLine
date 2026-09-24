@@ -1,0 +1,75 @@
+Theme 05: Interruptible Real-Time Agents
+Voice-native assistant architecture: fast-and-slow execution and robust interruption handling.
+1. Problem Statement & Architecture
+Standard AI assistants operate in half-duplex mode (listen, think, speak), failing in full-duplex
+conversations where users interrupt, re-plan, or correct themselves mid-sentence.
+Technically, this is a concurrency and state-consistency challenge. Perception, reasoning, tool execution,
+and speech must run concurrently on a unified timeline. The standard architecture employs a dual-
+process model:
+Fast Path: Maintains responsiveness within a few hundred milliseconds (acknowledgment,
+clarification, progress narration).
+Slow Path: Executes asynchronous tools, multimodal processing, and complex reasoning.
+Coordination Layer: Handles non-blocking execution, call cancellation, state snapshot updates, and
+idempotency for state-modifying actions.
+2. Key Use Cases
+In-Car & Hands-Free: Dropping stale route calculations when destination updates mid-execution.
+Customer Support Bots: Dynamically adjusting parameters mid-booking without double-booking.
+Field & Consumer Troubleshooting: Grounding device queries in camera frames and manuals.
+Accessibility: Resolving speech hesitations and conversational self-repairs.
+3. Participant Objectives & Interface Contract
+Participants implement an agent communicating over two asynchronous queues (timestamped events
+input, actions output).
+3.1 Input & Output Streams
+Inputs: Transcribed text chunks (with end-of-turn markers), raw audio clips (WAV), video frames
+(PNG), interruption signals, asynchronous tool results, and scenario tool manifests.
+Outputs: Spoken fillers, non-blocking tool calls (with explicit call_id), cancellations, clarification
+requests, and final responses carrying structured State Snapshots (intent and slot values).
+
+Theme 05: Interruptible Real-Time Agents | v1.0.0
+3.2 Core Technical Objectives
+1. Floor Management: Issue meaningful responses quickly without making false completion claims or
+excessive fillers.
+2. Interruption Recovery: Promptly cancel superseded in-flight tool calls (within few ms grace period),
+update state snapshots, and re-plan cleanly.
+3. Session Slot Tracking: Maintain session-scoped slot state across multi-turn interactions and apply
+localized slot corrections.
+4. Schema-Driven Tools: Parse dynamic tool definitions (read-only vs. state-modifying) from manifests;
+strictly avoid duplicate state-changing calls.
+5. Multimodal Grounding: Process raw audio and frames behind conversational acknowledgments;
+clarify ambiguous perceptions.
+6. Protocol Compliance: Emit well-formed JSON payloads with valid snapshots and identifiers.
+4. Evaluation Kit & Mechanics
+The evaluation kit mirrors the hidden evaluation environment:
+Virtual Clock Streaming Harness: Deterministic event replay, asynchronous mock tool responses,
+and complete event/action trace logging.
+Mock Environment: Deterministic latency and fault injection for flight search, booking, ticket
+creation, and frame-grounded manual lookups.
+Public Test Suite: Nine canonical scenarios (50% text, 30% audio, 20% visual) covering interruptions,
+chained calls, retries, clarifications, and unseen tools.
+Hidden Set: ~60 scenarios (50% text, 30% audio, 20% visual) testing edge cases and adversarial
+timing.
+The evaluation kit will be released post the registrations.
+5. Scoring Framework
+Each scenario is scored 0 100 based strictly on trace logs:
+Category Weight Evaluation Criteria
+Task Completion 40% Correct tool execution, valid argument extraction, state
+snapshot accuracy, and proper final response grounding.
+Interruption 35% Prompt cancellation of invalidated calls, absence of stale re-
+Recovery runs, and updated state snapshots.
+Response Latency 15% Time to first substantive spoken action following user input
+or interruption.
+Page 2 of 3
+
+Theme 05: Interruptible Real-Time Agents | v1.0.0
+Category Weight Evaluation Criteria
+Safety & Protocol 10% Zero duplicate state-changing calls, structured schema
+adherence, and valid state payloads.
+A quality multiplier (0.80× 1.20×) evaluates transcript naturalness, truthfulness, and relevance. Hidden scores use a
+1.5× multiplier for multimodal scenarios.
+6. Execution Constraints & Scope
+Runtime: Python 3.10 3.12, 120s wall-clock cap per scenario, 300s setup/warm-up hook.
+State Scope: Session-scoped memory only (no cross-session caching).
+Out of Scope: Wake-word detection, voice synthesis tuning, UI design.
+Focus Areas: Async event loop orchestration, speculative execution, latency hiding, and multimodal
+intent grounding.
+Page 3 of 3
