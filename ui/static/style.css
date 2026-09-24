@@ -148,3 +148,22 @@ button.primary.busy{opacity:.6;cursor:progress}
 .defs dd{margin:0;color:var(--ink2)}
 
 .tip{position:fixed;z-index:20;background:var(--ink);color:var(--paper);font:12px/1.45 var(--mono);padding:8px 10px;border-radius:5px;max-width:420px;pointer-events:none;white-space:pre-wrap}
+
+/* ---------- phone layout (B35) */
+.live-link{text-decoration:none;color:inherit}
+@media (max-width: 760px){
+  header.top{flex-wrap:wrap;gap:8px;padding:10px 12px}
+  nav.tabs{width:100%;overflow-x:auto;display:flex;white-space:nowrap}
+  nav.tabs .tab{flex:0 0 auto;min-height:40px}
+  #view-run.view.active,.view.active{display:flex!important;flex-direction:column}
+  aside.side{width:auto!important;max-height:34vh;overflow:auto;border-right:none!important;border-bottom:1px solid var(--line,#ddd)}
+  .stage{padding:10px!important;min-width:0}
+  .stage-head{flex-direction:column;align-items:stretch!important;gap:8px}
+  .strip{display:grid!important;grid-template-columns:repeat(2,1fr)!important;gap:8px}
+  .strip .total{grid-column:1/-1}
+  .timeline{overflow-x:auto}
+  .timeline .lane,.timeline .axis{min-width:560px}
+  #transcript li,#c-transcript li{grid-template-columns:48px 70px 1fr!important;font-size:13px}
+  table{display:block;overflow-x:auto}
+  button{min-height:44px}
+}

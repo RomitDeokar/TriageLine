@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TriageLine — interruptible agent console</title>
+<title>TriageLine — evaluation console</title>
+<link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Ccircle cx=%225%22 cy=%225%22 r=%225%22 fill=%22%23c2571a%22/%3E%3C/svg%3E">
@@ -23,6 +24,7 @@
     <button class="tab" data-view="compose">Compose</button>
     <button class="tab" data-view="suite">Suite</button>
     <button class="tab" data-view="about">Architecture</button>
+    <a class="tab live-link" href="/live.html">📱 Live Assistant</a>
   </nav>
 </header>
 
@@ -39,7 +41,7 @@
       </div>
       <ul id="scenario-list" class="slist"></ul>
       <label class="speed">Time scale
-        <select id="ts"><option value="1">1× (official)</option><option value="2" selected>2×</option><option value="4">4×</option></select>
+        <select id="ts"><option value="1" selected>1× (official)</option><option value="2">2× preview</option><option value="4">4× preview</option></select>
       </label>
     </aside>
 
