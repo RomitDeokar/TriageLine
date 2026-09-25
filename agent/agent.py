@@ -517,7 +517,9 @@ class ParticipantAgent:
     # ------------------------------------------------------------------ compound requests
     # a hesitation ellipsis ("I'm looking... um, for a desk") is a pause, not a sentence end: only a
     # single terminal punctuation mark (or a clause connective) separates independent requests
-    _SPLIT = re.compile(r"(?:(?<!\.)(?:[?!]+|\.(?!\.))\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
+    # the terminal punctuation is KEPT on the clause (lookbehind), so "...name Skyler. Then" never
+    # glues "Skyler Then" into one name and "P-O-9? I've" never extends a spelled id
+    _SPLIT = re.compile(r"(?:(?<=[?!])\s+|(?<=[^.]\.)\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
                         r"while you'?re at it|after that|once you find|once that'?s done|plus)\b))", re.I)
     _ANAPHORA = re.compile(r"\b(it|that one|them|whatever you find|what you find|something|the first one|"
                            r"the result|that|there|one of them)\b", re.I)
@@ -574,7 +576,9 @@ class ParticipantAgent:
                     a2, m2 = nlu.build_args(self.tools.get(tool, {}), text, {})
                     # two requests are independent only if EACH is complete on its own and they differ;
                     # "track it for me. The order ID is X" is one request whose slot arrives later
-                    independent = not m1 and not m2 and a1 != a2
+                    # and neither is a refinement of the other ("a coffee maker! ... a coffee maker under 50")
+                    refine = all(a2.get(k) == v for k, v in a1.items()) or all(a1.get(k) == v for k, v in a2.items())
+                    independent = not m1 and not m2 and a1 != a2 and not refine
                 if same_family and not independent:
                     merged[-1][0] = ptext + " " + text
                     continue
@@ -605,6 +609,10 @@ class ParticipantAgent:
             val = None
             for _api, res in reversed(self.results[-5:]):
                 val = _find_key(res, want)
+                if val is None and leaf.endswith("address"):
+                    # a listing without an address field: the commute starts at that listing, which
+                    # the backend identifies by its id ("from there" -> the first result found)
+                    val = _find_key(res, ["id", "listing_id", "apartment_id", "name"])
                 if val is not None:
                     break
             if val is not None and "." not in f:

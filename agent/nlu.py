@@ -102,7 +102,7 @@ CONCEPTS = {
                 "laptop", "shoes", "buy", "purchase", "shop", "shopping", "store", "pair", "wireless"},
     "cart": {"cart", "basket", "bag"},
     "apartment": {"apartment", "apartments", "flat", "rental", "rent", "bedroom", "bedrooms", "studio",
-                  "lease", "housing", "condo", "place"},
+                  "lease", "housing", "condo", "place", "places", "home", "homes", "listing", "listings"},
     "commute": {"commute", "drive", "driving", "transit", "walk", "walking", "bike", "cycling", "far", "distance",
                 "long", "duration"},
     "exchange": {"exchange", "convert", "conversion", "currency", "euro", "euros", "dollar", "dollars", "usd",
@@ -444,10 +444,10 @@ def extract_id(text: str, field: str = "") -> Optional[str]:
             # bind to the id that follows this field's own noun ("order ID is X", "item K-2")
             cue = {"order": r"order", "product": r"item|product|sku"}.get(field.split("_")[0], "")
             if cue:
-                near = [v for pos, v in sp if re.search(r"\b(?:" + cue + r")\b[^.?!]{0,25}$", text[:pos], re.I)]
+                near = [v for pos, v in sp if re.search(r"\b(?:" + cue + r")\b[^?!]{0,25}$", text[:pos], re.I)]
                 if near:
                     return near[-1]
-            return sp[-1]
+            return sp[-1][1]
     ids = [m.group(1).upper() for m in ID_RE.finditer(text or "")]
     pre = ID_PREFIX.get(field)
     if pre:
@@ -502,7 +502,7 @@ _VERB_SYNONYMS = {
     "calculate": r"calculate|how long|how far|commute|travel time|(?:walking|driving|transit|biking|cycling) time",
     "add": r"add|put|throw",
     "track": r"track|where(?:'s| is) my",
-    "modify": r"modify|set up|enable|turn on|switch|change",
+    "modify": r"modify|set(?: up)?|enable|turn on|switch|change|move|pull from|come from",
     "get": r"get|what are|tell me|check|show",
     "cancel": r"cancel|call off",
     "create": r"create|open|file|raise a",
@@ -530,6 +530,8 @@ def _shopping_request(text: str) -> bool:
     a place to live, a route or a filter ("looking for a desk", "i want a mechanical keyboard")."""
     if not _SHOP_CUE.search(text or ""):
         return False
+    if _concepts(tokens(text)) & {"apartment", "flight"}:
+        return False                      # "search for a place with 2 bedrooms ... need a home office"
     q = extract_query(text)
     if re.search(r"(?i)\bsection\b", text or "") and re.search(r"(?i)\b(?:electronics|clothing|kitchen|toys|books|"
                                                                r"sports|home|garden|beauty|grocery)\b", text or ""):
@@ -1122,7 +1124,7 @@ WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "sev
 
 _AMOUNT_UNIT = r"(?:(?:us|u\.s\.|canadian|australian|british|swiss|japanese|indian|chinese|mexican|american)\s+)?" \
                r"(?:dollars?|bucks|euros?|pounds?|yen|rupees?|yuan|francs?|pesos?|usd|eur|gbp|jpy|inr|cny|chf|cad|aud|mxn)\b"
-_QTY_RE = re.compile(r"\b(?:add|put|get|order|buy|make it|just|only|quantity(?: of| to)?|want)\s+(?:like,?\s+)?(\d+)\b"
+_QTY_RE = re.compile(r"\b(?:add|put|get|order|buy|make it|just|only|quantity(?: of| to)?|want),?\s+(?:like,?\s+)?(\d+)\b"
                      r"|\b(\d+)\s+(?:of (?:them|those|these|it|item|product|whatever)|units?|pieces?|pcs|items?|copies)\b"
                      r"|\b(\d+)\s+(?:of\s+)?(?:item|product)\b|\bjust\s+(\d+)\b", re.I)
 _BED_RE = re.compile(r"\b(\d+)\s*[- ]?(?:bed(?:room)?s?|br|bd)\b|\bbed(?:room)?s?\s+(?:to\s+)?(\d+)\b"
