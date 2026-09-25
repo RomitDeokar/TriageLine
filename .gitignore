@@ -16,3 +16,4 @@ livekit_agent/.env
 # official FDB-v3 data / repo (downloaded, not redistributed)
 livekit_agent/fdb_v3_data_released
 livekit_agent/.fdb_v3_repo/
+.cache/
