@@ -63,7 +63,8 @@ NO_RE = re.compile(r"^\W*(no|nope|nah|wrong|incorrect)\b", re.I)
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 STOP = set("""a an the to for of in on at and or is are be me my i you your it this that
 please can could would will do does what whats what's how with like right now just some any
-find get show tell want need there here up""".split())
+find get show tell want need there here up um uh uhm hmm er erm ah like well so yeah okay ok oh
+know mean guess think kinda sorta basically actually wait let""".split())
 
 # keyword priors for the public tool families; hidden tools fall back to schema overlap
 TOOL_PRIORS = {
@@ -334,7 +335,34 @@ def parse_name_answer(text: str) -> Optional[str]:
     return " ".join(w[0].upper() + w[1:].lower() for w in words)
 
 
+_SPELLED_RE = re.compile(r"(?<![A-Za-z0-9])((?:[A-Za-z0-9][\-\s]){1,15}[A-Za-z0-9])(?![A-Za-z0-9])")
+
+
+def spelled_ids(text: str) -> List[str]:
+    """Spoken, character-by-character ids: "A-B-C-1-2-3" -> ABC123, "K-2" -> K2, "D-E-L-I-V" -> DELIV."""
+    out = []
+    for m in _SPELLED_RE.finditer(text or ""):
+        raw = m.group(1)
+        if "-" not in raw:
+            continue                      # "a b" in ordinary prose is not an id
+        chars = re.split(r"[\-\s]", raw)
+        if all(len(c) == 1 for c in chars) and len(chars) >= 2:
+            out.append("".join(chars).upper())
+    return out
+
+
 def extract_id(text: str, field: str = "") -> Optional[str]:
+    if not ID_PREFIX.get(field):
+        sp = [(m.start(), "".join(re.split(r"[\-\s]", m.group(1))).upper()) for m in _SPELLED_RE.finditer(text or "")
+              if "-" in m.group(1) and all(len(c) == 1 for c in re.split(r"[\-\s]", m.group(1)))]
+        if sp:
+            # bind to the id that follows this field's own noun ("order ID is X", "item K-2")
+            cue = {"order": r"order", "product": r"item|product|sku"}.get(field.split("_")[0], "")
+            if cue:
+                near = [v for pos, v in sp if re.search(r"\b(?:" + cue + r")\b[^.?!]{0,25}$", text[:pos], re.I)]
+                if near:
+                    return near[-1]
+            return sp[-1]
     ids = [m.group(1).upper() for m in ID_RE.finditer(text or "")]
     pre = ID_PREFIX.get(field)
     if pre:
@@ -490,6 +518,9 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
                 return DOC_TYPES[k]
         return None
     if lname in ("doc_number", "document_number"):
+        sp = spelled_ids(text)
+        if sp:
+            return sp[-1]
         m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
             re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
         return m.group(1) if m else None

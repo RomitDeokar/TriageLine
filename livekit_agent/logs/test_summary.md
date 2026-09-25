@@ -1,10 +1,10 @@
 # FDB-v3 adapter integration — test summary
 
 - Scenarios run: 9
-- Scenarios PASS: 9
-- Scenarios FAIL: 0
+- Scenarios PASS: 8
+- Scenarios FAIL: 1
   - [PASS] single_call:search_flights
-  - [PASS] single_call:get_card_benefits
+  - [FAIL] single_call:get_card_benefits
   - [PASS] single_call:search_apartments
   - [PASS] single_call:track_order
   - [PASS] single_call:search_products
