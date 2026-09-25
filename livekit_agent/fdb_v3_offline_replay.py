@@ -42,6 +42,7 @@ FDB_REPO = ROOT / "livekit_agent" / ".fdb_v3_repo" / "v3"
 from livekit_agent.adapter import TriageAdapter  # noqa: E402
 from livekit_agent.fdb_tools import FDB_TOOLS  # noqa: E402
 
+TEXT_MODE = False  # set by --text
 GAP_S = 1.2        # a pause at least this long ends a user turn
 SETTLE_S = 0.15    # let the agent's queue drain between events
 
@@ -76,7 +77,11 @@ def asr_turns(wav: str):
 async def replay(example_dir: Path, registry, provider: str):
     meta = json.loads((example_dir / "metadata.json").read_text())
     t0 = time.time()
-    turns = asr_turns(str(example_dir / "input.wav"))
+    if TEXT_MODE:  # official human transcripts instead of ASR (isolates agent logic from ASR errors)
+        turns = [{"text": d["user"], "start": i, "end": i} for i, d in enumerate(meta.get("dialogue") or [])
+                 if d.get("user")]
+    else:
+        turns = asr_turns(str(example_dir / "input.wav"))
     asr_s = time.time() - t0
     calls, spoken = [], []
 
@@ -127,7 +132,13 @@ def main():
     ap.add_argument("--provider", default="triageline")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--only", default="")
+    ap.add_argument("--text", action="store_true",
+                    help="use the official transcript text instead of Whisper ASR (diagnostic mode)")
     a = ap.parse_args()
+    global TEXT_MODE
+    TEXT_MODE = a.text
+    if a.text and a.provider == "triageline":
+        a.provider = "triageline_text"
     registry = load_registry()
     dirs = sorted(p for p in Path(a.data).iterdir() if (p / "metadata.json").exists())
     if a.only:
