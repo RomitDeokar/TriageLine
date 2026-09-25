@@ -431,6 +431,93 @@ def is_smalltalk(text: str, tools: Optional[Dict[str, Any]] = None) -> bool:
 
 
 # --------------------------------------------------------------------------- args
+CURRENCY_WORDS = {"dollar": "USD", "dollars": "USD", "usd": "USD", "buck": "USD", "bucks": "USD",
+                  "euro": "EUR", "euros": "EUR", "eur": "EUR", "pound": "GBP", "pounds": "GBP", "gbp": "GBP",
+                  "sterling": "GBP", "yen": "JPY", "jpy": "JPY", "rupee": "INR", "rupees": "INR", "inr": "INR",
+                  "yuan": "CNY", "cny": "CNY", "franc": "CHF", "francs": "CHF", "chf": "CHF",
+                  "cad": "CAD", "aud": "AUD", "mxn": "MXN", "peso": "MXN", "pesos": "MXN"}
+DOC_TYPES = {"passport": "passport", "driver's license": "drivers_license", "drivers license": "drivers_license",
+             "driver license": "drivers_license", "driving licence": "drivers_license", "license": "drivers_license",
+             "licence": "drivers_license", "id card": "id_card", "national id": "id_card", "identity card": "id_card"}
+BILL_TYPES = ["credit_card", "credit card", "utilities", "utility", "electricity", "electric", "water", "gas",
+              "internet", "phone", "rent", "mortgage", "insurance", "cable"]
+ACCOUNTS = ["checking", "savings", "credit", "brokerage"]
+_ADDR_RE = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)(?=\s+(?:by|via|using|driving|walking|transit|cycling|biking|on foot)\b|[?.!,]|$)", re.I)
+
+
+def _currencies(text: str) -> List[str]:
+    out = []
+    for w in re.findall(r"[A-Za-z]+", text):
+        c = CURRENCY_WORDS.get(w.lower())
+        if c is None and len(w) == 3 and w.isupper() and w not in ("THE", "AND", "FOR"):
+            c = w
+        if c:
+            out.append(c)
+    return out
+
+
+def _currency_pair(text: str) -> Tuple[Optional[str], Optional[str]]:
+    low = text.lower()
+    codes = _currencies(text)
+    if not codes:
+        return None, None
+    # "how many euros is 250 dollars" -> target stated first, source after the amount
+    if re.search(r"\bhow (?:many|much)\b", low) and len(codes) > 1:
+        return codes[1], codes[0]
+    m = re.search(r"\b(?:to|into|in)\s+([A-Za-z]{3,8})\b", text)
+    if m:
+        tgt = CURRENCY_WORDS.get(m.group(1).lower()) or (m.group(1) if m.group(1).isupper() else None)
+        if tgt:
+            src = next((c for c in codes if c != tgt), None)
+            return src, tgt
+    return codes[0], (codes[1] if len(codes) > 1 else None)
+
+
+def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
+    low = text.lower()
+    if "currency" in lname:
+        src, tgt = _currency_pair(text)
+        return tgt if lname.startswith("to") or "target" in lname else src
+    if lname.endswith("address"):
+        m = _ADDR_RE.search(text)
+        if m:
+            return norm(m.group(1) if ("origin" in lname or "from" in lname or "start" in lname)
+                        else m.group(2)).strip(" .,")
+        return None
+    if lname in ("doc_type", "document_type"):
+        for k in sorted(DOC_TYPES, key=len, reverse=True):
+            if k in low:
+                return DOC_TYPES[k]
+        return None
+    if lname in ("doc_number", "document_number"):
+        m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
+            re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
+        return m.group(1) if m else None
+    if lname == "bill_type":
+        for b in BILL_TYPES:
+            if re.search(r"\b" + re.escape(b) + r"\b", low):
+                b = {"credit card": "credit_card", "utility": "utilities", "electric": "electricity"}.get(b, b)
+                return b
+        return None
+    if lname in ("source_account", "account", "from_account"):
+        for a in ACCOUNTS:
+            if re.search(r"\b" + a + r"\b", low) and not (a == "credit" and "credit card" in low):
+                return a
+        return None
+    if lname in ("filter_name", "filter", "filter_key"):
+        m = re.search(r"\b(?:set|change|update|make)\s+(?:my\s+|the\s+)?([a-z_]+(?:\s[a-z_]+)?)\s+filter\b", low) or \
+            re.search(r"\bfilter\s+(?:for\s+|on\s+)?([a-z_]+)\b", low)
+        if m:
+            name = m.group(1).strip().replace(" ", "_")
+            return {"bedroom": "bedrooms", "price": "price_range" if "price_range" in low else "max_price"}.get(name, name)
+        return None
+    if lname == "value" and "filter" in low:
+        m = re.search(r"\bfilter\s+(?:to|at|as|=)\s*([\w\-.$]+(?:\s[\w\-.]+)?)", text, re.I) or \
+            re.search(r"\bto\s+([\w\-.$]+)\s*[.?!]?\s*$", text, re.I)
+        return norm(m.group(1)).strip(" .,") if m else None
+    return None
+
+
 def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) -> Any:
     lname = name.lower()
     typ = spec.get("type", "string")
@@ -463,6 +550,10 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
             hits = [e for e in ienum if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low)]
             return hits or None
         return ctx.get(lname)
+    # strings: schema-specific roles that must win over generic origin/destination matching
+    special = _special_string_arg(lname, spec, text)
+    if special is not None:
+        return special
     # strings: match by semantic role of the arg name
     if "origin" in lname or lname.startswith("from") or "departure_city" in lname:
         return ctx.get("origin") or extract_origin(text)
