@@ -101,7 +101,17 @@ class H(SimpleHTTPRequestHandler):
     def end_headers(self):
         if self.path.endswith((".js", ".html", ".css", ".json", "/")) or self.path.startswith("/api"):
             self.send_header("Cache-Control", "no-store")
+        if self.path.startswith("/api"):
+            # mobile / native / cross-origin clients (React Native, Flutter, Capacitor webviews)
+            self.send_header("Access-Control-Allow-Origin", os.environ.get("CORS_ORIGIN", "*"))
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
         super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _json(self, obj, code=200):
         b = json.dumps(obj).encode()
@@ -126,6 +136,8 @@ class H(SimpleHTTPRequestHandler):
             return self._json(list_scenarios())
         if self.path.startswith("/api/ready"):
             return self._json(live.readiness())
+        if self.path.startswith("/api/health"):
+            return self._json({"ok": True, "service": "triageline", "sessions": len(live.SESSIONS.by_id)})
         m = re.fullmatch(r"/api/live/([\w\-]+)/stream", self.path.split("?")[0])
         if m:
             return self._stream(m.group(1))

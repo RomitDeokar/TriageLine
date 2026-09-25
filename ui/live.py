@@ -113,8 +113,13 @@ class LiveSession:
         try:
             res = await self.tools.execute(api, args)
         except asyncio.CancelledError:
+            self.pending.pop(cid, None)
             return
-        self.pending.pop(cid, None)
+        except Exception as e:  # provider exception → structured, ambiguous terminal event (R20)
+            log_detail = type(e).__name__          # never echo provider internals / secrets to the user
+            res = {"status": "error", "error": "provider_exception", "detail": log_detail}
+        finally:
+            self.pending.pop(cid, None)
         st = res.get("status", "success")
         self.emit("task", call_id=cid, api=api, status="done" if st == "success" else "error",
                   result=_short(res), mode=self.tools.mode)
@@ -163,14 +168,11 @@ class LiveSession:
         self.touched = time.time()
         sess = self
 
-        def work():
-            r = P.transcribe(ref)
-            if r.get("text"):
-                sess.emit("asr", text=r["text"], confidence=round(r.get("confidence", 0), 2))
-                sess.user_text(r["text"], speaking)
-            else:
-                sess.emit("asr", text="", error="no speech recognised" if P.load_asr() else "ASR model unavailable")
-        threading.Thread(target=work, daemon=True).start()
+        # One perception contract for live and harness (R18): the clip enters the agent as a
+        # user_audio_chunk, so word confidences, alternative decodes, utterance ordering (version) and
+        # the clarification gate before side effects all apply exactly as in the evaluated path.
+        self.emit("user", text="[voice clip]", as_="user_audio_chunk")
+        self.push({"event_type": "user_audio_chunk", "payload": {"audio_ref": ref, "end_of_turn": True}})
         return ref
 
     def close(self):

@@ -30,6 +30,11 @@ _CAP_AFTER_PREP = re.compile(r"\b(?:to|in|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z
 # lowercase unknown place after a travel cue ("flights to kochi", "weather in pune")
 _LOW_PLACE = re.compile(r"\b(?:flights?|fly|flying|trip|travel|going|weather|hotels?|forecast|rental)\b[^.?!]*?"
                         r"\b(?:to|in)\s+([a-z][a-z]{2,})\b", re.I)
+# contextual place span after a directional preposition, lowercase or not, up to 3 words (R13)
+_PREP_SPAN = re.compile(r"\b(?:to|from|in)\s+(?=([A-Za-z][A-Za-z]+(?:\s+[A-Za-z][A-Za-z]+){0,2}))", re.I)
+_SPAN_STOP = re.compile(r"\b(?:for|on|at|by|tomorrow|today|tonight|next|this|and|please|under|with|around|"
+                        r"departing|leaving|returning|in|to|from|monday|tuesday|wednesday|thursday|friday|saturday|"
+                        r"sunday|morning|evening|afternoon|night|then|book|it|a|the)\b.*$", re.I)
 _FROM_RE = re.compile(r"\bfrom\s*$", re.I)
 
 # self-repair / correction markers — the value AFTER the last marker wins
@@ -58,7 +63,8 @@ NO_RE = re.compile(r"^\W*(no|nope|nah|wrong|incorrect)\b", re.I)
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 STOP = set("""a an the to for of in on at and or is are be me my i you your it this that
 please can could would will do does what whats what's how with like right now just some any
-find get show tell want need there here up""".split())
+find get show tell want need there here up um uh uhm hmm er erm ah like well so yeah okay ok oh
+know mean guess think kinda sorta basically actually wait let""".split())
 
 # keyword priors for the public tool families; hidden tools fall back to schema overlap
 TOOL_PRIORS = {
@@ -70,6 +76,53 @@ TOOL_PRIORS = {
     "create_support_ticket": {"ticket", "broken", "support", "repair", "technician", "escalate",
                               "complaint", "report"},
 }
+# Generic concept lexicon: maps everyday phrasings onto canonical concept tokens so that
+# schema-overlap scoring works for tools whose descriptions use different wording than
+# the caller ("package" vs "order", "perks" vs "benefits"). Applied symmetrically to the
+# utterance AND each tool's vocabulary, so it generalizes to unseen tool manifests.
+CONCEPTS = {
+    "order": {"order", "package", "parcel", "shipment", "delivery", "deliver", "shipped", "shipping", "arrive"},
+    "track": {"track", "tracking", "where", "status", "arrive"},
+    "product": {"product", "products", "item", "items", "catalog", "headphone", "headphones", "earbuds",
+                "laptop", "shoes", "buy", "purchase", "shop", "shopping", "store", "pair", "wireless"},
+    "cart": {"cart", "basket", "bag"},
+    "apartment": {"apartment", "apartments", "flat", "rental", "rent", "bedroom", "bedrooms", "studio",
+                  "lease", "housing", "condo", "place"},
+    "commute": {"commute", "drive", "driving", "transit", "walk", "walking", "bike", "cycling", "far", "distance",
+                "long", "duration"},
+    "exchange": {"exchange", "convert", "conversion", "currency", "euro", "euros", "dollar", "dollars", "usd",
+                 "eur", "gbp", "pound", "pounds", "yen", "rupee", "rupees", "rate", "fx"},
+    "benefit": {"benefit", "benefits", "perk", "perks", "reward", "rewards", "cashback", "lounge", "privilege"},
+    "card": {"card", "platinum", "gold", "credit"},
+    "autopay": {"autopay", "auto", "automatic", "automatically", "recurring", "bill", "bills", "billing",
+                "pay", "payment", "payments", "checking", "savings", "utilities", "utility"},
+    "identity": {"identity", "passport", "license", "licence", "id", "document", "doc"},
+    "filter": {"filter", "filters", "preference", "preferences", "criteria"},
+    "flight": {"flight", "flights", "fly", "flying", "plane", "airfare", "airline"},
+}
+_CONCEPT_OF: Dict[str, set] = {}
+for _c, _ws in CONCEPTS.items():
+    for _w in _ws:
+        _CONCEPT_OF.setdefault(_w, set()).add(_c)
+
+
+def _concepts(words) -> set:
+    out = set()
+    for w in words:
+        out |= _CONCEPT_OF.get(w, set())
+        out |= _CONCEPT_OF.get(_stem(w), set())
+    return out
+
+
+def _concept_evidence(words) -> Dict[str, int]:
+    """How many distinct utterance words support each concept (strength of evidence)."""
+    ev: Dict[str, set] = {}
+    for w in set(words):
+        for c in _CONCEPT_OF.get(w, set()) | _CONCEPT_OF.get(_stem(w), set()):
+            ev.setdefault(c, set()).add(w)
+    return {c: len(v) for c, v in ev.items()}
+
+
 DEVICE_ALIASES = {"QN90": ["qn90", "tv", "television", "neo qled"],
                   "S24": ["s24", "galaxy", "phone"],
                   "WF45": ["wf45", "washer", "washing machine"],
@@ -96,9 +149,30 @@ _NOT_PLACE = set("""tomorrow today tonight morning evening afternoon night week 
 booking the a an my me him her them it this that there here help go get see buy check""".split())
 
 
+def _travel_context(text: str) -> bool:
+    return bool(re.search(r"\b(?:flights?|fly|flying|trip|travel|going|weather|hotels?|forecast|rental|book|"
+                          r"from|to)\b", text, re.I))
+
+
 def cities_in(text: str) -> List[Tuple[int, str]]:
     text = text or ""
     out = [(m.start(), CITIES[m.group(1).lower()]) for m in _CITY_RE.finditer(text)]
+    if out and _travel_context(text):
+        # combine gazetteer hits with contextual spans so "from Boston to Kochi" keeps both (R13)
+        known = {p for p, _ in out}
+        for m in _PREP_SPAN.finditer(text):
+            st = m.start(1)
+            if any(abs(st - k) < 2 for k in known):
+                continue
+            cand = _SPAN_STOP.sub("", m.group(1)).strip()
+            if not cand or cand.lower() in STOP or cand.lower() in _NOT_PLACE or re.match(WEEKDAYS, cand, re.I):
+                continue
+            if _CITY_RE.fullmatch(cand):
+                continue
+            if cand[0].isupper() or re.search(r"\bfrom\s*$", text[:m.start(1)], re.I) or \
+                    re.search(r"\b(?:flights?|fly|trip|travel)\b", text, re.I):
+                out.append((st, " ".join(w[0].upper() + w[1:] for w in cand.split())))
+        out.sort()
     if not out:
         for m in _CAP_AFTER_PREP.finditer(text):
             cand = m.group(1)
@@ -108,7 +182,14 @@ def cities_in(text: str) -> List[Tuple[int, str]]:
         for m in _LOW_PLACE.finditer(text):
             cand = m.group(1)
             if cand.lower() not in STOP and cand.lower() not in _NOT_PLACE and not re.match(WEEKDAYS, cand, re.I):
-                out.append((m.start(1), cand[0].upper() + cand[1:]))
+                # keep a multiword lowercase place ("san jose") rather than truncating it (R13)
+                rest = text[m.end(1):]
+                nxt = re.match(r"\s+([a-z]{3,})\b", rest)
+                if nxt and not _SPAN_STOP.fullmatch(nxt.group(1)) and nxt.group(1) not in STOP and \
+                        nxt.group(1) not in _NOT_PLACE and not re.match(WEEKDAYS, nxt.group(1), re.I) and \
+                        not DATE_RE.match(nxt.group(1)):
+                    cand = cand + " " + nxt.group(1)
+                out.append((m.start(1), " ".join(w[0].upper() + w[1:] for w in cand.split())))
     return out
 
 
@@ -177,6 +258,70 @@ def extract_name(text: str) -> Optional[str]:
     return _pick_after_repair(text, found)
 
 
+_LOW_NAME = re.compile(r"\b(?:for|passenger|name is|named|under)\s+([a-z][a-z'\-]+(?:\s+[a-z][a-z'\-]+)?)\s*[.!?]?\s*$",
+                       re.I)
+
+
+def extract_name_any_case(text: str) -> Optional[str]:
+    """Role-aware name that also accepts lowercase ASR output ("for bob smith") — R10."""
+    got = extract_name(text)
+    if got:
+        return got
+    m = _LOW_NAME.search(text or "")
+    if not m:
+        return None
+    words = m.group(1).split()
+    words = [w for w in words if w.lower() not in STOP and w.lower() not in _NOT_PLACE
+             and not DATE_RE.fullmatch(w) and w.lower() not in CITIES]
+    if not words or _bad_name(words[0]) or len(words) != len(m.group(1).split()):
+        return None
+    return " ".join(w[0].upper() + w[1:].lower() for w in words)
+
+
+ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+            "last": -1}
+
+
+def select_option(text: str, options: List[Dict[str, Any]], id_key: str = "flight_id",
+                  time_key: str = "depart", price_key: str = "price_usd") -> Optional[Dict[str, Any]]:
+    """Resolve a selection against the ACTUAL presented candidates (R12): explicit id, time,
+    cheapest / earliest / latest, or an ordinal ("the second one"). None when nothing is specified."""
+    if not options:
+        return None
+    low = (text or "").lower()
+    for o in options:
+        if str(o.get(id_key, "")).lower() and re.search(r"\b" + re.escape(str(o.get(id_key)).lower()) + r"\b", low):
+            return o
+    t = extract_time(text)
+    if t:
+        for o in options:
+            if str(o.get(time_key, "")).strip()[:5] == t:
+                return o
+        return None
+    priced = [o for o in options if isinstance(o.get(price_key), (int, float))]
+    if priced and re.search(r"\b(cheapest|lowest price|least expensive|cheaper one|best price)\b", low):
+        return min(priced, key=lambda o: o[price_key])
+    if priced and re.search(r"\b(most expensive|priciest)\b", low):
+        return max(priced, key=lambda o: o[price_key])
+    timed = [o for o in options if o.get(time_key)]
+    if timed and re.search(r"\b(earliest|soonest)\b", low):
+        return min(timed, key=lambda o: str(o[time_key]))
+    if timed and re.search(r"\b(latest)\b", low):
+        return max(timed, key=lambda o: str(o[time_key]))
+    m = re.search(r"\b(first|1st|second|2nd|third|3rd|fourth|4th|last)\b(?:\s+(?:one|option|flight))?", low)
+    if m:
+        i = ORDINALS[m.group(1)]
+        if -len(options) <= i < len(options):
+            return options[i]
+    return None
+
+
+def has_selector(text: str) -> bool:
+    return bool(re.search(r"\b(cheapest|lowest price|least expensive|earliest|soonest|latest|most expensive|"
+                          r"(?:first|second|third|fourth|last|1st|2nd|3rd|4th)\s+(?:one|option|flight))\b",
+                          text or "", re.I))
+
+
 def parse_name_answer(text: str) -> Optional[str]:
     """Name given as a clarification answer: case-insensitive, full name kept."""
     t = re.sub(r"(?i)^\W*(?:(?:it'?s|it is|my name is|name is|the name is|under|for|book it under|passenger)\s+)+", "", text or "")
@@ -190,12 +335,55 @@ def parse_name_answer(text: str) -> Optional[str]:
     return " ".join(w[0].upper() + w[1:].lower() for w in words)
 
 
+_SPELLED_RE = re.compile(r"(?<![A-Za-z0-9])((?:[A-Za-z0-9][\-\s]){1,15}[A-Za-z0-9])(?![A-Za-z0-9])")
+
+
+def spelled_ids(text: str) -> List[str]:
+    """Spoken, character-by-character ids: "A-B-C-1-2-3" -> ABC123, "K-2" -> K2, "D-E-L-I-V" -> DELIV."""
+    out = []
+    for m in _SPELLED_RE.finditer(text or ""):
+        raw = m.group(1)
+        if "-" not in raw:
+            continue                      # "a b" in ordinary prose is not an id
+        chars = re.split(r"[\-\s]", raw)
+        if all(len(c) == 1 for c in chars) and len(chars) >= 2:
+            out.append("".join(chars).upper())
+    return out
+
+
 def extract_id(text: str, field: str = "") -> Optional[str]:
+    if not ID_PREFIX.get(field):
+        sp = [(m.start(), "".join(re.split(r"[\-\s]", m.group(1))).upper()) for m in _SPELLED_RE.finditer(text or "")
+              if "-" in m.group(1) and all(len(c) == 1 for c in re.split(r"[\-\s]", m.group(1)))]
+        if sp:
+            # bind to the id that follows this field's own noun ("order ID is X", "item K-2")
+            cue = {"order": r"order", "product": r"item|product|sku"}.get(field.split("_")[0], "")
+            if cue:
+                near = [v for pos, v in sp if re.search(r"\b(?:" + cue + r")\b[^.?!]{0,25}$", text[:pos], re.I)]
+                if near:
+                    return near[-1]
+            return sp[-1]
     ids = [m.group(1).upper() for m in ID_RE.finditer(text or "")]
     pre = ID_PREFIX.get(field)
     if pre:
         ids = [i for i in ids if i.startswith(pre + "-")]
     return ids[-1] if ids else None
+
+
+NEG_WORD = re.compile(r"\b(?:do not|don'?t|dont|never|no need to|not)\b", re.I)
+
+
+def negated_action(text: str, api: str) -> bool:
+    """True when the user negates the action a (state-modifying) tool performs, e.g.
+    "Do not open a support ticket" / "Please don't cancel my booking" / "Don't reserve a car".
+    Schema-driven: the tool's own name tokens are matched within a short window after a negator."""
+    low = (text or "").lower()
+    toks = {t.rstrip("s") for t in re.split(r"[_\W]+", api.lower()) if len(t) > 2}
+    for m in NEG_WORD.finditer(low):
+        window = re.findall(r"[a-z']+", low[m.end():])[:4]
+        if any(w.rstrip("s") in toks or w.rstrip("s").rstrip("ing") in toks for w in window):
+            return True
+    return False
 
 
 def negates_booking(text: str) -> bool:
@@ -222,13 +410,28 @@ def severity_of(text: str) -> str:
 # --------------------------------------------------------------------------- routing
 def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
     """Rank manifest tools against an utterance: lexical priors + schema overlap."""
-    toks = {_stem(t) for t in tokens(text)}
+    raw = tokens(text)
+    toks = {_stem(t) for t in raw}
+    tev = _concept_evidence(raw)
     ranked = []
     for name, spec in tools.items():
-        vocab = {_stem(t) for t in tokens(name.replace("_", " ") + " " + str(spec.get("description", "")))}
+        name_words = tokens(name.replace("_", " "))
+        vwords = tokens(name.replace("_", " ") + " " + str(spec.get("description", "")))
+        vocab = {_stem(t) for t in vwords}
         for arg, aspec in (spec.get("args") or {}).items():
             vocab |= {_stem(t) for t in tokens(arg.replace("_", " "))}
-        overlap = len(toks & vocab)
+        # concept overlap: name concepts weigh more than description concepts
+        nconc = _concepts(name_words)
+        dconc = _concepts(vwords) - nconc
+        # concept evidence only from words NOT already matched lexically (no double counting)
+        unmatched = [w for w in raw if _stem(w) not in vocab]
+        uev = _concept_evidence(unmatched)
+        cscore = sum(min(uev[c], 3) * 1.0 for c in nconc if c in uev) + \
+            sum(min(uev[c], 3) * 0.5 for c in dconc if c in uev)
+        # a tool whose NAME concept is explicitly named by the user gets a head-noun bonus
+        head_noun = _stem(name_words[-1]) if name_words else ""
+        head = 2.0 if head_noun and len(head_noun) > 2 and any(_stem(w) == head_noun for w in raw) else 0.0
+        overlap = len(toks & vocab) + cscore + head
         prior = len(toks & {_stem(w) for w in TOOL_PRIORS.get(name, ())})
         s = overlap + 1.5 * prior
         if s > 0:  # bonus if every required arg is fillable from this utterance
@@ -256,6 +459,107 @@ def is_smalltalk(text: str, tools: Optional[Dict[str, Any]] = None) -> bool:
 
 
 # --------------------------------------------------------------------------- args
+CURRENCY_WORDS = {"dollar": "USD", "dollars": "USD", "usd": "USD", "buck": "USD", "bucks": "USD",
+                  "euro": "EUR", "euros": "EUR", "eur": "EUR", "pound": "GBP", "pounds": "GBP", "gbp": "GBP",
+                  "sterling": "GBP", "yen": "JPY", "jpy": "JPY", "rupee": "INR", "rupees": "INR", "inr": "INR",
+                  "yuan": "CNY", "cny": "CNY", "franc": "CHF", "francs": "CHF", "chf": "CHF",
+                  "cad": "CAD", "aud": "AUD", "mxn": "MXN", "peso": "MXN", "pesos": "MXN"}
+DOC_TYPES = {"passport": "passport", "driver's license": "drivers_license", "drivers license": "drivers_license",
+             "driver license": "drivers_license", "driving licence": "drivers_license", "license": "drivers_license",
+             "licence": "drivers_license", "id card": "id_card", "national id": "id_card", "identity card": "id_card"}
+BILL_TYPES = ["credit_card", "credit card", "utilities", "utility", "electricity", "electric", "water", "gas",
+              "internet", "phone", "rent", "mortgage", "insurance", "cable"]
+ACCOUNTS = ["checking", "savings", "credit", "brokerage"]
+_ADDR_RE = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)(?=\s+(?:by|via|using|driving|walking|transit|cycling|biking|on foot)\b|[?.!,]|$)", re.I)
+
+
+def _currencies(text: str) -> List[str]:
+    out = []
+    for w in re.findall(r"[A-Za-z]+", text):
+        c = CURRENCY_WORDS.get(w.lower())
+        if c is None and len(w) == 3 and w.isupper() and w not in ("THE", "AND", "FOR"):
+            c = w
+        if c:
+            out.append(c)
+    return out
+
+
+def _currency_pair(text: str) -> Tuple[Optional[str], Optional[str]]:
+    low = text.lower()
+    codes = _currencies(text)
+    if not codes:
+        return None, None
+    # "how many euros is 250 dollars" -> target stated first, source after the amount
+    if re.search(r"\bhow (?:many|much)\b", low) and len(codes) > 1:
+        return codes[1], codes[0]
+    m = re.search(r"\b(?:to|into|in)\s+([A-Za-z]{3,8})\b", text)
+    if m:
+        tgt = CURRENCY_WORDS.get(m.group(1).lower()) or (m.group(1) if m.group(1).isupper() else None)
+        if tgt:
+            src = next((c for c in codes if c != tgt), None)
+            return src, tgt
+    return codes[0], (codes[1] if len(codes) > 1 else None)
+
+
+def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
+    low = text.lower()
+    if "currency" in lname:
+        src, tgt = _currency_pair(text)
+        return tgt if lname.startswith("to") or "target" in lname else src
+    if lname.endswith("address"):
+        m = _ADDR_RE.search(text)
+        if m:
+            return norm(m.group(1) if ("origin" in lname or "from" in lname or "start" in lname)
+                        else m.group(2)).strip(" .,")
+        return None
+    if lname in ("doc_type", "document_type"):
+        for k in sorted(DOC_TYPES, key=len, reverse=True):
+            if k in low:
+                return DOC_TYPES[k]
+        return None
+    if lname in ("doc_number", "document_number"):
+        sp = spelled_ids(text)
+        if sp:
+            return sp[-1]
+        m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
+            re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
+        return m.group(1) if m else None
+    if lname.endswith("_type") and lname not in ("doc_type", "document_type", "bill_type"):
+        noun = lname[:-5].split("_")[-1]                       # card_type -> card
+        examples = re.findall(r"'([^']+)'", str(spec.get("description", "")))
+        for ex in examples:                                     # schema examples first ('platinum', 'gold')
+            if re.search(r"\b" + re.escape(ex.lower()) + r"\b", low):
+                return ex
+        m = re.search(r"\b([a-z]+)(?:\s+(?:credit|debit|rewards?))?\s+" + noun + r"s?\b", low)
+        bad = STOP | {"which", "new", "credit", "debit", "rewards", "reward", "this", "that", "the", "my", "one"}
+        if m and m.group(1) not in bad:
+            return m.group(1)
+        return None
+    if lname == "bill_type":
+        for b in BILL_TYPES:
+            if re.search(r"\b" + re.escape(b) + r"\b", low):
+                b = {"credit card": "credit_card", "utility": "utilities", "electric": "electricity"}.get(b, b)
+                return b
+        return None
+    if lname in ("source_account", "account", "from_account"):
+        for a in ACCOUNTS:
+            if re.search(r"\b" + a + r"\b", low) and not (a == "credit" and "credit card" in low):
+                return a
+        return None
+    if lname in ("filter_name", "filter", "filter_key"):
+        m = re.search(r"\b(?:set|change|update|make)\s+(?:my\s+|the\s+)?([a-z_]+(?:\s[a-z_]+)?)\s+filter\b", low) or \
+            re.search(r"\bfilter\s+(?:for\s+|on\s+)?([a-z_]+)\b", low)
+        if m:
+            name = m.group(1).strip().replace(" ", "_")
+            return {"bedroom": "bedrooms", "price": "price_range" if "price_range" in low else "max_price"}.get(name, name)
+        return None
+    if lname == "value" and "filter" in low:
+        m = re.search(r"\bfilter\s+(?:to|at|as|=)\s*([\w\-.$]+(?:\s[\w\-.]+)?)", text, re.I) or \
+            re.search(r"\bto\s+([\w\-.$]+)\s*[.?!]?\s*$", text, re.I)
+        return norm(m.group(1)).strip(" .,") if m else None
+    return None
+
+
 def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) -> Any:
     lname = name.lower()
     typ = spec.get("type", "string")
@@ -268,10 +572,9 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
                 obj[sub] = v
         return obj
     if enum:
-        low = text.lower()
-        for e in enum:
-            if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low):
-                return e
+        got = pick_enum(text, enum)
+        if got is not None:
+            return got
         if lname == "severity":
             return severity_of(text) if severity_of(text) in enum else enum[0]
         if lname in ("model", "device_model") and ctx.get("device_model") in enum:
@@ -289,6 +592,10 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
             hits = [e for e in ienum if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low)]
             return hits or None
         return ctx.get(lname)
+    # strings: schema-specific roles that must win over generic origin/destination matching
+    special = _special_string_arg(lname, spec, text)
+    if special is not None:
+        return special
     # strings: match by semantic role of the arg name
     if "origin" in lname or lname.startswith("from") or "departure_city" in lname:
         return ctx.get("origin") or extract_origin(text)
@@ -336,6 +643,65 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     return None
 
 
+def pick_enum(text: str, enum: List[Any]) -> Any:
+    """Authoritative enum mention (R14): positions matter, not schema order. The last mention after the
+    last self-repair marker wins; a mention directly negated ("not compact") is skipped."""
+    low = (text or "").lower()
+    hits = []
+    for e in enum:
+        for m in re.finditer(r"\b" + re.escape(str(e).lower()) + r"\b", low):
+            if re.search(r"\b(?:not|no|don'?t want)\s+(?:a\s+|the\s+)?$", low[max(0, m.start() - 16):m.start()]):
+                continue
+            hits.append((m.start(), e))
+    if not hits:
+        return None
+    hits.sort(key=lambda h: h[0])
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(low)), default=-1)
+    after = [e for p, e in hits if p >= last_marker]
+    return after[-1] if after else hits[-1][1]
+
+
+def validate_value(v: Any, spec: Dict[str, Any]) -> bool:
+    """Pre-dispatch schema check for one leaf value (R15)."""
+    typ = spec.get("type", "string")
+    if typ == "integer":
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or float(v) != int(v):
+            return False
+    elif typ == "number":
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+    elif typ == "boolean":
+        if not isinstance(v, bool):
+            return False
+    elif typ == "string":
+        if not isinstance(v, str):
+            return False
+        if "minLength" in spec and len(v) < spec["minLength"]:
+            return False
+        if "maxLength" in spec and len(v) > spec["maxLength"]:
+            return False
+        if spec.get("pattern") and not re.search(spec["pattern"], v):
+            return False
+    elif typ == "array":
+        if not isinstance(v, list):
+            return False
+        items = spec.get("items") if isinstance(spec.get("items"), dict) else None
+        if items and not all(validate_value(x, items) for x in v):
+            return False
+        if "minItems" in spec and len(v) < spec["minItems"]:
+            return False
+    if typ in ("integer", "number"):
+        if "minimum" in spec and v < spec["minimum"]:
+            return False
+        if "maximum" in spec and v > spec["maximum"]:
+            return False
+        if "exclusiveMinimum" in spec and v <= spec["exclusiveMinimum"]:
+            return False
+    if spec.get("enum") and v not in spec["enum"]:
+        return False
+    return True
+
+
 _UNSET = (None, "")
 
 
@@ -356,6 +722,8 @@ def _fill(props: Dict[str, Any], text: str, ctx: Dict[str, Any], prefix: str,
                 out[name] = sub
             continue
         v = ctx.get(path) if ctx.get(path) not in _UNSET else _arg_for(name, aspec, text, ctx)
+        if v not in _UNSET and not validate_value(v, aspec):
+            v = None                               # invalid values never reach the tool (R15)
         if v not in _UNSET:
             out[name] = v
         elif req:
@@ -453,6 +821,8 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
             return None  # several numbers and none tied to this field: ask rather than guess
         best = nums[0][2]
     v = float(best)
+    if integer and not v.is_integer():
+        return v                                    # keep the fraction so validation rejects it (R15)
     return int(v) if integer or v.is_integer() else v
 
 

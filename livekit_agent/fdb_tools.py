@@ -56,7 +56,7 @@ FDB_TOOLS = {
         "kind": "read_only",
         "description": "Get benefits for a credit card.",
         "args": {
-            "card_type": {"type": "string", "required": True, "enum": ["platinum", "gold"], "description": "The card type"},
+            "card_type": {"type": "string", "required": True, "description": "The card type, e.g. 'platinum' or 'gold'"},
         },
     },
     "get_exchange_rate": {
