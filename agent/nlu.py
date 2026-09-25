@@ -30,6 +30,11 @@ _CAP_AFTER_PREP = re.compile(r"\b(?:to|in|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z
 # lowercase unknown place after a travel cue ("flights to kochi", "weather in pune")
 _LOW_PLACE = re.compile(r"\b(?:flights?|fly|flying|trip|travel|going|weather|hotels?|forecast|rental)\b[^.?!]*?"
                         r"\b(?:to|in)\s+([a-z][a-z]{2,})\b", re.I)
+# contextual place span after a directional preposition, lowercase or not, up to 3 words (R13)
+_PREP_SPAN = re.compile(r"\b(?:to|from|in)\s+(?=([A-Za-z][A-Za-z]+(?:\s+[A-Za-z][A-Za-z]+){0,2}))", re.I)
+_SPAN_STOP = re.compile(r"\b(?:for|on|at|by|tomorrow|today|tonight|next|this|and|please|under|with|around|"
+                        r"departing|leaving|returning|in|to|from|monday|tuesday|wednesday|thursday|friday|saturday|"
+                        r"sunday|morning|evening|afternoon|night|then|book|it|a|the)\b.*$", re.I)
 _FROM_RE = re.compile(r"\bfrom\s*$", re.I)
 
 # self-repair / correction markers — the value AFTER the last marker wins
@@ -96,9 +101,30 @@ _NOT_PLACE = set("""tomorrow today tonight morning evening afternoon night week 
 booking the a an my me him her them it this that there here help go get see buy check""".split())
 
 
+def _travel_context(text: str) -> bool:
+    return bool(re.search(r"\b(?:flights?|fly|flying|trip|travel|going|weather|hotels?|forecast|rental|book|"
+                          r"from|to)\b", text, re.I))
+
+
 def cities_in(text: str) -> List[Tuple[int, str]]:
     text = text or ""
     out = [(m.start(), CITIES[m.group(1).lower()]) for m in _CITY_RE.finditer(text)]
+    if out and _travel_context(text):
+        # combine gazetteer hits with contextual spans so "from Boston to Kochi" keeps both (R13)
+        known = {p for p, _ in out}
+        for m in _PREP_SPAN.finditer(text):
+            st = m.start(1)
+            if any(abs(st - k) < 2 for k in known):
+                continue
+            cand = _SPAN_STOP.sub("", m.group(1)).strip()
+            if not cand or cand.lower() in STOP or cand.lower() in _NOT_PLACE or re.match(WEEKDAYS, cand, re.I):
+                continue
+            if _CITY_RE.fullmatch(cand):
+                continue
+            if cand[0].isupper() or re.search(r"\bfrom\s*$", text[:m.start(1)], re.I) or \
+                    re.search(r"\b(?:flights?|fly|trip|travel)\b", text, re.I):
+                out.append((st, " ".join(w[0].upper() + w[1:] for w in cand.split())))
+        out.sort()
     if not out:
         for m in _CAP_AFTER_PREP.finditer(text):
             cand = m.group(1)
@@ -108,7 +134,14 @@ def cities_in(text: str) -> List[Tuple[int, str]]:
         for m in _LOW_PLACE.finditer(text):
             cand = m.group(1)
             if cand.lower() not in STOP and cand.lower() not in _NOT_PLACE and not re.match(WEEKDAYS, cand, re.I):
-                out.append((m.start(1), cand[0].upper() + cand[1:]))
+                # keep a multiword lowercase place ("san jose") rather than truncating it (R13)
+                rest = text[m.end(1):]
+                nxt = re.match(r"\s+([a-z]{3,})\b", rest)
+                if nxt and not _SPAN_STOP.fullmatch(nxt.group(1)) and nxt.group(1) not in STOP and \
+                        nxt.group(1) not in _NOT_PLACE and not re.match(WEEKDAYS, nxt.group(1), re.I) and \
+                        not DATE_RE.match(nxt.group(1)):
+                    cand = cand + " " + nxt.group(1)
+                out.append((m.start(1), " ".join(w[0].upper() + w[1:] for w in cand.split())))
     return out
 
 
@@ -284,10 +317,9 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
                 obj[sub] = v
         return obj
     if enum:
-        low = text.lower()
-        for e in enum:
-            if re.search(r"\b" + re.escape(str(e).lower()) + r"\b", low):
-                return e
+        got = pick_enum(text, enum)
+        if got is not None:
+            return got
         if lname == "severity":
             return severity_of(text) if severity_of(text) in enum else enum[0]
         if lname in ("model", "device_model") and ctx.get("device_model") in enum:
@@ -352,6 +384,65 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     return None
 
 
+def pick_enum(text: str, enum: List[Any]) -> Any:
+    """Authoritative enum mention (R14): positions matter, not schema order. The last mention after the
+    last self-repair marker wins; a mention directly negated ("not compact") is skipped."""
+    low = (text or "").lower()
+    hits = []
+    for e in enum:
+        for m in re.finditer(r"\b" + re.escape(str(e).lower()) + r"\b", low):
+            if re.search(r"\b(?:not|no|don'?t want)\s+(?:a\s+|the\s+)?$", low[max(0, m.start() - 16):m.start()]):
+                continue
+            hits.append((m.start(), e))
+    if not hits:
+        return None
+    hits.sort(key=lambda h: h[0])
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(low)), default=-1)
+    after = [e for p, e in hits if p >= last_marker]
+    return after[-1] if after else hits[-1][1]
+
+
+def validate_value(v: Any, spec: Dict[str, Any]) -> bool:
+    """Pre-dispatch schema check for one leaf value (R15)."""
+    typ = spec.get("type", "string")
+    if typ == "integer":
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or float(v) != int(v):
+            return False
+    elif typ == "number":
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+    elif typ == "boolean":
+        if not isinstance(v, bool):
+            return False
+    elif typ == "string":
+        if not isinstance(v, str):
+            return False
+        if "minLength" in spec and len(v) < spec["minLength"]:
+            return False
+        if "maxLength" in spec and len(v) > spec["maxLength"]:
+            return False
+        if spec.get("pattern") and not re.search(spec["pattern"], v):
+            return False
+    elif typ == "array":
+        if not isinstance(v, list):
+            return False
+        items = spec.get("items") if isinstance(spec.get("items"), dict) else None
+        if items and not all(validate_value(x, items) for x in v):
+            return False
+        if "minItems" in spec and len(v) < spec["minItems"]:
+            return False
+    if typ in ("integer", "number"):
+        if "minimum" in spec and v < spec["minimum"]:
+            return False
+        if "maximum" in spec and v > spec["maximum"]:
+            return False
+        if "exclusiveMinimum" in spec and v <= spec["exclusiveMinimum"]:
+            return False
+    if spec.get("enum") and v not in spec["enum"]:
+        return False
+    return True
+
+
 _UNSET = (None, "")
 
 
@@ -372,6 +463,8 @@ def _fill(props: Dict[str, Any], text: str, ctx: Dict[str, Any], prefix: str,
                 out[name] = sub
             continue
         v = ctx.get(path) if ctx.get(path) not in _UNSET else _arg_for(name, aspec, text, ctx)
+        if v not in _UNSET and not validate_value(v, aspec):
+            v = None                               # invalid values never reach the tool (R15)
         if v not in _UNSET:
             out[name] = v
         elif req:
@@ -469,6 +562,8 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
             return None  # several numbers and none tied to this field: ask rather than guess
         best = nums[0][2]
     v = float(best)
+    if integer and not v.is_integer():
+        return v                                    # keep the fraction so validation rejects it (R15)
     return int(v) if integer or v.is_integer() else v
 
 
