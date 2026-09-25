@@ -82,16 +82,20 @@ def _install_fake_livekit():
             for fn in self._handlers.get(event_name, []):
                 fn(ev)
 
-        def say(self, text):
+        def say(self, text, **kwargs):
             self.said.append(text)
             return FakeSpeechHandle()
+
+        def interrupt(self, **kwargs):
+            return None
 
         async def start(self, room, agent):
             self.started_with = (room, agent)
 
     class AgentServer:
-        def __init__(self):
+        def __init__(self, **kwargs):
             self._entrypoint = None
+            self.setup_fnc = kwargs.get("setup_fnc")
 
         def rtc_session(self):
             def deco(fn):
@@ -107,9 +111,14 @@ def _install_fake_livekit():
         def on(self, event_name, cb):
             self._handlers.setdefault(event_name, []).append(cb)
 
+    class JobProcess:
+        def __init__(self):
+            self.userdata = {}
+
     class JobContext:
         def __init__(self, room_name):
             self.room = FakeRoom(room_name)
+            self.proc = JobProcess()
             self._shutdown_cbs = []
 
         def add_shutdown_callback(self, cb):
@@ -122,6 +131,7 @@ def _install_fake_livekit():
     agents_mod.AgentSession = AgentSession
     agents_mod.AgentServer = AgentServer
     agents_mod.JobContext = JobContext
+    agents_mod.JobProcess = JobProcess
     agents_mod.voice = voice_mod
     agents_mod.cli = cli_mod
 
