@@ -63,6 +63,7 @@ class ParticipantAgent:
         self.in_q, self.out_q = in_queue, out_queue
         self.live = live or os.environ.get("TRIAGELINE_LIVE") == "1"
         self.tools: Dict[str, Any] = {}
+        self.tool_alias: Dict[str, str] = {}   # internal canonical name -> manifest name
         self.state: Dict[str, Any] = {"intent": None, "slots": {}}
         self.buffer: List[str] = []
         self.audio_parts: List[asyncio.Task] = []
@@ -115,6 +116,31 @@ class ParticipantAgent:
         t.add_done_callback(self.tasks.discard)
         return t
 
+    # canonical internal name -> token set that identifies the same tool under a
+    # different manifest naming convention (FDB-v3 uses "search_flights").
+    CANONICAL_TOOLS = {"flight_search": ({"flight", "search"}, "read_only")}
+
+    @classmethod
+    def canonicalize_manifest(cls, tools: Dict[str, Any]):
+        """Map semantically-equivalent manifest tools onto the canonical names the
+        planner's flight-family logic (search -> book chaining, revise/redo,
+        on_flights grounding) is written against. Matching is by name tokens
+        (order/plural-insensitive), never by a hard-coded scenario string, and
+        only fires when the canonical name itself is absent. Returns
+        (tools_keyed_by_internal_name, {internal: external})."""
+        tools = dict(tools or {})
+        alias: Dict[str, str] = {}
+        for canon, (need, _kind) in cls.CANONICAL_TOOLS.items():
+            if canon in tools:
+                continue
+            for name in list(tools):
+                toks = {t.rstrip("s") for t in re.split(r"[_\W]+", name.lower()) if t}
+                if need <= toks and name not in alias.values():
+                    tools = {(canon if k == name else k): v for k, v in tools.items()}
+                    alias[canon] = name
+                    break
+        return tools, alias
+
     async def post(self, kind: str, **data):
         """Completion of slow work re-enters through the same queue → consumer stays serial."""
         await self.in_q.put({"event_type": INTERNAL, "payload": {"kind": kind, **data}})
@@ -122,7 +148,7 @@ class ParticipantAgent:
     async def dispatch(self, ev: Dict[str, Any]):
         et, p = ev.get("event_type"), ev.get("payload") or {}
         if et == "tool_manifest":
-            self.tools = p.get("tools") or {}
+            self.tools, self.tool_alias = self.canonicalize_manifest(p.get("tools") or {})
         elif et == "user_speech_chunk":
             self.buffer.append(p.get("text", ""))
             if p.get("end_of_turn"):
@@ -226,7 +252,10 @@ class ParticipantAgent:
                               "plan": list(self.plan), "turn": self.last_turn, "op": key}
         if key:
             self.ops[key] = {"status": "pending", "call_id": cid, "result": None, "ctx": None}
-        await self.out_q.put({"action": "tool_call", "payload": {"call_id": cid, "api_name": api, "args": args}})
+        # emit the manifest's own tool name (e.g. FDB-v3 "search_flights") even
+        # though the agent reasons with its canonical family name internally
+        ext = getattr(self, "tool_alias", {}).get(api, api)
+        await self.out_q.put({"action": "tool_call", "payload": {"call_id": cid, "api_name": ext, "args": args}})
         return cid
 
     async def cancel_where(self, pred) -> List[Dict[str, Any]]:
@@ -508,6 +537,19 @@ class ParticipantAgent:
         ctx = dict(slots)
         ctx.update(extra or {})
         args, missing = nlu.build_args(spec, turn, ctx)
+        # Read-only search tools only: a missing top-level travel/search DATE is
+        # defaulted to "today" (announced in the ack so the user can correct it
+        # by barge-in, which goes through the normal revise/epoch path). A
+        # side-effect-free lookup is cheap and reversible; asking first would
+        # stall a chained plan (search -> book) on a slot the user never
+        # considered. State-modifying tools are NEVER defaulted.
+        assumed = []
+        if missing and spec.get("kind", "read_only") == "read_only":
+            for f in list(missing):
+                if "." not in f and "date" in f.lower() and nlu.field_spec(spec, f).get("type", "string") == "string":
+                    args[f] = "today"
+                    missing.remove(f)
+                    assumed.append(f)
         if missing:
             field = missing[0]
             leaf = field.split(".")[-1].replace("_", " ")
@@ -523,7 +565,10 @@ class ParticipantAgent:
                                     "plan": list(self.plan), "version": self.version}
             await self.say("clarification_request", q)
             return
-        await self.say("filler_speech", self.ack(api, args))
+        ack = self.ack(api, args)
+        if assumed and "today" not in ack:
+            ack = ack.rstrip(".") + " — I'll assume today unless you say otherwise."
+        await self.say("filler_speech", ack)
         await self.call(api, args, deps={k: args.get(k) for k in ("destination", "date", "city", "origin") if k in args})
 
     def device_word(self) -> str:

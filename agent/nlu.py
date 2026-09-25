@@ -411,6 +411,10 @@ def parse_field_answer(answer: str, name: str, fspec: Dict[str, Any]) -> Any:
     return v or None
 
 
+BUDGET_FIELD_HINTS = ("price", "budget", "rent", "cost", "limit", "amount")
+BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|at most|max(?:imum)?(?: of)?|"
+                       r"budget(?: of| is)?|cheaper than|within)\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
+
 WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
             "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
 
@@ -425,6 +429,15 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
     nums = [(m.start(), m.end(), m.group()) for m in NUMBER_RE.finditer(t)]
     if not nums:
         return None
+    # upper-bound / budget fields (max_price, budget, max_rent, ...): the value is
+    # the number introduced by a ceiling phrase ("under 3000", "below $50",
+    # "up to 2k", "budget of 900"), not whichever number happens to come first.
+    lname = (name or "").lower()
+    if lname and (lname.startswith("max") or any(k in lname for k in BUDGET_FIELD_HINTS)):
+        m = BUDGET_RE.search(t)
+        if m:
+            v = float(m.group(1).replace(",", ""))
+            return int(v) if integer or v.is_integer() else v
     cues = {_stem(w) for w in tokens(name.replace("_", " "))} or \
         {_stem(w) for w in tokens(str(spec.get("description", "")))}
     words = [(m.start(), _stem(m.group().lower())) for m in re.finditer(r"[A-Za-z]+", t)]
