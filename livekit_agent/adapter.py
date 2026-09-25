@@ -1,7 +1,10 @@
 """livekit_agent/adapter.py — thin translation layer between LiveKit Agents and
 TriageLine's existing `agent.agent.ParticipantAgent`.
 
-This file contains NO interruption/classification/dedup logic of its own. Every
+This file contains NO interruption *classification* or dedup logic of its own.
+It does own the transport-level concurrency: tool calls run as independent
+tasks (never blocking speech/cancellation), finals are optionally settled
+before routing, and VAD/partial-transcript barge-in cuts agent speech early. Every
 behavior listed below already lives in `agent/agent.py` + `agent/nlu.py` and is
 covered by `tests/test_regressions.py`; this module only translates LiveKit's
 callback shapes into the event-queue shapes ParticipantAgent already consumes,
@@ -24,9 +27,9 @@ LiveKit callback points this adapter wires up (see cascaded_agent.py / livekit
 Agent Session for the real names — this module talks to them through small
 protocol shims so it can be unit-tested without the `livekit` package installed):
 
-  - user speech PARTIAL transcript  -> on_user_partial()   (fast-path only; no
-      agent event today — ParticipantAgent has no partial-transcript hook, so
-      partials are currently a no-op pass-through. Kept as an explicit seam.)
+  - user speech PARTIAL transcript  -> on_user_partial()   (fast path: a
+      correction cue while the agent is busy interrupts its speech at once)
+  - VAD user-speech onset           -> on_user_speech_start() (stops agent speech)
   - user speech FINAL transcript    -> on_user_final()     -> "user_speech_chunk"
       (end_of_turn=True) if no turn is in flight, else -> on_interruption()
   - barge-in / interruption event   -> on_barge_in()       -> "interruption"
@@ -51,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from agent.agent import ParticipantAgent
@@ -76,7 +80,9 @@ class TriageAdapter:
     the in-flight ledger and the op ledger all live on `self.agent`."""
 
     def __init__(self, *, tool_executor: ToolExecutor, tool_canceller: ToolCanceller,
-                 speak: Speak, live: bool = True):
+                 speak: Speak, live: bool = True, settle_s: float = 0.0,
+                 interrupt_speech: Optional[Callable[[], Awaitable[None]]] = None,
+                 load_models: bool = False):
         self.in_q: asyncio.Queue = asyncio.Queue()
         self.out_q: asyncio.Queue = asyncio.Queue()
         self.agent = ParticipantAgent(self.in_q, self.out_q, live=live)
@@ -88,15 +94,36 @@ class TriageAdapter:
         # call_id -> api_name, so on_tool_completed can log without the caller
         # having to remember what it dispatched.
         self._issued: Dict[str, str] = {}
+        # call_id -> asyncio.Task running the executor. Tool calls run as their
+        # own tasks so a slow tool NEVER blocks filler speech, cancel_tool or new
+        # tool calls (audit B-05: previously the pump awaited the executor inline).
+        self._tool_tasks: Dict[str, asyncio.Task] = {}
+        # Utterance settling (audit B-09): LiveKit endpointing can split one spoken
+        # request with a long hesitation into several finals. Finals arriving within
+        # `settle_s` of each other are merged before they are routed, so the second
+        # half of a sentence is never mistaken for a barge-in on the first half.
+        self.settle_s = max(0.0, float(settle_s))
+        self._pending_final: list = []
+        self._settle_task: Optional[asyncio.Task] = None
+        self._interrupt_speech = interrupt_speech
+        # FDB/LiveKit path never uses local ASR/CLIP (LiveKit does STT), so the
+        # 700 MB model load is skipped unless explicitly requested (audit B-11).
+        self._load_models = load_models
 
     # ------------------------------------------------------------- lifecycle
     async def start(self, tools_manifest: Dict[str, Any]):
-        await self.agent.setup()
+        if self._load_models:
+            await self.agent.setup()
         await self.in_q.put({"event_type": "tool_manifest", "payload": {"tools": tools_manifest}})
         self._run_task = asyncio.create_task(self.agent.run())
         self._pump_task = asyncio.create_task(self._pump_outputs())
 
     async def stop(self):
+        if self._settle_task:
+            self._settle_task.cancel()
+        for t in list(self._tool_tasks.values()):
+            t.cancel()
+        self._tool_tasks.clear()
         for t in (self._pump_task, self._run_task):
             if t:
                 t.cancel()
@@ -114,31 +141,70 @@ class TriageAdapter:
         return self.agent.version
 
     # ------------------------------------------------------ inbound (LiveKit -> agent)
+    def busy(self) -> bool:
+        """True while the agent owns live work for the current request: a tool in
+        flight, or a turn it has not answered yet."""
+        return (bool(self.agent.inflight) or not self.agent.answered) and self.agent.last_api is not None
+
+    async def on_user_speech_start(self):
+        """VAD onset of user speech (audit B-08). If the agent is talking or working,
+        stop its queued/playing speech immediately so the user can barge in; the
+        actual interruption semantics (revise / retract / switch) are decided when
+        the final transcript arrives."""
+        if self._interrupt_speech is not None:
+            try:
+                await self._interrupt_speech()
+            except Exception as e:  # noqa: BLE001 - a TTS hiccup must never kill the session
+                log.warning("interrupt_speech failed: %s", e)
+
     async def on_user_partial(self, text: str):
-        """Interim STT transcript. ParticipantAgent's fast path has no partial
-        hook (it buffers/turns on end_of_turn, and treats barge-in during an
-        active response as an explicit "interruption" event instead) so this
-        is intentionally a no-op today. Kept as a named seam so a future
-        partial-driven early-cancel policy has one obvious place to land
-        instead of being invented ad hoc in cascaded_agent.py."""
-        return
+        """Interim STT transcript. An explicit correction marker ("actually",
+        "no wait", "instead", "scratch that") while the agent is speaking cuts the
+        agent's speech right away (fast path) — the correction itself is applied
+        once the final transcript arrives, so nothing is decided on a partial."""
+        if text and self.busy() and _CORRECTION_CUE.search(text):
+            await self.on_user_speech_start()
 
     async def on_user_final(self, text: str):
         """Final STT transcript for a user turn.
 
-        If the agent has nothing in flight and hasn't already answered this
-        turn, this is an ordinary new turn. If it does have live work (a
-        pending response, an in-flight tool call, or an unanswered turn),
-        LiveKit's own VAD/endpointing already means the user spoke *while*
-        the agent was mid-task — i.e. this final transcript IS the barge-in
-        utterance, so it must go through on_interruption()'s epoch-bump path,
-        not a fresh turn. This routing decision is the only thing this
-        adapter decides; the classification of what KIND of interruption it
-        is (revise/retract/switch) is entirely ParticipantAgent.on_interruption.
-        """
-        text = text or ""
-        busy = bool(self.agent.inflight) or not self.agent.answered
-        if busy and self.agent.last_api is not None:
+        With `settle_s > 0` finals are buffered briefly and merged (see B-09);
+        otherwise they are routed immediately (unit tests / offline replay)."""
+        text = (text or "").strip()
+        if not text:
+            return
+        if self.settle_s <= 0:
+            return await self._route_final(text)
+        self._pending_final.append(text)
+        if self._settle_task and not self._settle_task.done():
+            self._settle_task.cancel()
+        self._settle_task = asyncio.create_task(self._settle_then_route())
+
+    async def flush(self):
+        """Route any buffered final immediately (end of stream / teardown)."""
+        if self._settle_task and not self._settle_task.done():
+            self._settle_task.cancel()
+        if self._pending_final:
+            text, self._pending_final = " ".join(self._pending_final), []
+            await self._route_final(text)
+
+    async def _settle_then_route(self):
+        try:
+            await asyncio.sleep(self.settle_s)
+        except asyncio.CancelledError:
+            return
+        text, self._pending_final = " ".join(self._pending_final), []
+        if text:
+            await self._route_final(text)
+
+    async def _route_final(self, text: str):
+        """If the agent has live work (a pending response, an in-flight tool call,
+        or an unanswered turn), the user spoke *while* the agent was mid-task — the
+        final transcript IS the barge-in utterance and goes through
+        on_interruption()'s epoch-bump path. Otherwise it is an ordinary new turn.
+        The classification of the interruption (revise / retract / switch) is
+        entirely ParticipantAgent.on_interruption."""
+        if self.busy():
             await self.on_barge_in(text)
             return
         await self.in_q.put({"event_type": "user_speech_chunk",
@@ -162,6 +228,19 @@ class TriageAdapter:
                               "payload": {"call_id": call_id, "result": result, "status": status}})
 
     # ------------------------------------------------------ outbound (agent -> LiveKit)
+    async def _run_tool(self, cid: str, api: str, args: Dict[str, Any]):
+        try:
+            await self._tool_executor(cid, api, args)
+        except asyncio.CancelledError:
+            log.info("tool task cancelled: %s (%s)", cid, api)
+            raise
+        except Exception as e:  # noqa: BLE001 - executor bug -> structured error, never a stranded call
+            log.exception("tool executor failed for %s", api)
+            await self.on_tool_completed(cid, {"status": "error", "error": "error", "message": str(e)},
+                                         status="error")
+        finally:
+            self._tool_tasks.pop(cid, None)
+
     async def _pump_outputs(self):
         try:
             while True:
@@ -169,22 +248,38 @@ class TriageAdapter:
                 action = msg.get("action")
                 payload = msg.get("payload") or {}
                 if action in ("filler_speech", "final_response", "clarification_request"):
-                    kind = "final_response" if action != "filler_speech" else "filler_speech"
                     await self._speak(action, payload.get("text", ""))
                 elif action == "tool_call":
                     cid, api, args = payload["call_id"], payload["api_name"], payload["args"]
                     self._issued[cid] = api
-                    # new tool call always carries the CURRENT epoch because
-                    # ParticipantAgent.call() reads self.version at call time
-                    # (agent/agent.py:224) — nothing to tag here.
-                    await self._tool_executor(cid, api, args)
+                    # Non-blocking (B-05): each call is its own task, so fillers,
+                    # cancellations and further calls keep flowing while it runs.
+                    # ParticipantAgent.call() already tagged it with the epoch.
+                    self._tool_tasks[cid] = asyncio.create_task(self._run_tool(cid, api, args))
                 elif action == "cancel_tool":
                     cid = payload["call_id"]
+                    task = self._tool_tasks.get(cid)
+                    if task is not None and self.agent.tools.get(
+                            self._reverse_alias(self._issued.get(cid, "")), {}).get("kind") != "state_modifying":
+                        # read-only work is cancelled for real; a state-modifying call
+                        # is left to finish so its (late) outcome is reconciled by the
+                        # operation ledger instead of being silently lost (R03 / B-10)
+                        task.cancel()
                     await self._tool_canceller(cid)
                 else:
                     log.debug("unhandled out_q action: %s", action)
         except asyncio.CancelledError:
             return
+
+    def _reverse_alias(self, ext: str) -> str:
+        for internal, external in (self.agent.tool_alias or {}).items():
+            if external == ext:
+                return internal
+        return ext
+
+
+_CORRECTION_CUE = re.compile(
+    r"\b(actually|no[, ]+wait|wait[, ]+no|instead|scratch that|i mean|never ?mind|hold on|stop)\b", re.I)
 
 
 # --------------------------------------------------------------------------- LiveKit wiring
@@ -194,9 +289,7 @@ def attach_livekit_session(session, adapter: TriageAdapter, *, room_name: str = 
     already have a `livekit.agents.voice.AgentSession` instance can use this
     instead of hand-rolling the event handlers.
 
-    NOT exercised by the manual test scripts in this phase (no livekit-agents
-    in this sandbox — see SETUP.md); wiring documented and left for the smoke
-    test in TASK 4/5's follow-up once credentials are available.
+    Used by cascaded_agent.py. Event names verified against livekit-agents 1.x.
     """
     @session.on("user_input_transcribed")
     def _on_transcript(msg):
@@ -206,21 +299,11 @@ def attach_livekit_session(session, adapter: TriageAdapter, *, room_name: str = 
         else:
             asyncio.create_task(adapter.on_user_partial(text))
 
-    # Barge-in: LiveKit AgentSession fires speech_created/user_state_changed
-    # around VAD-detected speech while the agent is talking; the exact event
-    # name has moved across livekit-agents versions (SETUP.md notes 1.3 vs
-    # 1.8.3 drift), so this hooks the documented 1.x event and falls back to
-    # treating the next final transcript as a barge-in via on_user_final's own
-    # `busy` check above — that fallback is what on_user_final already does,
-    # so barge-in detection degrades gracefully even if this handler name is
-    # wrong for a given SDK point release.
-    if hasattr(session, "on"):
-        try:
-            @session.on("user_state_changed")
-            def _on_user_state(ev):
-                if getattr(ev, "new_state", None) == "speaking":
-                    pass  # on_user_final's busy-check covers this; see above
-        except Exception:
-            log.warning("could not attach barge-in hook for this livekit-agents version")
+    # Barge-in on VAD speech onset (audit B-08). livekit-agents 1.x emits
+    # `user_state_changed` with new_state == "speaking" when the user starts talking.
+    @session.on("user_state_changed")
+    def _on_user_state(ev):
+        if getattr(ev, "new_state", None) == "speaking":
+            asyncio.create_task(adapter.on_user_speech_start())
 
     return session
