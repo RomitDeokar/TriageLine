@@ -82,8 +82,12 @@ FDB_TOOLS = {
         "description": "Search for available rental apartments.",
         "args": {
             "city": {"type": "string", "required": True, "description": "Destination city"},
-            "bedrooms": {"type": "integer", "required": True, "description": "Number of bedrooms"},
-            "max_price": {"type": "number", "required": True, "description": "Maximum monthly rent budget"},
+            # bedrooms / max_price are not asked for when the caller doesn't state them: the benchmark is
+            # single-turn and the upstream prompt forbids clarifying questions. The official mock accepts
+            # **kwargs, so optional filters stated in the tool's own domain are passed through (A-12).
+            "bedrooms": {"type": "integer", "required": False, "description": "Number of bedrooms"},
+            "max_price": {"type": "number", "required": False, "description": "Maximum monthly rent budget"},
+            "pets_allowed": {"type": "boolean", "required": False, "description": "Only pet-friendly listings"},
         },
     },
     "calculate_commute": {
@@ -92,7 +96,7 @@ FDB_TOOLS = {
         "args": {
             "origin_address": {"type": "string", "required": True, "description": "Starting location"},
             "destination_address": {"type": "string", "required": True, "description": "Destination location"},
-            "mode": {"type": "string", "required": False, "enum": ["driving", "transit", "walking", "cycling"], "description": "Transport mode, defaults to 'driving'"},
+            "mode": {"type": "string", "required": False, "default": "driving", "enum": ["driving", "transit", "walking", "cycling"], "description": "Transport mode, defaults to 'driving'"},
         },
     },
     "update_search_filter": {
@@ -117,6 +121,7 @@ FDB_TOOLS = {
         "args": {
             "query": {"type": "string", "required": True, "description": "Product search term, e.g. 'headphones'"},
             "max_price": {"type": "number", "required": False, "description": "Optional maximum budget"},
+            "category": {"type": "string", "required": False, "description": "Optional catalog section, e.g. 'electronics'"},
         },
     },
     "add_to_cart": {
@@ -124,7 +129,9 @@ FDB_TOOLS = {
         "description": "Add an item to the shopping cart.",
         "args": {
             "product_id": {"type": "string", "required": True, "description": "ID of the product"},
-            "quantity": {"type": "integer", "required": False, "description": "Amount to add, defaults to 1"},
+            # official mock_apis.add_to_cart(product_id, quantity) has NO default (TypeError if missing);
+            # the upstream agent wrapper defaults it to 1 -> always sent, schema default applied (A-05)
+            "quantity": {"type": "integer", "required": True, "default": 1, "minimum": 1, "description": "Amount to add, defaults to 1"},
         },
     },
 }
