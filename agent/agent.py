@@ -80,6 +80,7 @@ class ParticipantAgent:
         self.turn_fillers = 0
         self.plan: List[str] = []                         # queued follow-up tool names
         self.pending_clarify: Optional[Dict[str, Any]] = None
+        self.presented: List[Dict[str, Any]] = []         # candidates last shown to the user (R12)
         self.last_turn = ""
         self.last_api: Optional[str] = None
         self.answered = False
@@ -172,7 +173,15 @@ class ParticipantAgent:
             self.on_frame(p)
         elif et == "interruption":
             self.turn_fillers = 0
-            await self.on_interruption(p.get("text", ""))
+            text = p.get("text", "")
+            if self.buffer:
+                # a correction arriving mid-utterance applies to the buffered words; the combined
+                # utterance is resolved once (repair-aware), and the stale buffer is retired (R07)
+                pre, self.buffer = nlu.norm(" ".join(self.buffer)), []
+                retraction = nlu.RETRACTION.search(text.lower()) and not self._has_new_values(text)
+                if not retraction and not self.inflight and self.pending_clarify is None:
+                    return await self.on_turn(pre + " " + text)
+            await self.on_interruption(text)
         elif et == "tool_result":
             await self.on_tool_result(p)
         elif et == "tool_cancelled":
@@ -209,7 +218,8 @@ class ParticipantAgent:
     async def say(self, kind: str, text: str, priority: bool = False):
         text = nlu.norm(text)
         if kind == "filler_speech":
-            if text in self.fillers:
+            recent = (self.fillers[-self.turn_fillers:] if self.turn_fillers else []) if self.live else self.fillers
+            if text in recent:                   # live: dedup within the turn only (R21)
                 return
             if self.live:
                 if self.turn_fillers >= 2:           # live: per-turn budget, no lifetime cap
@@ -391,6 +401,9 @@ class ParticipantAgent:
     # ------------------------------------------------------------------ turns
     async def on_turn(self, turn: str, from_audio: bool = False):
         low = turn.lower()
+        if not nlu.tokens(re.sub(r"(?i)\b(please|thanks|thank you|ok|okay)\b", " ", turn)) and \
+                (self.inflight or self.answered is False and self.last_api):
+            return                                # a trailing "please." is not a new request
 
         # answers to a pending side-effect decision are handled before anything else
         if await self.resume_side_effect_decision(turn):
@@ -424,8 +437,18 @@ class ParticipantAgent:
                 # valid); only superseded clarification / plans are dropped
                 self.pending_clarify, self.plan = None, []
 
-        # elliptical follow-up ("Boston." / "make it Friday") continues the previous task
+        # "book the second one / the cheapest one" binds to the candidates we actually presented (R12)
+        if self.presented and "book_flight" in self.tools and re.search(r"\b(book|reserve|take)\b", low) and \
+                not nlu.negates_booking(turn) and not nlu.extract_city(turn):
+            pick = nlu.select_option(turn, self.presented)
+            if pick is not None:
+                return await self.book_pick(pick, nlu.extract_name_any_case(turn), turn)
+
+        # elliptical follow-up ("Boston." / "make it Friday") continues the previous task — only for
+        # genuine slot-only answers, never for an explicit new action (R11)
         if self.last_api and (not ranked or ranked[0][0] < 1.5 or ranked[0][1] == self.last_api) and \
+                not re.search(r"\b(book|reserve|cancel|find|search|show|look)\b", low) and \
+                not nlu.extract_name_any_case(turn) and \
                 (nlu.extract_city(turn) or nlu.extract_date(turn)) and len(nlu.tokens(turn)) <= 4:
             return await self.start_task(self.last_api, turn)
 
@@ -457,6 +480,23 @@ class ParticipantAgent:
             if not top:
                 return await self.say("final_response", "Okay — I won't book anything.")
         await self.start_task(top, turn)
+
+    async def book_pick(self, pick: Dict[str, Any], name: Optional[str], turn: str):
+        s = self.state["slots"]
+        s["flight_id"] = pick["flight_id"]
+        self.state["intent"] = "book_flight"
+        self.last_api = "book_flight"
+        self.plan = []
+        if name:
+            s["passenger_name"] = name
+        name = name or s.get("passenger_name")
+        if not name:
+            self.pending_clarify = {"field": "passenger_name", "api": "book_flight", "args": {},
+                                    "text": turn, "version": self.version}
+            return await self.say("clarification_request", f"Sure — {pick['flight_id']} at {pick.get('depart')}. "
+                                                           f"Whose name should I book it under?")
+        await self.issue_booking({"flight_id": pick["flight_id"], "passenger_name": name}, {"flight_id": pick["flight_id"]},
+                                 announce=f"Booking {pick['flight_id']} at {pick.get('depart')} for {name} now.")
 
     def _booking_pending(self) -> bool:
         pc = self.pending_clarify or {}
@@ -542,6 +582,24 @@ class ParticipantAgent:
         """Resume the original request with an answer parsed for the field we asked about."""
         pc, self.pending_clarify = self.pending_clarify, None
         field = pc.get("field") or ""
+        if pc.get("kind") == "select":
+            pick = nlu.select_option(turn, pc["options"])
+            if pick is None:
+                if self._actionable(turn) and len(nlu.tokens(turn)) > 3:
+                    return False
+                self.pending_clarify = pc
+                opts = " or ".join(f"{f['flight_id']} at {f.get('depart')}" for f in pc["options"][:3])
+                await self.say("clarification_request", f"Sorry — which one: {opts}?")
+                return True
+            self.state["slots"]["depart_time"] = str(pick.get("depart", ""))[:5]
+            if "book_flight" in (pc.get("plan") or []):
+                await self.book_pick(pick, nlu.extract_name_any_case(turn), pc.get("text") or turn)
+            else:
+                self.state["slots"]["flight_id"] = pick["flight_id"]
+                self.presented = list(pc["options"])
+                await self.say("final_response", f"{pick['flight_id']} departs {pick.get('depart')} for "
+                                                 f"${pick.get('price_usd')}. Want me to book it?")
+            return True
         cands = pc.get("candidates") or []
         value = None
         if cands:
@@ -579,6 +637,8 @@ class ParticipantAgent:
             slots[field] = value
         base = pc.get("text") or self.last_turn
         self.last_turn = base
+        confirmed = {"destination": slots.get("destination")} if leaf in ("destination", "city") else \
+            {"passenger_name": slots.get("passenger_name")} if ("passenger" in leaf or leaf == "name") else {}
         if api == "book_flight" and slots.get("flight_id") and slots.get("passenger_name"):
             self.plan = []
             await self.say("filler_speech", f"Thanks — booking {slots['flight_id']} for {slots['passenger_name']} now.")
@@ -595,7 +655,8 @@ class ParticipantAgent:
             await self.on_turn(turn2)
             return True
         self.plan = pc.get("plan") or []
-        await self.start_task(api, base, extra=pc.get("args") or {})
+        # the confirmed answer outranks anything re-parsed from the original transcript (R06)
+        await self.start_task(api, base, extra={**(pc.get("args") or {}), **confirmed})
         return True
 
     def capabilities(self) -> str:
@@ -622,9 +683,13 @@ class ParticipantAgent:
         date = nlu.extract_date(turn)
         if date:
             slots["date"] = date
-        name = nlu.extract_name(turn)
+        name = nlu.extract_name_any_case(turn)
         if name and api in FLIGHT_FAMILY:
             slots["passenger_name"] = name
+        elif api in FLIGHT_FAMILY and re.search(r"\b(?:for|passenger|name is|named|under)\s+[a-z]+\s*[.!?]?\s*$", turn,
+                                                re.I) and re.search(r"\bbook\b", turn, re.I) and \
+                not nlu.extract_date(turn.split()[-1]):
+            slots.pop("passenger_name", None)    # explicit but unresolved passenger → ask, never reuse (R10)
         want = nlu.extract_time(turn)
         if want:
             slots["depart_time"] = want
@@ -643,6 +708,9 @@ class ParticipantAgent:
         protect = api not in FLIGHT_FAMILY and any(c["api"] in FLIGHT_FAMILY for c in self.inflight.values())
         saved = dict(slots) if protect else None
         self.update_slots(api, turn)
+        for k, v in (extra or {}).items():
+            if k in ("destination", "date", "origin", "passenger_name", "depart_time") and v:
+                slots[k] = v
         self.state["intent"] = self.INTENT_NAMES.get(api, api)
 
         if api == "lookup_manual":
@@ -800,6 +868,42 @@ class ParticipantAgent:
             return
         await self.revise(text)
 
+    TYPED_ROLE = ("city", "destination", "location", "origin", "date")
+
+    def _typed_field(self, name: str, spec: Dict[str, Any]) -> bool:
+        return bool(spec.get("enum") or spec.get("type") in ("number", "integer", "boolean")
+                    or name.endswith("_id") or any(k in name.lower() for k in self.TYPED_ROLE))
+
+    async def revise_schema_fields(self, text: str) -> bool:
+        """Typed corrections built from the running tool's own schema (R09): enums, numbers, booleans,
+        ids, places. Only calls whose arguments actually change are cancelled and re-issued."""
+        hit = False
+        for cid, c in list(self.inflight.items()):
+            if c["api"] in FLIGHT_FAMILY:
+                continue                                   # the flight family has its dedicated revise path
+            props = (self.tools.get(c["api"], {}).get("args") or {})
+            found, _ = nlu.build_args({"args": {k: {**v, "required": False} for k, v in props.items()}}, text, {})
+            diff = {k: v for k, v in found.items() if k in c["args"] and self._typed_field(k, props.get(k, {}))
+                    and str(v).casefold() != str(c["args"][k]).casefold()}
+            if not diff:
+                continue
+            hit = True
+            new = {**c["args"], **diff}
+            what = ", ".join(str(v) for v in diff.values())
+            await self.say("filler_speech", f"Got it — switching to {what}.", priority=True)
+            await self.cancel_where(lambda x, cid=cid: x.get("cid") == cid)
+            rec = self.ledger.for_call(cid)
+            if rec is not None and rec["status"] not in ("cancelled", "rejected"):
+                # the provider hasn't confirmed the cancel: don't risk two reservations (R03)
+                self.pending_retry = {"api": c["api"], "args": new, "deps": c["deps"], "op": rec}
+                await self.say("clarification_request", f"I've asked the system to stop the earlier "
+                                                        f"{self.what(c['api'])}. Once you confirm it's not active, "
+                                                        f"say \"yes, try again\" and I'll make the new one.")
+                continue
+            self.version += 1
+            await self.call(c["api"], new, deps=c["deps"])
+        return hit
+
     def _has_new_values(self, text: str) -> bool:
         s = self.state["slots"]
         c, d, n = nlu.extract_city(text), nlu.extract_date(text), nlu.extract_name(text)
@@ -821,6 +925,12 @@ class ParticipantAgent:
         t = nlu.extract_time(text)
         if t and t != slots.get("depart_time"):
             changed["depart_time"] = t
+        o = nlu.extract_origin(text)
+        if o and o != slots.get("origin"):
+            changed["origin"] = o
+        if await self.revise_schema_fields(text):
+            if not changed:
+                return
         if not changed:
             await self.say("filler_speech", "Okay — still on it.")
             return
@@ -1083,6 +1193,7 @@ class ParticipantAgent:
         if not flights:
             self.plan = []
             return await self.say("final_response", f"I couldn't find any flights to {dest or 'there'}. Want to try another date?")
+        self.presented = list(flights)
         want = s.get("depart_time")
         pick, matched = flights[0], want is None
         if want:
@@ -1090,12 +1201,17 @@ class ParticipantAgent:
                 if str(f.get("depart", "")).strip()[:5] == want:
                     pick, matched = f, True
                     break
+        elif nlu.has_selector(c.get("turn", "")):
+            chosen = nlu.select_option(c["turn"], flights)      # cheapest / earliest / ordinal (R12)
+            if chosen is not None:
+                pick = chosen
         plan = self.plan or c.get("plan") or []
         if not matched:
             self.plan = []
             opts = " or ".join(f"{f['flight_id']} at {f.get('depart')} (${f.get('price_usd')})" for f in flights[:3])
-            self.pending_clarify = {"field": "depart_time", "api": "flight_search", "args": {}, "text": c["turn"],
-                                    "plan": plan, "version": self.version}
+            self.pending_clarify = {"kind": "select", "field": "depart_time", "api": "flight_search", "args": {},
+                                    "text": c["turn"], "options": list(flights), "plan": plan,
+                                    "version": self.version}
             return await self.say("clarification_request",
                                   f"I couldn't find a flight to {dest} at {want}. The options are {opts} — which would you like?")
         if plan and plan[0] == "book_flight":

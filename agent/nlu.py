@@ -210,6 +210,70 @@ def extract_name(text: str) -> Optional[str]:
     return _pick_after_repair(text, found)
 
 
+_LOW_NAME = re.compile(r"\b(?:for|passenger|name is|named|under)\s+([a-z][a-z'\-]+(?:\s+[a-z][a-z'\-]+)?)\s*[.!?]?\s*$",
+                       re.I)
+
+
+def extract_name_any_case(text: str) -> Optional[str]:
+    """Role-aware name that also accepts lowercase ASR output ("for bob smith") — R10."""
+    got = extract_name(text)
+    if got:
+        return got
+    m = _LOW_NAME.search(text or "")
+    if not m:
+        return None
+    words = m.group(1).split()
+    words = [w for w in words if w.lower() not in STOP and w.lower() not in _NOT_PLACE
+             and not DATE_RE.fullmatch(w) and w.lower() not in CITIES]
+    if not words or _bad_name(words[0]) or len(words) != len(m.group(1).split()):
+        return None
+    return " ".join(w[0].upper() + w[1:].lower() for w in words)
+
+
+ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+            "last": -1}
+
+
+def select_option(text: str, options: List[Dict[str, Any]], id_key: str = "flight_id",
+                  time_key: str = "depart", price_key: str = "price_usd") -> Optional[Dict[str, Any]]:
+    """Resolve a selection against the ACTUAL presented candidates (R12): explicit id, time,
+    cheapest / earliest / latest, or an ordinal ("the second one"). None when nothing is specified."""
+    if not options:
+        return None
+    low = (text or "").lower()
+    for o in options:
+        if str(o.get(id_key, "")).lower() and re.search(r"\b" + re.escape(str(o.get(id_key)).lower()) + r"\b", low):
+            return o
+    t = extract_time(text)
+    if t:
+        for o in options:
+            if str(o.get(time_key, "")).strip()[:5] == t:
+                return o
+        return None
+    priced = [o for o in options if isinstance(o.get(price_key), (int, float))]
+    if priced and re.search(r"\b(cheapest|lowest price|least expensive|cheaper one|best price)\b", low):
+        return min(priced, key=lambda o: o[price_key])
+    if priced and re.search(r"\b(most expensive|priciest)\b", low):
+        return max(priced, key=lambda o: o[price_key])
+    timed = [o for o in options if o.get(time_key)]
+    if timed and re.search(r"\b(earliest|soonest)\b", low):
+        return min(timed, key=lambda o: str(o[time_key]))
+    if timed and re.search(r"\b(latest)\b", low):
+        return max(timed, key=lambda o: str(o[time_key]))
+    m = re.search(r"\b(first|1st|second|2nd|third|3rd|fourth|4th|last)\b(?:\s+(?:one|option|flight))?", low)
+    if m:
+        i = ORDINALS[m.group(1)]
+        if -len(options) <= i < len(options):
+            return options[i]
+    return None
+
+
+def has_selector(text: str) -> bool:
+    return bool(re.search(r"\b(cheapest|lowest price|least expensive|earliest|soonest|latest|most expensive|"
+                          r"(?:first|second|third|fourth|last|1st|2nd|3rd|4th)\s+(?:one|option|flight))\b",
+                          text or "", re.I))
+
+
 def parse_name_answer(text: str) -> Optional[str]:
     """Name given as a clarification answer: case-insensitive, full name kept."""
     t = re.sub(r"(?i)^\W*(?:(?:it'?s|it is|my name is|name is|the name is|under|for|book it under|passenger)\s+)+", "", text or "")
