@@ -299,11 +299,40 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     if "passenger" in lname or lname in ("name", "customer", "guest", "full_name"):
         return ctx.get("passenger_name") or extract_name(text)
     if lname.endswith("_id") or lname == "id":
-        return extract_id(text, lname) or ctx.get(lname)
+        got = extract_id(text, lname) or ctx.get(lname)
+        if got:
+            return got
+        m = re.search(r"\b([A-Z]{2,}\d+|\d+[A-Z]{2,}\w*)\b", text)
+        return m.group(1) if m else None
     if lname in ("model", "device", "device_model"):
         return ctx.get("device_model")
     if lname in ("query", "summary", "question", "text", "message", "description", "issue"):
         return norm(text)
+    # generic fallback for typed string fields with no dedicated semantic role
+    # above (e.g. currency codes, bare alphanumeric ids without a dash prefix,
+    # free-form addresses/account/filter values). Added for FDB-v3 compatibility
+    # (see livekit_agent/fdb_compat_check.py) — every earlier, already-tested
+    # branch still wins first, so this only fires when nothing else matched.
+    if "currency" in lname:
+        m = re.search(r"\b([A-Za-z]{3})\b", text[text.lower().find(lname.split("_")[0]):] or text) \
+            if lname.split("_")[0] in text.lower() else None
+        # fall back to scanning the whole utterance for a bare 3-letter code
+        codes = re.findall(r"\b([A-Za-z]{3})\b", text)
+        codes = [c.upper() for c in codes if c.upper() not in ("THE", "FOR", "AND", "TO ")]
+        if lname.startswith("from") and codes:
+            return codes[0]
+        if lname.startswith("to") and len(codes) > 1:
+            return codes[1]
+        return codes[0] if codes else None
+    if lname.endswith("address"):
+        m = re.search(r"\b(?:from|origin)\s+(.+?)\s+to\s+(.+?)(?:\s+(?:by|via|driving|walking|transit|cycling)\b|$)", text, re.I)
+        if m:
+            return norm(m.group(1) if "origin" in lname else m.group(2)).strip(" .,")
+        return None
+    words = lname.replace("_", " ")
+    m = re.search(re.escape(words) + r"\s+(?:is|to|as|=|:)?\s*([\w][\w\-./]*(?:\s+[\w][\w\-./]*){0,2})", text, re.I)
+    if m:
+        return norm(m.group(1)).strip(" .,")
     return None
 
 
@@ -382,6 +411,10 @@ def parse_field_answer(answer: str, name: str, fspec: Dict[str, Any]) -> Any:
     return v or None
 
 
+BUDGET_FIELD_HINTS = ("price", "budget", "rent", "cost", "limit", "amount")
+BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|at most|max(?:imum)?(?: of)?|"
+                       r"budget(?: of| is)?|cheaper than|within)\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
+
 WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
             "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
 
@@ -396,6 +429,15 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
     nums = [(m.start(), m.end(), m.group()) for m in NUMBER_RE.finditer(t)]
     if not nums:
         return None
+    # upper-bound / budget fields (max_price, budget, max_rent, ...): the value is
+    # the number introduced by a ceiling phrase ("under 3000", "below $50",
+    # "up to 2k", "budget of 900"), not whichever number happens to come first.
+    lname = (name or "").lower()
+    if lname and (lname.startswith("max") or any(k in lname for k in BUDGET_FIELD_HINTS)):
+        m = BUDGET_RE.search(t)
+        if m:
+            v = float(m.group(1).replace(",", ""))
+            return int(v) if integer or v.is_integer() else v
     cues = {_stem(w) for w in tokens(name.replace("_", " "))} or \
         {_stem(w) for w in tokens(str(spec.get("description", "")))}
     words = [(m.start(), _stem(m.group().lower())) for m in re.finditer(r"[A-Za-z]+", t)]

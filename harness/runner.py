@@ -31,8 +31,8 @@ class EvaluationHarness:
         self.verbose = verbose
         self.extra_tools = extra_tools
 
-        self.in_q: asyncio.Queue = asyncio.Queue()
-        self.out_q: asyncio.Queue = asyncio.Queue()
+        self.in_q: Optional[asyncio.Queue] = None
+        self.out_q: Optional[asyncio.Queue] = None
         self.trace: List[Dict[str, Any]] = []
         self.pending: Dict[str, asyncio.Task] = {}
         self._auto_call_counter = 0
@@ -60,6 +60,10 @@ class EvaluationHarness:
         """Construct the agent and await its optional setup(), off the clock. Idempotent."""
         if self._agent is not None:
             return
+        if self.in_q is None:
+            self.in_q = asyncio.Queue()
+        if self.out_q is None:
+            self.out_q = asyncio.Queue()
         self._agent = self.agent_factory(self.in_q, self.out_q)
         setup = getattr(self._agent, "setup", None)
         if not callable(setup):

@@ -1,72 +1,92 @@
-# TriageLine: an interruptible real-time agent (Samsung PRISM · Theme 05) 
+# TriageLine — Theme 05: Interruptible Real-Time Agents
 
-TriageLine is a dual-process voice agent built on the official Theme 5 harness. A fast path answers within milliseconds. A slow path does the real work (ASR, vision, async tools). A coordination layer handles barge-ins without acting on stale results.
+TriageLine has **three distinct pieces**. They are easy to conflate because
+they share vocabulary (interruption, epoch, deliberation) — this README
+keeps them separate on purpose.
 
-| Public scenario | Baseline | TriageLine |
-|---|---:|---:|
-| pub_01 simple search | 100 | **100** |
-| pub_02 interruption (Boston → NYC) | ~90 | **100** |
-| pub_03 chained search + booking | low | **100** |
-| pub_04 no-tool small talk | ✓ | **100** |
-| pub_08 injected timeout, retry | low | **100** |
-| pub_09 unseen tool (weather_lookup) | 0 | **100** |
-| pub_05 / 06 / 07 audio & visual | 0 | 100 in local tests with synthetic media* |
+| # | Piece | What it is | Where |
+|---|---|---|---|
+| A | **Internal practice/replay harness** | This kit's own scenario runner + scorer (`run_local.py`, `harness/`) driving `agent.agent:ParticipantAgent`, a rule-based dual-process agent. **Not FDB-v3.** No LLM in the loop. | repo root: `agent/`, `harness/`, `scenarios/` |
+| B | **Official FDB-v3 benchmark integration** | Reproduction plumbing for the real [Full-Duplex-Bench v3](https://github.com/DanielLin94144/Full-Duplex-Bench) (`v3/` directory) against a **LiveKit** voice agent (Silero VAD, OpenAI Whisper STT, gpt-4o, OpenAI TTS — unmodified FDB-v3 template). | `livekit_agent/`, `run_fdb_v3.sh` |
+| C | **Triage Line extension** | A roadside/incident-triage call flow that reuses the SAME LiveKit shell as B, but replaces gpt-4o tool-calling with the legacy dialogue → deliberation → commit-state-machine stack (`legacy/core/`). | `livekit_agent/triage_brain.py`, `livekit_agent/triage_livekit_agent.py`, `legacy/core/` |
 
-\*The kit's `audio/` and `frames/` media are **not in this repo**. Copy them in from the participant kit. Without them the agent falls back safely: it acknowledges, then clarifies, and never guesses. I checked pub_06 and pub_07 end-to-end with synthesized TTS clips and a rendered port frame; both scored 100. I checked pub_05's clarify-then-confirm flow by injecting a disagreeing ASR result, not with real audio.
+## A. Internal practice/replay harness (`run_local.py`, `agent/`)
 
-Generated practice scenarios (`harness.scenario_gen`, all templates) and harder hand-written cases in `scenarios_extra/` (retraction, intent switch, unseen read-only tool, unseen state-modifying tool with an enum) all score 100.
-
-## Architecture
-
-```
- events ─▶ FAST PATH  (<5 ms, inline)   turn buffer · self-repair resolver ·
-           interruption classifier (revise / retract / switch) · content-aware ack · snapshot
-        ─▶ SLOW PATH  (asyncio tasks)   ASR ensemble · OCR+CLIP frame analysis ·
-           schema-driven tool args · 1× read-only retry · chained plans
-        ─▶ COORDINATION                  in-flight ledger → targeted cancel_tool ·
-           epoch counter → stale results dropped · idempotence ledger for state-modifying calls
-```
-
-Key ideas:
-
-1. **Interruption taxonomy.** Each barge-in is classified as a slot revision, a retraction or an intent switch, and each type has its own cancel-and-replan policy.
-2. **Epoch-guarded grounding.** Each interruption increments an epoch, and anything started in an older epoch is ignored. This also covers the case where a cancel races with a result.
-3. **Uncertainty-aware ASR.** `base.en` and `tiny.en` decode independently. If they disagree, or the word probability on a slot value is below 0.8, the agent asks "did you say X or Y?" using what was actually heard. Clips are transcribed as they stream in; the first acknowledgement is spoken before ASR finishes.
-4. **Zero-shot tools from the manifest.** Tools are ranked by lexical plus schema overlap, with a bonus when every required argument can be filled. Arguments are built by what each schema field means (city, date, name, enum, number, nested object). Answers are grounded in whatever fields the result returns, including lists of records.
-5. **Visual grounding.** Printed-label OCR (rotated and inverted passes) is fused with CLIP zero-shot on a centre crop. The 512-d CLIP embedding goes to `lookup_manual` for hybrid search. If vision is unsure, the agent asks instead of guessing.
-6. **Safety by construction.** At most 3 fillers, no repeated filler text, and state-modifying calls deduplicated by argument hash. Replies promise actions and only claim them once done. Every spoken action carries a `state_snapshot`.
-
-The agent uses no scenario ids, timestamps or expected strings, and never reads `ground_truth` or `_` annotations.
-
-## Run
+A dual-process agent (fast path <5 ms inline, slow path async ASR/vision/tools,
+epoch-guarded coordination) scored against this kit's own scenario set —
+**this is a practice/replay harness the team built for local iteration, not
+the official FDB-v3 benchmark.**
 
 ```bash
-pip install -r requirements.txt                   # optional models; agent runs without them
-python run_local.py --all --agent agent.agent:ParticipantAgent          # official scale 1.0
-python run_local.py --scenario scenarios_extra/x_intent_switch.json --agent agent.agent:ParticipantAgent
-python ui/server.py                                # console at http://localhost:8080
+pip install -r requirements.txt
+python run_local.py --all --agent agent.agent:ParticipantAgent
 ```
 
-Environment knobs: `ASR_MODEL` (defaults to `small.en` on GPU, `base.en` on CPU), `ASR_BEAM`, `ASR_ENSEMBLE=0`, `CLIP_REPO`.
+Actually re-run this session: **89.1/100** across the 9 public scenarios
+(pub_01–04, 08, 09 at 100.0; pub_05 audio_asr_ambiguity 53.8; pub_06
+audio_disfluency 56.9; pub_07 visual_port_lookup 90.8). See
+`Triage_Line_Theme05_Readiness_Report.md` for the verified run log.
 
-## Console (`ui/`)
+Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
+`docs/TOOLS.md`.
 
-A zero-dependency web UI on top of the real harness and scorer:
+## B. Official FDB-v3 benchmark integration (`livekit_agent/`, `run_fdb_v3.sh`)
 
-- **Run**: any scenario with either agent. Shows a lane timeline (user, fast path, slow-path tool bars with cancellations, answer), the transcript with slot snapshots, and every scorer checkpoint.
-- **Compose**: write your own utterance and barge-in, optionally with an unseen tool, and watch the agent handle it.
-- **Suite**: baseline vs TriageLine across all scenarios.
+Reproduction entrypoint for the actual FDB-v3 benchmark:
+
+```bash
+./run_fdb_v3.sh
+```
+
+- **Benchmark:** Full-Duplex-Bench, `v3` directory — github.com/DanielLin94144/Full-Duplex-Bench
+- **Transport:** LiveKit (`livekit-agents` SDK, `AgentServer`/`AgentSession`)
+- **Model/provider (this template):** Silero VAD, OpenAI Whisper (`whisper-1`) STT, OpenAI `gpt-4o` LLM, OpenAI `tts-1` TTS
+- **Files:** `livekit_agent/cascaded_agent.py` (agent, copied byte-for-byte from FDB-v3's `v3/`, per `livekit_agent/SETUP.md`), `mock_apis.py`, `latency_injector.py`, `livekit_inference.py` (FDB's own headless test client)
+
+`run_fdb_v3.sh` is a 6-stage script (install deps → check credentials →
+fetch FDB-v3 data → launch agent → run official eval → save results) that
+fails fast and logs the exact blocker instead of fabricating output. In
+this sandbox it **stops at Stage 1** (`pip install livekit-agents` — no
+PyPI egress). Stages 2–6 (LiveKit Cloud/OpenAI credentials, the FDB-v3
+Google-Drive data release, a live eval run, and real benchmark
+outputs/logs/results) have **not been executed here** — see
+`results/raw/environment_check.log` and the readiness report.
+
+## C. Triage Line extension (`livekit_agent/triage_brain.py`, `legacy/core/`)
+
+Same LiveKit shell as B, second call flow: a roadside/incident-triage agent
+whose "brain" is the legacy dialogue → deliberation → commit-state-machine
+stack (Phases 1–5), not an LLM.
+
+```bash
+python3 livekit_agent/adapter_tests/test_4_triage_line_interruption.py
+```
+
+Actually re-run this session: **PASS** — breakdown report → propose →
+pending confirmation; caller correction mid-prompt aborts the stale action
+and re-deliberates against the new location; nothing auto-finalizes without
+an explicit "yes"; `force_resolve_pending()` now wired to teardown so no
+action is left non-terminal. Full legacy suite: **191/191 passed**.
+Details and a full transcript: `legacy/docs/EXTENSION_DEMO_TRANSCRIPT.md`.
+
+**Not verified:** `triage_livekit_agent.py` (the real LiveKit entrypoint)
+against a live room — same credential/network blockers as B.
+
+## Known simplifications / mocked components (all of A/B/C)
+
+- Triage Line dispatch is an in-memory log, not a real CAD/tow/emergency API.
+- Location/distance/vehicle extraction is regex/keyword based, not real NLU or geocoding.
+- FDB-v3's 12 tools (`mock_apis.py`) are mocked, not real travel/finance/e-commerce backends.
+- The internal harness's agent (A) uses no LLM at all — rule-based NLU + local ASR/CLIP.
+- TTS sub-utterance progress in the LiveKit bridge is a 0/1 placeholder, not real timing.
 
 ## Layout
 
 ```
-agent/agent.py        ParticipantAgent (entry point) — orchestration
-agent/nlu.py          fast-path NLU: slots, repair, routing, schema-driven args
-agent/perception.py   slow-path ASR + vision (module-level cached, loaded in setup())
-agent/baseline_agent.py  reference agent from the kit
-harness/, docs/, scenarios/   official kit (unchanged)
-scenarios_extra/      harder hand-written probes
-ui/                   console (server.py + static/)
-legacy/               earlier Phase-7 prototype (kept for history)
-submission.yaml
+agent/, harness/, scenarios/, run_local.py     A: internal practice harness (this kit, unmodified)
+livekit_agent/                                 B: FDB-v3 LiveKit integration; C: Triage Line bridge/agent
+legacy/core/, legacy/docs/                     C's brain (dialogue/deliberation/commit) + demo transcript
+run_fdb_v3.sh                                  B's official reproduction command
+docs/                                          kit docs (PROTOCOL/SCORING/TOOLS) + this phase's ARCHITECTURE/DECK/SHOTLIST
+Triage_Line_Theme05_Readiness_Report.md        scored, verified-only readiness report
 ```
