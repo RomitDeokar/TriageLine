@@ -32,9 +32,10 @@ injection points (EventBus, ConversationTurn, the provider Protocols).
 from __future__ import annotations
 
 import os
+import re
 import sys
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 # legacy/ uses bare `core.X` / `providers.X` imports (see legacy/tests/_run_all.py
 # for the same convention) -- put legacy/ on sys.path rather than editing any
@@ -64,18 +65,56 @@ from providers.interfaces import (  # noqa: E402
     TTSProvider,
 )
 
-_AFFIRMATIVE = ("yes", "yeah", "yep", "confirm", "go ahead", "do it", "please do", "correct", "that's right")
-_NEGATIVE = ("no", "nope", "don't", "do not", "cancel", "stop", "wait", "hold on")
+# Confirmation parsing (audit E-01..E-03). Word-bounded matching only -- "yesterday" is
+# not "yes" -- and precedence is: correction > negation > affirmation. A caller who says
+# "yes, but actually I'm on Highway 12" is correcting, not confirming.
+_AFFIRMATIVE_RE = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|confirm(?:ed)?|go ahead|do it|please do|correct|that'?s right|affirmative|"
+    r"send it|dispatch it|ok(?:ay)?)\b", re.I)
+_NEGATIVE_RE = re.compile(
+    r"\b(no|nope|nah|don'?t|do not|never|cancel|stop|wait|hold on|hang on|not yet|negative|abort)\b", re.I)
+_CORRECTION_RE = re.compile(
+    r"\b(actually|but|instead|i mean|i meant|correction|wrong|not there|scratch that|sorry)\b", re.I)
+
+CONFIRM, DECLINE, CORRECTION, OTHER = "confirm", "decline", "correction", "other"
 
 
-def _is_affirmative(text: str) -> bool:
-    lowered = text.lower()
-    return any(phrase in lowered for phrase in _AFFIRMATIVE)
+def classify_confirmation(text: str) -> str:
+    """Classify a caller reply to a pending confirmation prompt.
+
+    - CORRECTION: carries a correction marker or new facts after an affirmation
+      ("yes, but actually I'm on Highway 12") -> re-deliberate, never confirm.
+    - DECLINE: any negation ("do not confirm", "no, don't send it", "not yet").
+    - CONFIRM: a clean affirmation with no negation and no correction.
+    """
+    t = (text or "").strip()
+    if not t:
+        return OTHER
+    neg = bool(_NEGATIVE_RE.search(t))
+    aff = bool(_AFFIRMATIVE_RE.search(t))
+    corr = bool(_CORRECTION_RE.search(t))
+    if corr and (aff or not neg):
+        return CORRECTION
+    if neg:
+        return DECLINE
+    if aff:
+        return CONFIRM
+    return OTHER
 
 
-def _is_negative(text: str) -> bool:
-    lowered = text.lower()
-    return any(phrase in lowered for phrase in _NEGATIVE)
+def _is_affirmative(text: str) -> bool:  # kept for backwards compatibility
+    return classify_confirmation(text) == CONFIRM
+
+
+def _is_negative(text: str) -> bool:  # kept for backwards compatibility
+    return classify_confirmation(text) == DECLINE
+
+
+def _incident_key(action_type: str, payload: dict) -> str:
+    """Idempotency key for a real-world side effect (audit E-04): one dispatch per
+    (action type, normalised location) per call, no matter how often it is re-requested."""
+    loc = re.sub(r"[^a-z0-9]+", " ", str(payload.get("location", "")).lower()).strip()
+    return f"{action_type}|{loc}"
 
 
 def _confirmation_prompt(record) -> str:
@@ -147,13 +186,28 @@ class TriageBrainLLM(LLMProvider):
         # without reaching into engine internals.
         self.deliberation_trace: list[Any] = []
         self.commit_trace: list[Any] = []
+        # incident idempotency key -> action_id that already FINALIZED (E-04)
+        self.finalized_incidents: dict[str, str] = {}
+        # set by TriageCallSession.teardown(); no confirmation is accepted after it (E-06)
+        self.closed = False
 
     async def respond(self, context: list[ConversationTurn]) -> LLMResponse:
         caller_text = context[-1].text if context and context[-1].speaker == "caller" else ""
 
+        if self.closed:
+            return LLMResponse(text="This call has ended, so I can't take any further action on it.",
+                               intent="closed")
+
         # --- confirmation / abort handling for a pending action ---
         if self.pending_action_id is not None:
-            if _is_affirmative(caller_text):
+            if self._commit.get(self.pending_action_id).is_terminal:
+                # resolved elsewhere (teardown / supersession): never confirm a dead action
+                self.pending_action_id = None
+                self.pending_decision_id = None
+                return LLMResponse(text="That earlier request is no longer active. What do you need now?",
+                                   intent="stale")
+            kind = classify_confirmation(caller_text)
+            if kind == CONFIRM:
                 record = await self._commit.confirm(self.pending_action_id, confirmed_by="caller")
                 self.commit_trace.append(record)
                 self._log_dispatch(record)
@@ -163,7 +217,7 @@ class TriageBrainLLM(LLMProvider):
                     text=f"Confirmed -- {record.action_type.replace('_', ' ')} is finalized.",
                     intent="confirm",
                 )
-            if _is_negative(caller_text):
+            if kind == DECLINE:
                 record = await self._commit.abort(self.pending_action_id, reason="caller_declined")
                 self.commit_trace.append(record)
                 self.pending_action_id = None
@@ -199,6 +253,16 @@ class TriageBrainLLM(LLMProvider):
                 text = "I'm not confident enough to act on that automatically, so I'm escalating this to a human dispatcher."
             return LLMResponse(text=text, intent=record.intent, needs_more_info=True)
 
+        key = _incident_key(record.chosen_option, dict(record.known_facts))
+        if key in self.finalized_incidents:
+            # the same incident was already dispatched on this call: never do it twice (E-04)
+            where = record.known_facts.get("location", "that location")
+            return LLMResponse(
+                text=f"That's already been taken care of -- {record.chosen_option.replace('_', ' ')} "
+                     f"to {where} is confirmed. I won't send a second one.",
+                intent="duplicate_suppressed",
+            )
+
         action_record = await self._commit.propose(
             call_id=self._call_id,
             decision_id=record.decision_id,
@@ -231,6 +295,8 @@ class TriageBrainLLM(LLMProvider):
 
     def _log_dispatch(self, commit_record) -> None:
         if commit_record.current_state == CommitState.FINALIZED:
+            self.finalized_incidents[_incident_key(commit_record.action_type,
+                                                   dict(commit_record.action_payload))] = commit_record.action_id
             self._dispatch_log.append(
                 DispatchLogEntry(
                     call_id=self._call_id,
@@ -293,4 +359,7 @@ class TriageCallSession:
         force_resolve_pending() so no action is left non-terminal after
         this call ends, whether or not a confirmation was ever answered.
         """
+        self.brain.closed = True
+        self.brain.pending_action_id = None
+        self.brain.pending_decision_id = None
         return await self.commit.force_resolve_pending(self.call_id, reason=reason)
