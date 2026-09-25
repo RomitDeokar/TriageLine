@@ -493,6 +493,55 @@ def severity_of(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- routing
+# Generic action verbs that appear in tool NAMES (verb_object / object_verb conventions) with the
+# everyday phrasings users say for them. Language-level knowledge, not per-tool/per-test rules.
+_VERB_SYNONYMS = {
+    "search": r"search|find|look(?:ing)? (?:for|up)|looking|show me|browse|recommend|shop(?:ping)? for",
+    "book": r"book|reserve",
+    "update": r"update|change|set|raise|lower|bump|increase|decrease|switch|make (?:it|that|the)",
+    "calculate": r"calculate|how long|how far|commute|travel time|(?:walking|driving|transit|biking|cycling) time",
+    "add": r"add|put|throw",
+    "track": r"track|where(?:'s| is) my",
+    "modify": r"modify|set up|enable|turn on|switch|change",
+    "get": r"get|what are|tell me|check|show",
+    "cancel": r"cancel|call off",
+    "create": r"create|open|file|raise a",
+    "lookup": r"look up|lookup|check the manual",
+}
+_ACTION_VERB_STEMS = set(_VERB_SYNONYMS)
+
+
+# references to an earlier result ("whatever you find", "once you find something") are not requests
+_RESULT_REF = re.compile(r"(?i)\b(?:whatever|what|once|if|when|after|anything)\s+(?:you|it)\s+(?:find|found|get|show)s?\b")
+
+
+def _verb_spoken(verb_stem: str, text: str) -> bool:
+    pat = _VERB_SYNONYMS.get(verb_stem)
+    return bool(pat and re.search(r"\b(?:" + pat + r")\b", _RESULT_REF.sub(" ", text or ""), re.I))
+
+
+_SHOP_CUE = re.compile(r"(?i)\b(?:looking for|look for|i want an?|i need an?(?: new)?|shopping for|buy an?|"
+                       r"search(?:ing)? for|find me|recommend|something (?:under|below|for less than)|"
+                       r"do you have|in the \w+ section)\b")
+
+
+def _shopping_request(text: str) -> bool:
+    """An open-vocabulary product request: a shopping cue plus a noun phrase that is not a trip,
+    a place to live, a route or a filter ("looking for a desk", "i want a mechanical keyboard")."""
+    if not _SHOP_CUE.search(text or ""):
+        return False
+    q = extract_query(text)
+    if re.search(r"(?i)\bsection\b", text or "") and re.search(r"(?i)\b(?:electronics|clothing|kitchen|toys|books|"
+                                                               r"sports|home|garden|beauty|grocery)\b", text or ""):
+        return True
+    if not q:
+        return False
+    qc = _concepts(tokens(q)) | _concepts(q.lower().split())
+    if qc & {"apartment", "flight", "commute", "filter", "exchange", "identity", "autopay", "order"}:
+        return False
+    return not cities_in(q)
+
+
 def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
     """Rank manifest tools against an utterance: lexical priors + schema overlap."""
     raw = tokens(text)
@@ -513,10 +562,19 @@ def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
         uev = _concept_evidence(unmatched)
         cscore = sum(min(uev[c], 3) * 1.0 for c in nconc if c in uev) + \
             sum(min(uev[c], 3) * 0.5 for c in dconc if c in uev)
-        # a tool whose NAME concept is explicitly named by the user gets a head-noun bonus
-        head_noun = _stem(name_words[-1]) if name_words else ""
+        # a tool whose NAME concept is explicitly named by the user gets a head-noun bonus. The head
+        # noun is the last name word that is not an action verb ("flight_search" -> flight, not search)
+        nouns = [w for w in name_words if _stem(w) not in _ACTION_VERB_STEMS]
+        head_noun = _stem(nouns[-1]) if nouns else ""
         head = 2.0 if head_noun and len(head_noun) > 2 and any(_stem(w) == head_noun for w in raw) else 0.0
-        overlap = len(toks & vocab) + cscore + head
+        # the tool's own action verb (first verb in its name) spoken by the user, incl. everyday synonyms
+        verb = next((_stem(w) for w in name_words if _stem(w) in _ACTION_VERB_STEMS), "")
+        vbonus = 1.5 if verb and _verb_spoken(verb, text) else 0.0
+        # evidence for the tool's name concept from ANY word (lexical or not): "1-bedroom" -> apartment
+        nbonus = 1.0 if any(c in tev and c not in uev for c in nconc) and head == 0.0 else 0.0
+        # an open-vocabulary shopping request ("looking for a desk") is evidence for a product tool
+        pbonus = 1.5 if "product" in nconc and _shopping_request(text) else 0.0
+        overlap = len(toks & vocab) + cscore + head + vbonus + nbonus + pbonus
         prior = len(toks & {_stem(w) for w in TOOL_PRIORS.get(name, ())})
         s = overlap + 1.5 * prior
         if s > 0:  # bonus if every required arg is fillable from this utterance

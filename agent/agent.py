@@ -515,7 +515,9 @@ class ParticipantAgent:
         await self.start_task(top, turn)
 
     # ------------------------------------------------------------------ compound requests
-    _SPLIT = re.compile(r"(?:[.?!]+\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
+    # a hesitation ellipsis ("I'm looking... um, for a desk") is a pause, not a sentence end: only a
+    # single terminal punctuation mark (or a clause connective) separates independent requests
+    _SPLIT = re.compile(r"(?:(?<!\.)(?:[?!]+|\.(?!\.))\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
                         r"while you'?re at it|after that|once you find|once that'?s done|plus)\b))", re.I)
     _ANAPHORA = re.compile(r"\b(it|that one|them|whatever you find|what you find|something|the first one|"
                            r"the result|that|there|one of them)\b", re.I)
