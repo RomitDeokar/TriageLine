@@ -524,6 +524,17 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
         m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
             re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
         return m.group(1) if m else None
+    if lname.endswith("_type") and lname not in ("doc_type", "document_type", "bill_type"):
+        noun = lname[:-5].split("_")[-1]                       # card_type -> card
+        examples = re.findall(r"'([^']+)'", str(spec.get("description", "")))
+        for ex in examples:                                     # schema examples first ('platinum', 'gold')
+            if re.search(r"\b" + re.escape(ex.lower()) + r"\b", low):
+                return ex
+        m = re.search(r"\b([a-z]+)(?:\s+(?:credit|debit|rewards?))?\s+" + noun + r"s?\b", low)
+        bad = STOP | {"which", "new", "credit", "debit", "rewards", "reward", "this", "that", "the", "my", "one"}
+        if m and m.group(1) not in bad:
+            return m.group(1)
+        return None
     if lname == "bill_type":
         for b in BILL_TYPES:
             if re.search(r"\b" + re.escape(b) + r"\b", low):

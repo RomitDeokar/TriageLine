@@ -59,6 +59,24 @@ def _canon(v: Any) -> Any:
     return v
 
 
+def _find_key(obj: Any, keys: List[str]) -> Any:
+    """First value for any of `keys` in a (nested) tool result; lists yield their first matching element."""
+    if isinstance(obj, dict):
+        for k in keys:
+            if k in obj and not isinstance(obj[k], (dict, list)):
+                return obj[k]
+        for v in obj.values():
+            got = _find_key(v, keys)
+            if got is not None:
+                return got
+    elif isinstance(obj, list):
+        for v in obj:
+            got = _find_key(v, keys)
+            if got is not None:
+                return got
+    return None
+
+
 class ParticipantAgent:
     def __init__(self, in_queue: asyncio.Queue, out_queue: asyncio.Queue, live: bool = False):
         self.in_q, self.out_q = in_queue, out_queue
@@ -79,6 +97,9 @@ class ParticipantAgent:
         self.fillers: List[str] = []
         self.turn_fillers = 0
         self.plan: List[str] = []                         # queued follow-up tool names
+        self.compound: List[str] = []                     # remaining clauses of a multi-request turn
+        self.compound_version = -1
+        self.results: List[Any] = []                      # recent (api, result) for "add it" / "from what you find"
         self.pending_clarify: Optional[Dict[str, Any]] = None
         self.presented: List[Dict[str, Any]] = []         # candidates last shown to the user (R12)
         self.last_turn = ""
@@ -104,6 +125,7 @@ class ParticipantAgent:
                 ev = await self.in_q.get()
                 try:
                     await self.dispatch(ev)
+                    await self._drain_compound()
                 except Exception as e:  # never let one bad event kill the loop
                     self.note("agent_exception", f"{type(e).__name__}: {e}", event=ev.get("event_type"))
                     log.exception("agent exception")
@@ -402,7 +424,7 @@ class ParticipantAgent:
         await self.on_turn(text, from_audio=True)
 
     # ------------------------------------------------------------------ turns
-    async def on_turn(self, turn: str, from_audio: bool = False):
+    async def on_turn(self, turn: str, from_audio: bool = False, _clause: bool = False):
         low = turn.lower()
         if not nlu.tokens(re.sub(r"(?i)\b(please|thanks|thank you|ok|okay)\b", " ", turn)) and \
                 (self.inflight or self.answered is False and self.last_api):
@@ -426,6 +448,14 @@ class ParticipantAgent:
             if handled:
                 return
         self.last_turn = turn
+
+        # a multi-request turn ("track X, then search Y, and add it to my cart") runs clause by clause
+        if not _clause and not self.inflight and self.pending_clarify is None:
+            groups = self.split_compound(turn)
+            if len(groups) > 1:
+                self.compound, self.compound_version = groups[1:], self.version
+                self.note("compound_request", f"{len(groups)} clauses")
+                return await self.on_turn(groups[0], _clause=True)
 
         ranked = nlu.score_tools(turn, self.tools)
         # a genuinely new request supersedes unfinished work (B04)
@@ -483,6 +513,101 @@ class ParticipantAgent:
             if not top:
                 return await self.say("final_response", "Okay — I won't book anything.")
         await self.start_task(top, turn)
+
+    # ------------------------------------------------------------------ compound requests
+    _SPLIT = re.compile(r"(?:[.?!]+\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
+                        r"while you'?re at it|after that|once you find|once that'?s done|plus)\b))", re.I)
+    _ANAPHORA = re.compile(r"\b(it|that one|them|whatever you find|what you find|something|the first one|"
+                           r"the result|that|there|one of them)\b", re.I)
+
+    def _clause_tool(self, text: str) -> Optional[str]:
+        r = nlu.score_tools(text, self.tools)
+        if not r or r[0][0] < 2.0 or (len(r) > 1 and r[0][0] == r[1][0]):
+            return None
+        return r[0][1]
+
+    def split_compound(self, turn: str) -> List[str]:
+        """Split a turn into independently actionable clause groups. Non-actionable fragments attach to a
+        neighbour; self-corrections of the same tool merge; flight search + "book it" stays one group
+        (the planner already chains those). Returns [turn] unless >= 2 distinct actions are present."""
+        parts = [p.strip(" ,;—-") for p in self._SPLIT.split(turn or "") if p and p.strip(" ,;—-.")]
+        if len(parts) < 2:
+            return [turn]
+        segs = [[p, self._clause_tool(p)] for p in parts]
+        # a retraction ("actually, skip that") drops the preceding action
+        out: List[List[Any]] = []
+        for text, tool in segs:
+            if nlu.RETRACTION.search(text) or re.search(r"\bskip that\b|\blet me skip\b", text, re.I):
+                if out and out[-1][1]:
+                    out.pop()
+                rest = re.split(r"(?i)skip that(?: for now)?|never ?mind|forget (?:it|that)", text)[-1]
+                tool = self._clause_tool(rest)
+                if tool:
+                    out.append([rest, tool])
+                continue
+            out.append([text, tool])
+        # attach tool-less fragments: to the previous group, or forward to the next one
+        groups: List[List[Any]] = []
+        carry = ""
+        for text, tool in out:
+            if tool is None:
+                if groups:
+                    groups[-1][0] += " " + text
+                else:
+                    carry += " " + text
+                continue
+            groups.append([(carry + " " + text).strip(), tool])
+            carry = ""
+        if carry and groups:
+            groups[-1][0] += carry
+        merged: List[List[Any]] = []
+        for text, tool in groups:
+            if merged:
+                ptext, ptool = merged[-1]
+                same_family = tool == ptool or (tool == "book_flight" and ptool in FLIGHT_FAMILY)
+                correction = bool(nlu.REPAIR_MARKERS.search(text)) and tool == ptool
+                independent = False
+                if tool == ptool and not correction:
+                    a1, m1 = nlu.build_args(self.tools.get(tool, {}), ptext, {})
+                    a2, m2 = nlu.build_args(self.tools.get(tool, {}), text, {})
+                    independent = not m2 and a1 != a2
+                if same_family and not independent:
+                    merged[-1][0] = ptext + " " + text
+                    continue
+            merged.append([text, tool])
+        return [t for t, _ in merged] if len(merged) > 1 else [turn]
+
+    async def _drain_compound(self):
+        if not self.compound:
+            return
+        if self.version != self.compound_version and self.compound_version >= 0:
+            self.compound = []               # an interruption superseded the rest of the request
+            return
+        if self.inflight or self.pending_clarify is not None or self.held is not None:
+            return
+        nxt = self.compound.pop(0)
+        await self.on_turn(nxt, _clause=True)
+        self.compound_version = self.version
+
+    def bind_from_results(self, spec: Dict[str, Any], missing: List[str], args: Dict[str, Any], turn: str) -> List[str]:
+        """Resolve "add it to my cart" / "from whatever you find" against the most recent tool result."""
+        if not missing or not self.results or not self._ANAPHORA.search(turn or ""):
+            return missing
+        still = []
+        for f in missing:
+            leaf = f.split(".")[-1]
+            want = [leaf] + (["address", "location"] if leaf.endswith("address") else []) + \
+                   ([leaf.split("_")[0] + "_id", "id"] if leaf.endswith("_id") else [])
+            val = None
+            for _api, res in reversed(self.results[-5:]):
+                val = _find_key(res, want)
+                if val is not None:
+                    break
+            if val is not None and "." not in f:
+                args[f] = val
+            else:
+                still.append(f)
+        return still
 
     async def book_pick(self, pick: Dict[str, Any], name: Optional[str], turn: str):
         s = self.state["slots"]
@@ -742,6 +867,7 @@ class ParticipantAgent:
         # side-effect-free lookup is cheap and reversible; asking first would
         # stall a chained plan (search -> book) on a slot the user never
         # considered. State-modifying tools are NEVER defaulted.
+        missing = self.bind_from_results(spec, missing, args, turn)
         assumed = []
         if missing and spec.get("kind", "read_only") == "read_only":
             for f in list(missing):
@@ -1098,6 +1224,8 @@ class ParticipantAgent:
             return await self.on_late_result(cid or "", p)   # cancelled / unknown — never ground on it
         api, res = c["api"], p.get("result") or {}
         kind = self.tools.get(api, {}).get("kind", "read_only")
+        if p.get("status") != "error" and self.still_valid(c):
+            self.results = (self.results + [(api, res)])[-10:]
         op = self.ledger.for_call(cid)
         is_err = p.get("status") == "error"
 
