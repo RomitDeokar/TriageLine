@@ -75,6 +75,53 @@ TOOL_PRIORS = {
     "create_support_ticket": {"ticket", "broken", "support", "repair", "technician", "escalate",
                               "complaint", "report"},
 }
+# Generic concept lexicon: maps everyday phrasings onto canonical concept tokens so that
+# schema-overlap scoring works for tools whose descriptions use different wording than
+# the caller ("package" vs "order", "perks" vs "benefits"). Applied symmetrically to the
+# utterance AND each tool's vocabulary, so it generalizes to unseen tool manifests.
+CONCEPTS = {
+    "order": {"order", "package", "parcel", "shipment", "delivery", "deliver", "shipped", "shipping", "arrive"},
+    "track": {"track", "tracking", "where", "status", "arrive"},
+    "product": {"product", "products", "item", "items", "catalog", "headphone", "headphones", "earbuds",
+                "laptop", "shoes", "buy", "purchase", "shop", "shopping", "store", "pair", "wireless"},
+    "cart": {"cart", "basket", "bag"},
+    "apartment": {"apartment", "apartments", "flat", "rental", "rent", "bedroom", "bedrooms", "studio",
+                  "lease", "housing", "condo", "place"},
+    "commute": {"commute", "drive", "driving", "transit", "walk", "walking", "bike", "cycling", "far", "distance",
+                "long", "duration"},
+    "exchange": {"exchange", "convert", "conversion", "currency", "euro", "euros", "dollar", "dollars", "usd",
+                 "eur", "gbp", "pound", "pounds", "yen", "rupee", "rupees", "rate", "fx"},
+    "benefit": {"benefit", "benefits", "perk", "perks", "reward", "rewards", "cashback", "lounge", "privilege"},
+    "card": {"card", "platinum", "gold", "credit"},
+    "autopay": {"autopay", "auto", "automatic", "automatically", "recurring", "bill", "bills", "billing",
+                "pay", "payment", "payments", "checking", "savings", "utilities", "utility"},
+    "identity": {"identity", "passport", "license", "licence", "id", "document", "doc"},
+    "filter": {"filter", "filters", "preference", "preferences", "criteria"},
+    "flight": {"flight", "flights", "fly", "flying", "plane", "airfare", "airline"},
+}
+_CONCEPT_OF: Dict[str, set] = {}
+for _c, _ws in CONCEPTS.items():
+    for _w in _ws:
+        _CONCEPT_OF.setdefault(_w, set()).add(_c)
+
+
+def _concepts(words) -> set:
+    out = set()
+    for w in words:
+        out |= _CONCEPT_OF.get(w, set())
+        out |= _CONCEPT_OF.get(_stem(w), set())
+    return out
+
+
+def _concept_evidence(words) -> Dict[str, int]:
+    """How many distinct utterance words support each concept (strength of evidence)."""
+    ev: Dict[str, set] = {}
+    for w in set(words):
+        for c in _CONCEPT_OF.get(w, set()) | _CONCEPT_OF.get(_stem(w), set()):
+            ev.setdefault(c, set()).add(w)
+    return {c: len(v) for c, v in ev.items()}
+
+
 DEVICE_ALIASES = {"QN90": ["qn90", "tv", "television", "neo qled"],
                   "S24": ["s24", "galaxy", "phone"],
                   "WF45": ["wf45", "washer", "washing machine"],
@@ -335,13 +382,28 @@ def severity_of(text: str) -> str:
 # --------------------------------------------------------------------------- routing
 def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
     """Rank manifest tools against an utterance: lexical priors + schema overlap."""
-    toks = {_stem(t) for t in tokens(text)}
+    raw = tokens(text)
+    toks = {_stem(t) for t in raw}
+    tev = _concept_evidence(raw)
     ranked = []
     for name, spec in tools.items():
-        vocab = {_stem(t) for t in tokens(name.replace("_", " ") + " " + str(spec.get("description", "")))}
+        name_words = tokens(name.replace("_", " "))
+        vwords = tokens(name.replace("_", " ") + " " + str(spec.get("description", "")))
+        vocab = {_stem(t) for t in vwords}
         for arg, aspec in (spec.get("args") or {}).items():
             vocab |= {_stem(t) for t in tokens(arg.replace("_", " "))}
-        overlap = len(toks & vocab)
+        # concept overlap: name concepts weigh more than description concepts
+        nconc = _concepts(name_words)
+        dconc = _concepts(vwords) - nconc
+        # concept evidence only from words NOT already matched lexically (no double counting)
+        unmatched = [w for w in raw if _stem(w) not in vocab]
+        uev = _concept_evidence(unmatched)
+        cscore = sum(min(uev[c], 3) * 1.0 for c in nconc if c in uev) + \
+            sum(min(uev[c], 3) * 0.5 for c in dconc if c in uev)
+        # a tool whose NAME concept is explicitly named by the user gets a head-noun bonus
+        head_noun = _stem(name_words[-1]) if name_words else ""
+        head = 2.0 if head_noun and len(head_noun) > 2 and any(_stem(w) == head_noun for w in raw) else 0.0
+        overlap = len(toks & vocab) + cscore + head
         prior = len(toks & {_stem(w) for w in TOOL_PRIORS.get(name, ())})
         s = overlap + 1.5 * prior
         if s > 0:  # bonus if every required arg is fillable from this utterance
