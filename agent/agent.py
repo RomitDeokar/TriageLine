@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 
 from . import nlu
 from . import perception as P
+from .ledger import AMBIGUOUS_ERRORS, OperationLedger, has_evidence
 from .baseline_agent import BaselineAgent  # noqa: F401  (kept importable for comparison)
 
 log = logging.getLogger("triageline.agent")
@@ -70,7 +71,11 @@ class ParticipantAgent:
         self.version = 0                                  # task version (invalidation counter)
         self.seq = 0
         self.inflight: Dict[str, Dict[str, Any]] = {}     # call_id -> call record
-        self.ops: Dict[str, Dict[str, Any]] = {}          # idempotency key -> {status, result, call_id}
+        self.ledger = OperationLedger()                   # durable lifecycle of every state-modifying call
+        self.ops = self.ledger.ops                        # idempotency key -> latest op record (compat alias)
+        self.pending_retry: Optional[Dict[str, Any]] = None   # an unknown outcome the user may explicitly retry
+        self.held: Optional[Dict[str, Any]] = None        # replacement commit held until a cancel is confirmed
+        self.after_cancel: Optional[Dict[str, Any]] = None    # commit to issue once a confirmed cancel lands
         self.fillers: List[str] = []
         self.turn_fillers = 0
         self.plan: List[str] = []                         # queued follow-up tool names
@@ -170,6 +175,8 @@ class ParticipantAgent:
             await self.on_interruption(p.get("text", ""))
         elif et == "tool_result":
             await self.on_tool_result(p)
+        elif et == "tool_cancelled":
+            await self.on_tool_cancelled(p)
         elif et == INTERNAL:
             await self.on_internal(p)
 
@@ -220,8 +227,31 @@ class ParticipantAgent:
     def op_key(self, api: str, args: Dict[str, Any]) -> str:
         return api + "|" + json.dumps(_canon(args), sort_keys=True, separators=(",", ":"))
 
+    def blocking_op(self, api: str, args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if self.tools.get(api, {}).get("kind") != "state_modifying":
+            return None
+        return self.ledger.blocking(self.op_key(api, args))
+
+    async def explain_block(self, op: Dict[str, Any], api: str, args: Dict[str, Any], deps: Optional[Dict[str, Any]]):
+        st = op["status"]
+        if st == "pending":
+            await self.say("filler_speech", "I'm already working on that one — hang on.")
+        elif st == "committed":
+            await self.say("final_response", "That's already done — " + self.describe_success(api, op["result"], op.get("ctx")))
+        else:  # unknown / cancel_requested: never auto-retried, never silently swallowed (R04)
+            self.pending_retry = {"api": api, "args": dict(args), "deps": dict(deps or {}), "op": op}
+            what = self.what(api)
+            await self.say("final_response", f"I'm not certain the earlier {what} went through, so I won't repeat it "
+                                             f"automatically. Please check your confirmations, or say \"yes, try again\" "
+                                             f"and I'll make a new attempt.")
+
+    def what(self, api: str) -> str:
+        return {"book_flight": "booking", "cancel_booking": "cancellation",
+                "create_support_ticket": "support ticket"}.get(api, nlu.norm(api.replace("_", " ")))
+
     async def call(self, api: str, args: Dict[str, Any], retries: int = 0,
-                   deps: Optional[Dict[str, Any]] = None) -> Optional[str]:
+                   deps: Optional[Dict[str, Any]] = None,
+                   supersedes: Optional[Dict[str, Any]] = None) -> Optional[str]:
         if api not in self.tools:                        # never call an undeclared tool
             self.note("undeclared_tool_blocked", api)
             await self.say("final_response", f"Sorry — I can't {api.replace('_', ' ')} in this session.")
@@ -230,28 +260,19 @@ class ParticipantAgent:
         key = None
         if spec.get("kind") == "state_modifying":
             key = self.op_key(api, args)
-            op = self.ops.get(key)
-            if op:
-                st = op["status"]
-                if st == "pending":
-                    await self.say("filler_speech", "I'm already working on that one — hang on.")
-                    return None
-                if st == "succeeded":
-                    await self.say("final_response", "That's already done — " + self.describe_success(api, op["result"], op.get("ctx")))
-                    return None
-                if st == "unknown":
-                    await self.say("final_response", "I'm not certain the earlier attempt went through, so I won't repeat it "
-                                                     "automatically. Please check your confirmations, or tell me to try again.")
-                    op["status"] = "failed"  # an explicit repeat after this warning is allowed
-                    return None
-                # failed / cancelled → a fresh attempt is allowed
+            op = self.ledger.blocking(key)
+            if op and supersedes is None:
+                await self.explain_block(op, api, args, deps)
+                return None
+            # rejected / cancelled / reversed → a fresh attempt is allowed; an explicit, confirmed
+            # retry of an unknown outcome supersedes (and links to) the original record
         self.seq += 1
         cid = f"c{self.seq}"
-        self.inflight[cid] = {"api": api, "args": args, "version": self.version, "retries": retries,
+        self.inflight[cid] = {"cid": cid, "api": api, "args": args, "version": self.version, "retries": retries,
                               "deps": dict(deps or {}), "ctx": dict(self.state["slots"]),
                               "plan": list(self.plan), "turn": self.last_turn, "op": key}
         if key:
-            self.ops[key] = {"status": "pending", "call_id": cid, "result": None, "ctx": None}
+            self.ledger.open(key, api, args, cid, ctx=dict(self.state["slots"]), supersedes=supersedes)
         # emit the manifest's own tool name (e.g. FDB-v3 "search_flights") even
         # though the agent reasons with its canonical family name internally
         ext = getattr(self, "tool_alias", {}).get(api, api)
@@ -264,9 +285,13 @@ class ParticipantAgent:
             if pred(c):
                 await self.out_q.put({"action": "cancel_tool", "payload": {"call_id": cid}})
                 self.inflight.pop(cid, None)
-                if c.get("op") and c["op"] in self.ops:
-                    # a state change that was already running may or may not have committed
-                    self.ops[c["op"]]["status"] = "unknown" if self.live else "cancelled"
+                rec = self.ledger.for_call(cid)
+                if rec is not None:
+                    # cancelling the local task does not prove the side effect was rolled back (R03):
+                    # the mock harness drops cancelled calls authoritatively; a live provider must confirm
+                    self.ledger.cancel_requested(rec)
+                    if not self.live:
+                        self.ledger.cancel_confirmed(rec)
                 gone.append(c)
         return gone
 
@@ -280,6 +305,8 @@ class ParticipantAgent:
         self.pending_clarify = None
         self.plan = []
         self.waiting_vision = None
+        self.pending_retry = None
+        self.held = None
         if not keep_frame:
             self.frame, self.vision = None, None
             self.frame_seq += 1
@@ -365,6 +392,15 @@ class ParticipantAgent:
     async def on_turn(self, turn: str, from_audio: bool = False):
         low = turn.lower()
 
+        # answers to a pending side-effect decision are handled before anything else
+        if await self.resume_side_effect_decision(turn):
+            return
+        # revoking booking permission stops the plan (and a running booking) — R01
+        if await self.revoke_booking(turn):
+            if self._has_new_values(turn):
+                await self.revise(turn)
+            return
+
         # explicit retraction arrives the same way whether spoken as a turn or a barge-in
         if nlu.RETRACTION.search(low) and not self._actionable(nlu.RETRACTION.sub(" ", turn)):
             return await self.retract()
@@ -401,6 +437,13 @@ class ParticipantAgent:
             return
 
         top = ranked[0][1]
+        # a negated state change is a refusal, not a request (R02)
+        if self.tools.get(top, {}).get("kind") == "state_modifying" and top != "book_flight" and \
+                nlu.negated_action(turn, top):
+            self.state["intent"] = "chitchat"
+            self.plan = []
+            return await self.say("final_response", f"Okay — I won't {nlu.norm(top.replace('_', ' '))}. "
+                                                    f"Is there anything else I can do?")
         negated = nlu.negates_booking(turn)
         wants_book = bool(re.search(r"\b(book|reserve)\b", low)) and not negated and "book_flight" in self.tools
         if top == "book_flight" or (wants_book and top in FLIGHT_FAMILY) or \
@@ -414,6 +457,82 @@ class ParticipantAgent:
             if not top:
                 return await self.say("final_response", "Okay — I won't book anything.")
         await self.start_task(top, turn)
+
+    def _booking_pending(self) -> bool:
+        pc = self.pending_clarify or {}
+        return ("book_flight" in self.plan or self.held is not None
+                or any(c["api"] == "book_flight" or "book_flight" in c.get("plan", []) for c in self.inflight.values())
+                or pc.get("api") == "book_flight" or "book_flight" in (pc.get("plan") or []))
+
+    async def revoke_booking(self, text: str) -> bool:
+        """'Actually don't book, only show options' removes booking from the plan everywhere it lives:
+        the agent plan, every in-flight call's plan snapshot, a parked clarification, a held commit —
+        and cancels a booking call that is already running."""
+        if not nlu.negates_booking(text) or not self._booking_pending():
+            return False
+        self.plan = []
+        self.held = None
+        for c in self.inflight.values():
+            c["plan"] = [x for x in c.get("plan", []) if x != "book_flight"]
+        pc = self.pending_clarify
+        if pc and pc.get("api") == "book_flight":
+            self.pending_clarify = None
+        elif pc:
+            pc["plan"] = [x for x in (pc.get("plan") or []) if x != "book_flight"]
+        gone = await self.cancel_where(lambda c: c["api"] == "book_flight")
+        self.answered = False
+        if gone and self.live:
+            msg = ("Okay — I've asked the booking system to stop that booking. "
+                   "I'll tell you if it had already gone through.")
+        elif gone:
+            msg = "Okay — I've stopped the booking and won't book anything."
+        else:
+            msg = "Okay — I won't book anything; I'll just show you the options."
+        await self.say("filler_speech", msg, priority=True)
+        return True
+
+    async def resume_side_effect_decision(self, turn: str) -> bool:
+        """Explicit user decisions about side effects whose outcome is open (R03 / R04)."""
+        low = turn.lower()
+        pc = self.pending_clarify
+        if pc and pc.get("kind") == "replace":
+            old, new = pc["old"], pc["args"]
+            bid = (old.get("result") or {}).get("booking_id")
+            if re.search(r"\bboth\b", low):
+                self.pending_clarify = None
+                old["resolved"] = "kept"
+                await self.say("filler_speech", f"Okay — keeping {bid} and booking {new['flight_id']} as well.")
+                await self.call("book_flight", new, deps=pc.get("deps"))
+                return True
+            if nlu.YES_RE.search(turn) or re.search(r"\b(cancel|replace|switch)\b", low):
+                self.pending_clarify = None
+                old["resolved"] = "replace"
+                if "cancel_booking" not in self.tools:
+                    await self.say("final_response", f"Sorry — I can't cancel bookings in this session, so {bid} stays "
+                                                     f"active and I haven't booked the new flight.")
+                    return True
+                self.after_cancel = {"booking_id": bid, "args": dict(new), "deps": dict(pc.get("deps") or {})}
+                await self.say("filler_speech", f"Okay — cancelling {bid} first, then booking {new['flight_id']}.")
+                await self.call("cancel_booking", {"booking_id": bid})
+                return True
+            if nlu.NO_RE.search(turn) or re.search(r"\bkeep\b", low):
+                self.pending_clarify = None
+                old["resolved"] = "kept"
+                await self.say("final_response", f"Okay — I'll keep {bid} and won't book the new flight.")
+                return True
+            self.pending_clarify = None       # anything else is a new request
+            return False
+        pr = self.pending_retry
+        if pr:
+            self.pending_retry = None
+            if nlu.YES_RE.search(turn) or re.search(r"\btry (?:it |that )?again\b|\bretry\b", low):
+                await self.say("filler_speech", f"Okay — making a new {self.what(pr['api'])} attempt.")
+                await self.call(pr["api"], pr["args"], deps=pr["deps"], supersedes=pr["op"])
+                return True
+            if nlu.NO_RE.search(turn):
+                await self.say("final_response", "Okay — I'll leave it as it is.")
+                return True
+        return False
 
     def _actionable(self, text: str) -> bool:
         r = nlu.score_tools(text, self.tools)
@@ -520,6 +639,9 @@ class ParticipantAgent:
         self.last_api = api
         spec = self.tools.get(api, {})
         slots = self.state["slots"]
+        # a concurrent, unrelated request must not overwrite the slots a running flight task owns (R22)
+        protect = api not in FLIGHT_FAMILY and any(c["api"] in FLIGHT_FAMILY for c in self.inflight.values())
+        saved = dict(slots) if protect else None
         self.update_slots(api, turn)
         self.state["intent"] = self.INTENT_NAMES.get(api, api)
 
@@ -537,6 +659,12 @@ class ParticipantAgent:
         ctx = dict(slots)
         ctx.update(extra or {})
         args, missing = nlu.build_args(spec, turn, ctx)
+        if protect:
+            for k in ("destination", "date", "origin", "passenger_name", "depart_time", "flight_id"):
+                if k in saved:
+                    slots[k] = saved[k]
+                else:
+                    slots.pop(k, None)
         # Read-only search tools only: a missing top-level travel/search DATE is
         # defaulted to "today" (announced in the ack so the user can correct it
         # by barge-in, which goes through the normal revise/epoch path). A
@@ -565,11 +693,15 @@ class ParticipantAgent:
                                     "plan": list(self.plan), "version": self.version}
             await self.say("clarification_request", q)
             return
+        deps = {} if protect else {k: args.get(k) for k in ("destination", "date", "city", "origin") if k in args}
+        op = self.blocking_op(api, args)
+        if op:                                   # don't announce work we are not going to start
+            return await self.explain_block(op, api, args, deps)
         ack = self.ack(api, args)
         if assumed and "today" not in ack:
             ack = ack.rstrip(".") + " — I'll assume today unless you say otherwise."
         await self.say("filler_speech", ack)
-        await self.call(api, args, deps={k: args.get(k) for k in ("destination", "date", "city", "origin") if k in args})
+        await self.call(api, args, deps=deps)
 
     def device_word(self) -> str:
         return {"QN90": "TV", "S24": "phone", "WF45": "washer", "GENERIC": "device"}.get(
@@ -632,13 +764,22 @@ class ParticipantAgent:
 
     # ------------------------------------------------------------------ interruption
     async def retract(self):
-        await self.cancel_where(lambda c: True)
+        gone = await self.cancel_where(lambda c: True)
         self.invalidate(keep_frame=False)
         self.state["intent"] = "cancelled"
+        risky = [c for c in gone if self.tools.get(c["api"], {}).get("kind") == "state_modifying"]
+        if risky and self.live:
+            return await self.say("final_response", f"Okay, I've dropped the request and asked the system to stop the "
+                                                    f"{self.what(risky[0]['api'])}. I'll tell you if it had already gone "
+                                                    f"through. Anything else I can do?")
         await self.say("final_response", "Okay, I've stopped that and dropped the request. Anything else I can do?")
 
     async def on_interruption(self, text: str):
         low = text.lower()
+        if await self.revoke_booking(text):
+            if self._has_new_values(text):
+                await self.revise(text)
+            return
         ranked = nlu.score_tools(text, self.tools)
         current_apis = {c["api"] for c in self.inflight.values()} or ({self.last_api} if self.last_api else set())
         top = ranked[0][1] if ranked and ranked[0][0] >= 2.0 else None
@@ -697,6 +838,10 @@ class ParticipantAgent:
         if announce:
             await self.say("filler_speech", f"Got it — switching to {what}.", priority=True)
         stale = await self.cancel_where(affected)
+        for x in stale:
+            rec = self.ledger.for_call(x.get("cid", ""))
+            if rec is not None and x["api"] == "book_flight":
+                rec["replaced"] = True          # a replacement is coming: gate it on this record's outcome
         self.version += 1
         self.pending_clarify = None
         self.answered = False
@@ -706,7 +851,9 @@ class ParticipantAgent:
         if (was_booking or had_plan) and "book_flight" in self.tools and not nlu.negates_booking(text):
             self.plan = ["book_flight"]
         if was_booking and self.live:
-            await self.say("filler_speech", "I stopped the earlier booking before replacing it.")
+            # truthful: the provider has not confirmed the cancel yet (R03)
+            await self.say("filler_speech", "I've asked the booking system to stop the earlier booking — "
+                                            "I'll only book the new one once that's confirmed.")
         for api in sorted(redo):
             if api not in self.tools:
                 continue
@@ -734,36 +881,151 @@ class ParticipantAgent:
                 return False
         return True
 
+    async def on_tool_cancelled(self, p: Dict[str, Any]):
+        """Provider acknowledgement of a cancel_tool. Only `confirmed=True` proves nothing committed."""
+        rec = self.ledger.for_call(p.get("call_id", ""))
+        if rec is None:
+            return
+        if p.get("confirmed"):
+            self.ledger.cancel_confirmed(rec)
+        elif rec["status"] == "cancel_requested":
+            self.ledger.unknown(rec, "cancel_unconfirmed")
+        await self.release_held()
+
+    def replacement_gate(self) -> Optional[tuple]:
+        """Before a replacement booking commits, every booking it replaces must be resolved (R03)."""
+        for rec in reversed(self.ledger.history):
+            if rec["api"] != "book_flight" or not rec.get("replaced") or rec.get("resolved"):
+                continue
+            if rec["status"] == "committed":
+                return ("confirm", rec)
+            if rec["status"] in ("pending", "cancel_requested", "unknown"):
+                return ("hold", rec)
+        return None
+
+    async def issue_booking(self, args: Dict[str, Any], deps: Dict[str, Any], announce: Optional[str] = None):
+        """Single gate every automatic booking goes through: ledger dedup + replacement reconciliation."""
+        op = self.blocking_op("book_flight", args)
+        if op:
+            return await self.explain_block(op, "book_flight", args, deps)
+        gate = self.replacement_gate()
+        if gate and gate[0] == "hold":
+            self.held = {"args": dict(args), "deps": dict(deps), "rec": gate[1]}
+            return await self.say("clarification_request",
+                                  f"I've found {args['flight_id']}, but the booking system hasn't confirmed that the "
+                                  f"earlier booking was stopped. I'll hold the new booking until it does — or tell me "
+                                  f"to leave it.")
+        if gate and gate[0] == "confirm":
+            return await self.ask_replace(gate[1], args, deps)
+        if announce:
+            await self.say("filler_speech", announce)
+        await self.call("book_flight", args, deps=deps)
+
+    async def ask_replace(self, old: Dict[str, Any], args: Dict[str, Any], deps: Dict[str, Any]):
+        bid = (old.get("result") or {}).get("booking_id")
+        where = (old.get("ctx") or {}).get("destination") or "the earlier flight"
+        self.held = None
+        self.pending_clarify = {"kind": "replace", "field": "replace", "old": old, "args": dict(args),
+                                "deps": dict(deps), "api": "book_flight", "text": self.last_turn,
+                                "version": self.version}
+        await self.say("clarification_request",
+                       f"Your earlier booking {bid} to {where} is still active. Should I cancel it and book "
+                       f"{args['flight_id']} instead, keep it, or keep both?")
+
+    async def release_held(self):
+        h = self.held
+        if not h:
+            return
+        st = h["rec"]["status"]
+        if st in ("cancelled", "rejected", "reversed"):
+            self.held = None
+            await self.issue_booking(h["args"], h["deps"],
+                                     announce=f"The earlier booking was stopped — booking {h['args']['flight_id']} now.")
+        elif st == "committed":
+            await self.ask_replace(h["rec"], h["args"], h["deps"])
+
+    async def on_late_result(self, cid: str, p: Dict[str, Any]):
+        """A result for a call we already cancelled. Read-only → ignore. State-modifying → reconcile (R03)."""
+        rec = self.ledger.for_call(cid)
+        if rec is None or rec["status"] not in ("cancel_requested", "cancelled", "unknown", "pending"):
+            return self.note("late_result_ignored")
+        res = p.get("result") or {}
+        if p.get("status") == "error":
+            err = res.get("error", "error")
+            if err in AMBIGUOUS_ERRORS:
+                self.ledger.unknown(rec, err)
+            else:
+                self.ledger.cancel_confirmed(rec)
+            return await self.release_held()
+        if not has_evidence(rec["api"], res):
+            self.ledger.unknown(rec, "malformed_result")
+            return await self.release_held()
+        self.ledger.late_commit(rec, res)
+        self.note("late_commit_reconciled", rec["api"])
+        if rec["api"] == "book_flight":
+            where = (rec.get("ctx") or {}).get("destination") or "the earlier flight"
+            await self.say("final_response",
+                           f"Heads-up: the earlier {where} booking had already gone through before I could stop it — "
+                           f"booking reference {res.get('booking_id')}. I won't book a replacement until you decide "
+                           f"what to do with it.")
+        else:
+            await self.say("final_response",
+                           f"Heads-up: the earlier {self.what(rec['api'])} had already gone through before I could stop "
+                           f"it ({nlu.humanize_result(rec['api'], res) or 'confirmed by the provider'}).")
+        await self.release_held()
+
     async def on_tool_result(self, p: Dict[str, Any]):
         cid = p.get("call_id")
         c = self.inflight.pop(cid, None)
         if c is None:
-            return  # cancelled / unknown — never ground on it
+            return await self.on_late_result(cid or "", p)   # cancelled / unknown — never ground on it
         api, res = c["api"], p.get("result") or {}
         kind = self.tools.get(api, {}).get("kind", "read_only")
-        op = self.ops.get(c.get("op") or "")
+        op = self.ledger.for_call(cid)
+        is_err = p.get("status") == "error"
+
+        # ---- state-modifying outcome bookkeeping (R03/R04/R16) happens before any validity check
+        if op is not None:
+            if is_err:
+                err = res.get("error", "error")
+                if api == "book_flight" and err == "duplicate_booking":
+                    bid = res.get("booking_id")
+                    self.ledger.commit(op, {"booking_id": bid, "flight_id": c["args"].get("flight_id")})
+                    if bid:
+                        self.state["slots"]["booking_id"] = bid
+                    return await self.say("final_response", f"Looks like that flight is already booked"
+                                                            f"{f' ({bid})' if bid else ''}, so I didn't book it twice.")
+                if err in AMBIGUOUS_ERRORS:
+                    self.ledger.unknown(op, err)
+                    self.plan = []
+                    return await self.say("final_response",
+                                          f"The {self.what(api)} request {'timed out' if err == 'timeout' else 'hit an error'}, "
+                                          f"so I can't tell whether it went through. I won't repeat it automatically — "
+                                          f"please check your confirmations, or ask me to try again.")
+                self.ledger.reject(op, err)
+            elif not has_evidence(api, res):
+                self.ledger.unknown(op, "malformed_result")
+                self.plan = []
+                return await self.say("final_response",
+                                      f"The system replied without a confirmation for the {self.what(api)}, so I can't "
+                                      f"confirm it went through. I won't repeat it automatically — please check your "
+                                      f"confirmations, or ask me to try again.")
+            else:
+                self.ledger.commit(op, res)
+
         if not self.still_valid(c):
             self.note("stale_result_dropped", api)
-            if op and p.get("status") != "error":
-                op.update(status="succeeded", result=res, ctx=c["ctx"])
+            if op is not None and op["status"] == "committed":
+                await self.say("final_response", "Heads-up: an earlier " + self.what(api) + " had already completed — "
+                               + self.describe_success(api, res, c["ctx"]))
             return
 
-        if p.get("status") == "error":
+        if is_err:
             err = res.get("error", "error")
-            if op:
-                op["status"] = "failed"
             if kind == "read_only" and c["retries"] < 1 and err in ("timeout", "error", "unavailable"):
                 await self.say("filler_speech", "That's taking longer than usual — trying again.")
                 self.plan = c["plan"]
                 await self.call(api, c["args"], retries=c["retries"] + 1, deps=c["deps"])
-                return
-            if api == "book_flight" and err == "duplicate_booking":
-                bid = res.get("booking_id")
-                if bid:
-                    self.state["slots"]["booking_id"] = bid
-                if op:
-                    op.update(status="succeeded", result={"booking_id": bid, "flight_id": c["args"].get("flight_id")}, ctx=c["ctx"])
-                await self.say("final_response", f"Looks like that flight is already booked{f' ({bid})' if bid else ''}, so I didn't book it twice.")
                 return
             await self.say("final_response", {
                 "timeout": "Sorry — the service timed out and I was unable to finish that. Want me to try again?",
@@ -772,8 +1034,6 @@ class ParticipantAgent:
                 "unknown_tool": "Sorry — that service isn't available right now.",
             }.get(err, "Sorry — I was unable to complete that right now."))
             return
-        if op:
-            op.update(status="succeeded", result=res, ctx=dict(self.state["slots"]))
 
         if api == "flight_search":
             return await self.on_flights(res, c)
@@ -783,7 +1043,24 @@ class ParticipantAgent:
             self.state["slots"]["booking_id"] = res.get("booking_id")
         if api == "create_support_ticket":
             self.state["slots"]["ticket_id"] = res.get("ticket_id")
-        await self.say("final_response", self.describe_success(api, res, self.state["slots"]))
+        if api == "cancel_booking":
+            bid = res.get("cancelled") or res.get("cancelled_booking_id") or c["args"].get("booking_id")
+            prior = self.ledger.find_committed("book_flight", "booking_id", bid)
+            if prior is not None:
+                self.ledger.reverse(prior, by=cid)       # R05: a confirmed cancel re-enables a fresh booking
+            if self.state["slots"].get("booking_id") == bid:
+                self.state["slots"].pop("booking_id", None)
+            ac, self.after_cancel = self.after_cancel, None
+            if ac and str(ac["booking_id"]) == str(bid):
+                await self.say("filler_speech", f"{bid} is cancelled — booking {ac['args']['flight_id']} now.")
+                await self.call("book_flight", ac["args"], deps=ac["deps"])
+                return
+        # the completion is bound to the task that produced it, not to whatever is current (R22)
+        ctx = dict(c["ctx"]) if kind == "state_modifying" else dict(self.state["slots"])
+        subj = c["args"].get("city") or c["args"].get("destination")
+        if kind != "state_modifying" and isinstance(subj, str):
+            ctx["destination"] = subj
+        await self.say("final_response", self.describe_success(api, res, ctx))
 
     def describe_success(self, api: str, res: Dict[str, Any], s: Optional[Dict[str, Any]]) -> str:
         s = s or {}
@@ -831,9 +1108,9 @@ class ParticipantAgent:
                 return await self.say("final_response",
                                       f"I found a flight to {dest}: {pick['flight_id']} departing "
                                       f"{pick.get('depart')} for ${pick.get('price_usd')}. Whose name should I book it under?")
-            await self.say("filler_speech", f"Found {pick['flight_id']} at {pick.get('depart')} — booking it for {name} now.")
-            await self.call("book_flight", {"flight_id": pick["flight_id"], "passenger_name": name},
-                            deps={"flight_id": pick["flight_id"]})
+            await self.issue_booking({"flight_id": pick["flight_id"], "passenger_name": name},
+                                     {"flight_id": pick["flight_id"]},
+                                     announce=f"Found {pick['flight_id']} at {pick.get('depart')} — booking it for {name} now.")
             return
         s["flight_id"] = pick["flight_id"]
         others = [f for f in flights if f is not pick]

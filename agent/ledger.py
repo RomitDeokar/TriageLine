@@ -97,8 +97,10 @@ class OperationLedger:
                "idempotency_key": None, "supersedes": supersedes["op_id"] if supersedes else None}
         rec["idempotency_key"] = rec["op_id"] + ":" + key[:80]
         if supersedes is not None:
+            # the original record keeps its own (unknown / cancel_requested) status: we never rewrite
+            # history to pretend the earlier outcome was resolved — we only link the new attempt to it
             supersedes["superseded_by"] = rec["op_id"]
-            self._move(supersedes, "superseded")
+            supersedes["events"].append("superseded_by:" + rec["op_id"])
         self.ops[key] = rec
         self.by_call[cid] = rec
         self.history.append(rec)
@@ -125,6 +127,10 @@ class OperationLedger:
     def cancel_confirmed(self, rec):
         if rec["status"] in ("pending", "cancel_requested"):
             self._move(rec, "cancelled")
+
+    def late_commit(self, rec, result):
+        """A success that arrived after we asked to cancel: the side effect is real (R03)."""
+        self._move(rec, "committed", result=result, late=True)
 
     def reverse(self, rec, by: str):
         if rec["status"] == "committed":

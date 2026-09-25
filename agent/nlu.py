@@ -198,6 +198,22 @@ def extract_id(text: str, field: str = "") -> Optional[str]:
     return ids[-1] if ids else None
 
 
+NEG_WORD = re.compile(r"\b(?:do not|don'?t|dont|never|no need to|not)\b", re.I)
+
+
+def negated_action(text: str, api: str) -> bool:
+    """True when the user negates the action a (state-modifying) tool performs, e.g.
+    "Do not open a support ticket" / "Please don't cancel my booking" / "Don't reserve a car".
+    Schema-driven: the tool's own name tokens are matched within a short window after a negator."""
+    low = (text or "").lower()
+    toks = {t.rstrip("s") for t in re.split(r"[_\W]+", api.lower()) if len(t) > 2}
+    for m in NEG_WORD.finditer(low):
+        window = re.findall(r"[a-z']+", low[m.end():])[:4]
+        if any(w.rstrip("s") in toks or w.rstrip("s").rstrip("ing") in toks for w in window):
+            return True
+    return False
+
+
 def negates_booking(text: str) -> bool:
     return bool(NEG_BOOK.search(text or ""))
 

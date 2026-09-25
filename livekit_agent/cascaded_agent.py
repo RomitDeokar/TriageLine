@@ -207,8 +207,11 @@ async def entrypoint(ctx: agents.JobContext):
 
         if call_id in _cancelled_calls:
             _cancelled_calls.discard(call_id)
-            log.info("dropping result for cancelled call_id=%s (%s)", call_id, api_name)
-            return
+            # The thread-bound registry call could not be preempted, so its side effect (if any) is
+            # REAL. We still forward the late result: ParticipantAgent ignores late read-only results
+            # (no grounding on stale work) but reconciles and discloses a late state-modifying commit
+            # through its operation ledger (audit R03) instead of silently losing it.
+            log.info("late result for cancelled call_id=%s (%s) -> ledger reconciliation", call_id, api_name)
         await adapter.on_tool_completed(call_id, result, status=result.get("status", "ok"))
 
     async def tool_canceller(call_id: str) -> None:
