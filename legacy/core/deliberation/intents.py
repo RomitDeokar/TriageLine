@@ -115,10 +115,29 @@ def _extract_vehicle(text: str) -> Optional[str]:
     return None
 
 
-def _find_emergency_reason(text: str) -> Optional[str]:
+# A hazard word directly governed by a negator ("no fire", "nobody is injured",
+# "there isn't any smoke", "not injured") is a statement that the hazard is ABSENT.
+_NEGATOR = r"(?:no|not|n't|never|without|nobody|no one|none|isn't|aren't|wasn't|weren't)"
+
+
+def _hazard_mentions(text: str) -> list[tuple[int, str, bool]]:
+    """(position, hazard, negated) for every emergency hint, word-bounded (audit E-05)."""
     lowered = text.lower()
+    out = []
     for hint in _EMERGENCY_HINTS:
-        if hint in lowered:
+        for m in re.finditer(r"\b" + re.escape(hint) + r"\w*", lowered):
+            # negator within the same clause, at most 4 words before the hazard
+            window = re.split(r"[.;!?]|\bbut\b", lowered[max(0, m.start() - 40):m.start()])[-1]
+            negated = bool(re.search(r"\b" + _NEGATOR + r"(?:\s+\S+){0,4}\s*$", window))
+            out.append((m.start(), hint, negated))
+    out.sort()
+    return out
+
+
+def _find_emergency_reason(text: str) -> Optional[str]:
+    """First hazard that is actually asserted (not negated), else None."""
+    for _pos, hint, negated in _hazard_mentions(text):
+        if not negated:
             return hint
     return None
 
@@ -229,7 +248,7 @@ class EmergencyIntent(IntentHandler):
 
     def detect(self, context: list[ConversationTurn]) -> Optional[float]:
         text = _caller_text(context)
-        if _has_any(text, _EMERGENCY_HINTS):
+        if _find_emergency_reason(text) is not None:
             return 0.95
         return None
 
