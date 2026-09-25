@@ -1,1 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#16181d"/><circle cx="256" cy="256" r="150" fill="#e0702e"/><rect x="226" y="150" width="60" height="130" rx="30" fill="#fff"/><path d="M186 250a70 70 0 0 0 140 0" stroke="#fff" stroke-width="22" fill="none" stroke-linecap="round"/><rect x="245" y="320" width="22" height="46" fill="#fff"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="tl-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="tl-cyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="tl-emerald" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="tl-indigo" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+  </defs>
+  <!-- Background Squircle -->
+  <rect width="512" height="512" rx="120" fill="url(#tl-bg)" />
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="none" stroke="#1e293b" stroke-width="4" opacity="0.6" />
+  
+  <!-- Outer subtle radar ring -->
+  <circle cx="256" cy="256" r="176" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="8 8" opacity="0.4" />
+  <circle cx="256" cy="256" r="124" fill="none" stroke="#0ea5e9" stroke-width="2" opacity="0.25" />
+  
+  <!-- Dual Process Pulse Track -->
+  <path d="M120 256 H190 L220 180 L256 332 L292 208 L322 256 H392" 
+        fill="none" stroke="url(#tl-cyan)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" />
+        
+  <!-- Fast path reflex node -->
+  <circle cx="220" cy="180" r="14" fill="#38bdf8" />
+  <!-- Slow path execution node -->
+  <circle cx="256" cy="332" r="16" fill="url(#tl-emerald)" />
+  <!-- Recovery sync node -->
+  <circle cx="292" cy="208" r="14" fill="url(#tl-indigo)" />
+  
+  <!-- Center clinical cross marker -->
+  <circle cx="256" cy="256" r="6" fill="#ffffff" />
+</svg>

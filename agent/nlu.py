@@ -299,11 +299,40 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     if "passenger" in lname or lname in ("name", "customer", "guest", "full_name"):
         return ctx.get("passenger_name") or extract_name(text)
     if lname.endswith("_id") or lname == "id":
-        return extract_id(text, lname) or ctx.get(lname)
+        got = extract_id(text, lname) or ctx.get(lname)
+        if got:
+            return got
+        m = re.search(r"\b([A-Z]{2,}\d+|\d+[A-Z]{2,}\w*)\b", text)
+        return m.group(1) if m else None
     if lname in ("model", "device", "device_model"):
         return ctx.get("device_model")
     if lname in ("query", "summary", "question", "text", "message", "description", "issue"):
         return norm(text)
+    # generic fallback for typed string fields with no dedicated semantic role
+    # above (e.g. currency codes, bare alphanumeric ids without a dash prefix,
+    # free-form addresses/account/filter values). Added for FDB-v3 compatibility
+    # (see livekit_agent/fdb_compat_check.py) — every earlier, already-tested
+    # branch still wins first, so this only fires when nothing else matched.
+    if "currency" in lname:
+        m = re.search(r"\b([A-Za-z]{3})\b", text[text.lower().find(lname.split("_")[0]):] or text) \
+            if lname.split("_")[0] in text.lower() else None
+        # fall back to scanning the whole utterance for a bare 3-letter code
+        codes = re.findall(r"\b([A-Za-z]{3})\b", text)
+        codes = [c.upper() for c in codes if c.upper() not in ("THE", "FOR", "AND", "TO ")]
+        if lname.startswith("from") and codes:
+            return codes[0]
+        if lname.startswith("to") and len(codes) > 1:
+            return codes[1]
+        return codes[0] if codes else None
+    if lname.endswith("address"):
+        m = re.search(r"\b(?:from|origin)\s+(.+?)\s+to\s+(.+?)(?:\s+(?:by|via|driving|walking|transit|cycling)\b|$)", text, re.I)
+        if m:
+            return norm(m.group(1) if "origin" in lname else m.group(2)).strip(" .,")
+        return None
+    words = lname.replace("_", " ")
+    m = re.search(re.escape(words) + r"\s+(?:is|to|as|=|:)?\s*([\w][\w\-./]*(?:\s+[\w][\w\-./]*){0,2})", text, re.I)
+    if m:
+        return norm(m.group(1)).strip(" .,")
     return None
 
 

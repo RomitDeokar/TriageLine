@@ -2,65 +2,211 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#16181d">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#090d16">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>TriageLine — Live Assistant</title>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>TriageLine — Live Clinical Assistant</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="live.css">
 </head>
 <body>
-<header class="bar">
-  <div class="brand"><span class="dot" aria-hidden="true"></span><b>TriageLine</b></div>
-  <span id="mode" class="badge" title="Tools are simulated — no real bookings or tickets are created">LIVE INPUT + MOCK TOOLS</span>
-  <button id="menu" class="icon" aria-label="Menu">⋯</button>
-</header>
+<div class="app-shell">
+  <!-- Top Navigation Bar -->
+  <header class="bar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 12h4l2.5-6 4 12 3-8 2 2H21" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="brand-titles">
+        <span class="brand-name">TriageLine</span>
+        <span class="brand-sub">Clinical Assistant</span>
+      </div>
+    </div>
 
-<div id="sheet" class="sheet hidden" role="dialog" aria-label="Session menu">
-  <button id="m-ready">Device readiness check</button>
-  <button id="m-export">Export session (JSON)</button>
-  <button id="m-new">New session</button>
-  <a href="/" class="btnlike">Open evaluation console</a>
-  <label class="row"><input type="checkbox" id="m-tts" checked> Speak replies aloud</label>
-  <label class="row"><input type="checkbox" id="m-hands"> Hands-free (auto-listen after reply)</label>
-  <label class="row"><input type="checkbox" id="m-server-asr"> Use server ASR (Whisper) instead of phone</label>
-  <div id="ready" class="ready"></div>
+    <div class="bar-center">
+      <span id="mode" class="badge" title="Simulated environment: Bookings, tickets and actions are safely sandboxed">
+        LIVE INPUT · MOCK TOOLS
+      </span>
+    </div>
+
+    <div class="bar-actions">
+      <button id="menu" class="icon-btn" aria-label="Settings and Diagnostic Menu" title="Session Options">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Real-Time Working Memory Bar (Slots State) -->
+  <div id="memory-deck" class="memory-deck hidden">
+    <div class="memory-label">SLOT MEMORY:</div>
+    <div id="memory-slots" class="memory-slots"></div>
+  </div>
+
+  <!-- Session Settings Drawer / Modal -->
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Session Settings & Readiness">
+    <div class="sheet-head">
+      <div class="sheet-title">Session Controls</div>
+      <button id="sheet-close" class="icon-btn-sm" aria-label="Close menu">✕</button>
+    </div>
+
+    <div class="sheet-actions">
+      <button id="m-ready" class="menu-action-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>Run Device & Model Readiness Check</span>
+      </button>
+      <button id="m-export" class="menu-action-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>Export Session Audit (JSON)</span>
+      </button>
+      <button id="m-new" class="menu-action-btn danger">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        <span>Reset & Start New Session</span>
+      </button>
+      <a href="/" class="menu-action-btn neutral">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span>Return to Evaluation Console</span>
+      </a>
+    </div>
+
+    <div class="sheet-toggles">
+      <label class="toggle-row">
+        <span>Speak replies aloud (TTS)</span>
+        <input type="checkbox" id="m-tts" checked>
+      </label>
+      <label class="toggle-row">
+        <span>Hands-free (Auto-listen after reply)</span>
+        <input type="checkbox" id="m-hands">
+      </label>
+      <label class="toggle-row">
+        <span>Use Server Whisper ASR</span>
+        <input type="checkbox" id="m-server-asr">
+      </label>
+    </div>
+
+    <div id="ready" class="ready"></div>
+  </div>
+
+  <!-- Main Conversation Area -->
+  <main id="chat" aria-live="polite" aria-label="Conversation stream">
+    <div class="hello" id="welcome-card">
+      <div class="hello-badge">
+        <span class="pulse-dot"></span>
+        <span>Interruptible Agent Online</span>
+      </div>
+      <h2>Clinical & Task Assistant</h2>
+      <p class="hello-intro">Speak naturally or type your request. The assistant responds with sub-millisecond turn updates and supports immediate barge-in interruptions.</p>
+
+      <div class="sample-prompts">
+        <span class="sample-label">Try asking:</span>
+        <button class="sample-chip" data-sample="Find a flight to Denver and book the 8 AM one for Alice.">
+          "Find a flight to Denver and book the 8 AM one for Alice."
+        </button>
+        <button class="sample-chip" data-sample="Check the laptop manual for HDMI ports.">
+          "Check the laptop manual for HDMI ports."
+        </button>
+        <button class="sample-chip" data-sample="My monitor is blinking amber, open a support ticket.">
+          "My monitor is blinking amber, open a support ticket."
+        </button>
+      </div>
+
+      <div class="hello-note">
+        <strong>Testing Barge-In:</strong> Tap the mic while the assistant is speaking or working and say <em>"Wait, make it Seattle instead"</em> or <em>"Never mind"</em>.
+      </div>
+    </div>
+  </main>
+
+  <!-- Live Tool Task Progress Deck -->
+  <section id="tasks" class="tasks" aria-label="Active background tasks"></section>
+
+  <!-- Fullscreen Camera Viewfinder -->
+  <div id="cam" class="cam hidden" role="dialog" aria-label="Visual Inspection Camera">
+    <div class="cam-header">
+      <div class="cam-title">Visual Inspection</div>
+      <div class="cam-instruction">Align hardware port or serial label in view</div>
+    </div>
+    
+    <div class="cam-viewport">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="cam-reticle">
+        <div class="reticle-corner tl"></div>
+        <div class="reticle-corner tr"></div>
+        <div class="reticle-corner bl"></div>
+        <div class="reticle-corner br"></div>
+        <div class="reticle-crosshair"></div>
+      </div>
+      <div id="cam-laser" class="cam-laser-line"></div>
+    </div>
+
+    <div class="camctl">
+      <button id="camclose" class="cam-btn-secondary">Cancel</button>
+      <button id="load-sample-cam" class="cam-btn-sample" title="Simulate camera frame using bundled HDMI port image">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        <span>Sample Port</span>
+      </button>
+      <button id="snap" class="cam-btn-primary">
+        <div class="shutter-circle"></div>
+        <span>Analyze Frame</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Bottom Interaction Dock -->
+  <footer class="dock">
+    <div id="interim" class="interim" aria-live="assertive"></div>
+    
+    <!-- Audio Waveform Visualizer -->
+    <div class="waveform-container" id="waveform-container">
+      <span class="w-bar b1"></span>
+      <span class="w-bar b2"></span>
+      <span class="w-bar b3"></span>
+      <span class="w-bar b4"></span>
+      <span class="w-bar b5"></span>
+      <span class="w-bar b6"></span>
+      <span class="w-bar b7"></span>
+    </div>
+
+    <div class="dock-row">
+      <button id="camera" class="action-btn" aria-label="Open Camera" title="Capture visual frame">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      </button>
+
+      <form id="form" class="text-form">
+        <input id="text" autocomplete="off" placeholder="Ask anything or tap mic to speak…" aria-label="Message text input">
+        <button type="submit" id="send-btn" class="send-btn" aria-label="Send message">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </form>
+
+      <div class="mic-wrapper">
+        <div class="acoustic-ring r1"></div>
+        <div class="acoustic-ring r2"></div>
+        <button id="mic" class="mic" aria-label="Push to Talk" title="Start voice turn">
+          <svg class="mic-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="status-row">
+      <div id="status-dot" class="status-indicator-dot"></div>
+      <div id="status" class="status small muted">Connecting to server…</div>
+    </div>
+  </footer>
 </div>
 
-<main id="chat" aria-live="polite">
-  <div class="hello">
-    <h2>Talk to me</h2>
-    <p>Tap the mic and ask — e.g. <i>"Find a flight to Denver and book the 8 AM one for Alice"</i>.
-      Interrupt any time: tap the mic while I'm talking or working, and say <i>"actually, make it Seattle"</i>
-      or <i>"never mind"</i>.</p>
-    <p class="muted small">Point the camera at a port and ask <i>"what is this port used for?"</i></p>
-  </div>
-</main>
-
-<section id="tasks" class="tasks" aria-label="Task progress"></section>
-
-<div id="cam" class="cam hidden">
-  <video id="video" playsinline muted autoplay></video>
-  <div class="camctl">
-    <button id="snap" class="primary">Send frame</button>
-    <button id="camclose">Close</button>
-  </div>
-</div>
-
-<footer class="dock">
-  <div id="interim" class="interim"></div>
-  <div class="row">
-    <button id="camera" class="icon big" aria-label="Camera">📷</button>
-    <form id="form" class="text">
-      <input id="text" autocomplete="off" placeholder="Type or tap the mic…" aria-label="Message">
-    </form>
-    <button id="mic" class="mic" aria-label="Talk"><span></span></button>
-  </div>
-  <div id="status" class="status small muted">Connecting…</div>
-</footer>
 <input id="file" type="file" accept="image/*" capture="environment" hidden>
 <script src="live.js"></script>
 </body>

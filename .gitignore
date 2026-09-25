@@ -8,3 +8,7 @@ generated/
 results.json
 *.log
 live_uploads/
+
+# LiveKit secrets
+livekit_agent/.env.local
+livekit_agent/.env

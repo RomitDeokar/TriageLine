@@ -76,19 +76,30 @@ def _has_location(text: str) -> bool:
 
 
 def _extract_location_snippet(raw_text: str) -> Optional[str]:
-    """Best-effort human-readable location snippet, e.g. 'Highway 9 mile 12'."""
+    """Best-effort human-readable location snippet, e.g. 'Highway 9 mile 12'.
+
+    Returns the LAST matching snippet in the text, not the first. Callers
+    of this function (e.g. BreakdownIntent.deliberate) always pass the
+    full, freshly-rejoined caller transcript so that later corrections
+    are visible -- see `_caller_text`'s docstring. Scanning for the last
+    match, rather than the first, is what makes that recency-awareness
+    actually take effect: a caller who says "near Highway 9" and then
+    later corrects with "actually, I'm at Highway 12" must resolve to
+    Highway 12, since a correction always supersedes what it corrects.
+    """
     if not _has_location(raw_text):
         return None
     words = raw_text.split()
     lowered_words = [w.lower() for w in words]
+    last_snippet: Optional[str] = None
     for i, word in enumerate(lowered_words):
         if any(hint in word for hint in _LOCATION_HINTS) or any(ch.isdigit() for ch in word):
             start = max(0, i - 1)
             end = min(len(words), i + 3)
             snippet = " ".join(words[start:end]).strip(" .,")
             if snippet:
-                return snippet
-    return None
+                last_snippet = snippet
+    return last_snippet
 
 
 def _extract_distance_miles(text: str) -> Optional[float]:

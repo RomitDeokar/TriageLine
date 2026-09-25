@@ -1,186 +1,368 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TriageLine — evaluation console</title>
+<title>TriageLine — Clinical AI Evaluation Platform</title>
 <link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Ccircle cx=%225%22 cy=%225%22 r=%225%22 fill=%22%23c2571a%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
   <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
-    <div>
-      <h1>TriageLine</h1>
-      <p>Dual-process interruptible agent · Theme 05 · Samsung PRISM</p>
+    <div class="brand-icon" aria-hidden="true">
+      <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="28" height="28" rx="6" fill="#0f172a"/>
+        <path d="M6 14h4.5l2-5.5 3 11 2.5-8.5 2 3H22" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="15.5" cy="19.5" r="1.5" fill="#34d399"/>
+        <circle cx="12.5" cy="8.5" r="1.5" fill="#818cf8"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <h1>TriageLine <span class="brand-badge">Clinical v1.0</span></h1>
+      <p>Dual-process interruptible agent · Theme 05 Evaluation Platform</p>
     </div>
   </div>
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-view="run">Run</button>
-    <button class="tab" data-view="compose">Compose</button>
-    <button class="tab" data-view="suite">Suite</button>
-    <button class="tab" data-view="about">Architecture</button>
-    <a class="tab live-link" href="/live.html">📱 Live Assistant</a>
-  </nav>
+
+  <div class="header-right">
+    <nav class="tabs" role="tablist" aria-label="Evaluation Console Views">
+      <button class="tab active" data-view="run" role="tab" aria-selected="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <span>Run</span>
+      </button>
+      <button class="tab" data-view="compose" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <span>Compose</span>
+      </button>
+      <button class="tab" data-view="suite" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        <span>Benchmark</span>
+      </button>
+      <button class="tab" data-view="about" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span>Architecture</span>
+      </button>
+    </nav>
+
+    <!-- Dark/Light Theme Switcher -->
+    <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle dark/light theme" title="Switch between dark and light workspace">
+      <svg class="sun-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="moon-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <span class="theme-label" id="theme-label">Dark</span>
+    </button>
+
+    <a class="tab live-link" href="/live.html" title="Open Live Assistant mobile PWA">
+      <span class="live-indicator-dot"></span>
+      <span>Live Assistant</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+  </div>
 </header>
 
 <main>
-  <!-- ============================== RUN -->
-  <section id="view-run" class="view active">
+  <!-- ============================== RUN VIEW ============================== -->
+  <section id="view-run" class="view active" role="tabpanel" aria-label="Run Evaluation">
     <aside class="side">
-      <div class="side-head">
-        <h2>Scenarios</h2>
-        <div class="seg" id="agent-seg">
-          <button class="on" data-agent="triageline">TriageLine</button>
-          <button data-agent="baseline">Baseline</button>
+      <div class="side-header">
+        <div class="side-title-row">
+          <h2>Scenarios</h2>
+          <span class="sc-count-badge" id="sc-count">—</span>
+        </div>
+        
+        <div class="seg" id="agent-seg" role="group" aria-label="Agent Model Selection">
+          <button class="on" data-agent="triageline">TriageLine (Dual-Process)</button>
+          <button data-agent="baseline">Baseline Agent</button>
+        </div>
+
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="sc-search" placeholder="Filter scenarios (e.g. interrupt, audio)…" aria-label="Filter scenarios">
+        </div>
+
+        <div class="filter-chips" id="mod-filters">
+          <button class="filter-chip active" data-mod="all">All</button>
+          <button class="filter-chip" data-mod="text">Text</button>
+          <button class="filter-chip" data-mod="audio">Audio</button>
+          <button class="filter-chip" data-mod="visual">Visual</button>
         </div>
       </div>
-      <ul id="scenario-list" class="slist"></ul>
-      <label class="speed">Time scale
-        <select id="ts"><option value="1" selected>1× (official)</option><option value="2">2× preview</option><option value="4">4× preview</option></select>
-      </label>
+
+      <ul id="scenario-list" class="slist" role="listbox" aria-label="Scenarios List"></ul>
+
+      <div class="side-footer">
+        <label class="speed">
+          <span>Simulation Speed</span>
+          <select id="ts" aria-label="Time Scale Multiplier">
+            <option value="1" selected>1× (Official Timing)</option>
+            <option value="2">2× Fast Preview</option>
+            <option value="4">4× Rapid Preview</option>
+          </select>
+        </label>
+      </div>
     </aside>
 
     <div class="stage">
-      <div class="stage-head">
-        <div>
+      <div class="stage-head-card">
+        <div class="stage-head-info">
           <div class="eyebrow" id="sc-meta">—</div>
-          <h2 id="sc-title">Pick a scenario</h2>
-          <p id="sc-desc" class="muted"></p>
+          <h2 id="sc-title">Select a scenario to evaluate</h2>
+          <p id="sc-desc" class="stage-desc-text muted">Choose a scenario from the sidebar to inspect its sequence of events, run it against the dual-process engine, and measure official scoring checkpoints.</p>
         </div>
-        <button id="run-btn" class="primary" disabled>Run scenario</button>
+        <div class="stage-actions">
+          <button id="run-btn" class="primary" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span>Run scenario</span>
+          </button>
+          <span class="shortcut-hint">⌘ + Enter to run</span>
+        </div>
       </div>
 
-      <div id="score-strip" class="strip hidden"></div>
+      <!-- Overall Score Strip / Executive Metrics -->
+      <div id="score-strip" class="strip hidden" aria-live="polite"></div>
 
-      <div class="card">
-        <div class="card-head"><h3>Timeline</h3><span class="muted small" id="tl-note">virtual ms · hover for details</span></div>
-        <div id="timeline" class="timeline empty">Run a scenario to see the fast path and slow path play out against the user.</div>
+      <!-- Execution Timeline Card with Playback Scrubber -->
+      <div class="card timeline-card">
+        <div class="card-head">
+          <h3>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Execution Timeline</span>
+          </h3>
+          <span class="muted small" id="tl-note">virtual timing (ms) · hover/tap markers for diagnostics</span>
+        </div>
+
+        <!-- Interactive Playback Scrubber -->
+        <div class="timeline-playback-bar" id="tl-playback-bar">
+          <div class="playback-controls">
+            <button id="tl-play" class="playback-btn" title="Replay timeline from 0ms">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span id="tl-play-text">Play Replay</span>
+            </button>
+            <div class="playback-time" id="tl-playback-time">0 ms</div>
+            <input type="range" id="tl-scrubber" class="timeline-slider" min="0" max="1000" value="0" step="10">
+            <div class="playback-speed-group" id="tl-speed-group">
+              <button class="speed-chip active" data-speed="1">1×</button>
+              <button class="speed-chip" data-speed="2">2×</button>
+              <button class="speed-chip" data-speed="4">4×</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="timeline" class="timeline empty">Select and run a scenario to inspect the microsecond interaction between fast reflex and background tools.</div>
       </div>
 
+      <!-- Synchronized Transcript & Scorer Checkpoints -->
       <div class="grid2">
         <div class="card">
-          <div class="card-head"><h3>Transcript</h3></div>
-          <ol id="transcript" class="transcript"><li class="muted">—</li></ol>
+          <div class="card-head">
+            <h3>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>Execution Transcript</span>
+            </h3>
+            <div class="transcript-actions">
+              <input type="text" id="tr-search" class="tr-search-input" placeholder="Search transcript…" aria-label="Search transcript">
+              <button id="copy-transcript" class="filter-chip" title="Copy transcript as text">Copy</button>
+            </div>
+          </div>
+          <ol id="transcript" class="transcript"><li class="muted">Awaiting scenario execution…</li></ol>
         </div>
+
         <div class="card">
-          <div class="card-head"><h3>Scorer checkpoints</h3></div>
-          <div id="checks" class="checks"><p class="muted">—</p></div>
+          <div class="card-head">
+            <h3>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <span>Official Scorer Checkpoints</span>
+            </h3>
+            <div class="ck-filter-chips" id="ck-filters">
+              <button class="filter-chip active" data-filter="all">All</button>
+              <button class="filter-chip" data-filter="fail">Failures Only</button>
+              <button class="filter-chip" data-filter="pass">Passed Only</button>
+            </div>
+          </div>
+          <div id="checks" class="checks"><p class="muted">Run scenario to view audit checkpoints and compliance scores.</p></div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ============================== COMPOSE -->
-  <section id="view-compose" class="view">
+  <!-- ============================== COMPOSE VIEW ============================== -->
+  <section id="view-compose" class="view" role="tabpanel" aria-label="Compose Scenario">
     <div class="stage narrow">
-      <div class="eyebrow">Try to break it</div>
-      <h2>Compose a conversation</h2>
-      <p class="muted">Write a request, then barge in. Nothing here is scripted for the agent — it sees the same event stream the official harness sends.</p>
+      <div class="compose-header">
+        <div class="eyebrow">Interactive Stress Testing</div>
+        <h2>Conversation Sandbox & Interruption Lab</h2>
+        <p class="muted">Compose a custom conversation stream, trigger mid-turn interruptions at exact millisecond offsets, and test real-time replanning without pre-scripting.</p>
+      </div>
 
       <div class="card form">
-        <label>User says
-          <input id="c-utt" value="Find me flights to Chicago for Friday.">
+        <label>Initial User Request
+          <input id="c-utt" type="text" value="Find me flights to Chicago for Friday." placeholder="Enter user prompt…">
         </label>
         <div class="row">
-          <label class="grow">Interruption <span class="muted small">(optional)</span>
-            <input id="c-int" value="Actually, make it Seattle instead.">
+          <label class="grow">Interruption / Barge-in Utterance <span class="muted small">(optional)</span>
+            <input id="c-int" type="text" value="Actually, make it Seattle instead." placeholder="e.g. Wait, actually make it Seattle">
           </label>
-          <label class="w140">at +ms
+          <label class="w140">Offset (+ms)
             <input id="c-at" type="number" value="1600" min="200" step="100">
           </label>
         </div>
-        <label class="check"><input type="checkbox" id="c-tool"> Add an unseen tool <span class="muted small">(hotel_search, read-only)</span></label>
-        <div class="presets">
-          <span class="muted small">Presets:</span>
-          <button class="chip" data-p='["Find flights to Miami please.","Never mind, forget it.",1500,false]'>retraction</button>
-          <button class="chip" data-p='["Find flights to Austin.","Forget the flight, my TV is blinking red, open a support ticket.",1400,false]'>intent switch</button>
-          <button class="chip" data-p='["Find a flight to Denver and book the 2 PM one for Priya.","",0,false]'>chained booking</button>
-          <button class="chip" data-p='["Can you find a hotel in Boston?","",0,true]'>unseen tool</button>
-          <button class="chip" data-p='["Book a flight to Boston, sorry I mean Denver, for tomorrow.","",0,false]'>self-repair</button>
+        
+        <!-- Live Interruption Visual Slider -->
+        <div class="offset-slider-group">
+          <div class="offset-slider-header">
+            <span class="muted small">Interruption timing visualizer:</span>
+            <span class="offset-value" id="c-at-label">+1,600 ms</span>
+          </div>
+          <input type="range" id="c-at-slider" min="300" max="4000" step="50" value="1600" class="timeline-slider">
         </div>
-        <button id="c-run" class="primary">Run conversation</button>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Timeline</h3></div>
-        <div id="c-timeline" class="timeline empty">—</div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Transcript</h3></div>
-        <ol id="c-transcript" class="transcript"><li class="muted">—</li></ol>
-      </div>
-    </div>
-  </section>
 
-  <!-- ============================== SUITE -->
-  <section id="view-suite" class="view">
-    <div class="stage">
-      <div class="stage-head">
+        <label class="check">
+          <input type="checkbox" id="c-tool">
+          <span>Inject an unseen zero-shot tool <code class="small">hotel_search</code> (read-only)</span>
+        </label>
+        <div class="presets-container">
+          <span class="presets-label">Quick Test Presets:</span>
+          <div class="presets">
+            <button class="chip" data-p='["Find flights to Miami please.","Never mind, forget it.",1500,false]'>Retraction (Never mind)</button>
+            <button class="chip" data-p='["Find flights to Austin.","Forget the flight, my TV is blinking red, open a support ticket.",1400,false]'>Intent Switch</button>
+            <button class="chip" data-p='["Find a flight to Denver and book the 2 PM one for Priya.","",0,false]'>Chained Booking</button>
+            <button class="chip" data-p='["Can you find a hotel in Boston?","",0,true]'>Unseen Tool</button>
+            <button class="chip" data-p='["Book a flight to Boston, sorry I mean Denver, for tomorrow.","",0,false]'>Speech Self-Repair</button>
+          </div>
+        </div>
         <div>
-          <div class="eyebrow">Official scorer</div>
-          <h2>Benchmark</h2>
-          <p class="muted">Runs every scenario through both agents with <code>harness/scorer.py</code>. Audio and visual rows need the kit's media files in <code>audio/</code> and <code>frames/</code>. Without them the agent falls back safely, and those rows score lower.</p>
+          <button id="c-run" class="primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span>Run conversation</span>
+          </button>
         </div>
-        <button id="suite-btn" class="primary">Run all</button>
       </div>
+
+      <div class="card timeline-card">
+        <div class="card-head"><h3>Execution Timeline</h3></div>
+        <div id="c-timeline" class="timeline empty">Awaiting custom conversation run…</div>
+      </div>
+
       <div class="card">
-        <table class="table" id="suite-table">
-          <thead><tr><th>Scenario</th><th>Mode</th><th class="num">Baseline</th><th class="num">TriageLine</th><th>Δ</th><th class="bar-col"></th></tr></thead>
-          <tbody></tbody>
-          <tfoot></tfoot>
-        </table>
+        <div class="card-head"><h3>Live Event Log</h3></div>
+        <ol id="c-transcript" class="transcript"><li class="muted">No events recorded.</li></ol>
       </div>
     </div>
   </section>
 
-  <!-- ============================== ABOUT -->
-  <section id="view-about" class="view">
+  <!-- ============================== SUITE VIEW ============================== -->
+  <section id="view-suite" class="view" role="tabpanel" aria-label="Benchmark Suite">
+    <div class="stage">
+      <div class="stage-head-card">
+        <div class="stage-head-info">
+          <div class="eyebrow">Comprehensive Benchmark</div>
+          <h2>Official Scorer Benchmark Matrix</h2>
+          <p class="muted">Executes all published and extra scenarios head-to-head between <b>Baseline</b> and <b>TriageLine</b> using <code>harness/scorer.py</code> at official 1× timing. Audio and visual scenarios require bundled assets in <code>audio/</code> and <code>frames/</code>.</p>
+        </div>
+        <button id="suite-btn" class="primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Run all scenarios</span>
+        </button>
+      </div>
+
+      <!-- Benchmark Summary KPI Deck -->
+      <div class="suite-kpi-deck" id="suite-kpis">
+        <div class="suite-kpi-card">
+          <div class="k">Evaluated Scenarios</div>
+          <div class="v" id="kpi-count">0 / 13</div>
+        </div>
+        <div class="suite-kpi-card">
+          <div class="k">TriageLine Mean Score</div>
+          <div class="v" id="kpi-triageline">—</div>
+        </div>
+        <div class="suite-kpi-card">
+          <div class="k">Baseline Mean Score</div>
+          <div class="v" id="kpi-baseline">—</div>
+        </div>
+        <div class="suite-kpi-card">
+          <div class="k">Net Performance Advantage</div>
+          <div class="v" id="kpi-delta">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table class="table" id="suite-table">
+            <thead>
+              <tr>
+                <th>Scenario ID</th>
+                <th>Modality</th>
+                <th class="num">Baseline</th>
+                <th class="num">TriageLine</th>
+                <th class="num">Δ Delta</th>
+                <th class="bar-col">Score Comparison</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot></tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== ABOUT VIEW ============================== -->
+  <section id="view-about" class="view" role="tabpanel" aria-label="System Architecture">
     <div class="stage narrow prose">
-      <div class="eyebrow">How it works</div>
-      <h2>One event loop, two speeds, one epoch counter</h2>
+      <div>
+        <div class="eyebrow">System Architecture</div>
+        <h2>Dual-Process Interruptible Agent Architecture</h2>
+        <p class="muted">Engineered for Samsung PRISM Theme 05. The system decouples immediate reflexive conversational feedback from asynchronous tool execution and perception.</p>
+      </div>
+
       <figure class="arch">
 <pre>
- events ─▶ ┌──────────── FAST PATH  (&lt; 5 ms, inline) ────────────┐
-           │ turn buffer · self-repair resolver · interruption    │──▶ filler / clarify
-           │ classifier (revise · retract · switch) · snapshot    │    + state_snapshot
-           └──────────────┬───────────────────────────────────────┘
-                          │ spawn (never await on the loop)
-           ┌──────────────▼───────── SLOW PATH  (background) ─────┐
-           │ ASR ensemble (base.en ⟂ tiny.en) · OCR + CLIP frame  │──▶ tool_call
-           │ schema-driven args · 1× read-only retry · plans      │    final_response
-           └──────────────┬───────────────────────────────────────┘
-                          │ results tagged with epoch
-           ┌──────────────▼───────── COORDINATION ────────────────┐
-           │ in-flight ledger → targeted cancel_tool              │
-           │ epoch++ on interrupt → stale results dropped         │
-           │ idempotence ledger → no duplicate state-modifying    │
-           └──────────────────────────────────────────────────────┘
+Events ─▶ ┌──────────── FAST PATH  (&lt; 5 ms, inline on every event) ────────────┐
+          │ Turn buffer · Self-repair resolver · Interruption classifier       │──▶ filler / clarify
+          │ (slot revision · retraction · intent switch) · State snapshot      │    + state_snapshot
+          └─────────────────────────────┬──────────────────────────────────────┘
+                                        │ spawn (never awaits slow work on loop)
+          ┌─────────────────────────────▼───────── SLOW PATH (background) ─────┐
+          │ ASR ensemble (base.en ⟂ tiny.en) · OCR + CLIP frame perception     │──▶ tool_call
+          │ Schema-driven dynamic tool callers · 1× idempotent retry · plans   │    final_response
+          └─────────────────────────────┬──────────────────────────────────────┘
+                                        │ results tagged with epoch
+          ┌─────────────────────────────▼───────── COORDINATION ───────────────┐
+          │ In-flight ledger ───────▶ Targeted cancel_tool                      │
+          │ Invalidation epoch ─────▶ Drops stale results from preempted turns  │
+          │ Idempotence ledger ─────▶ Prevents duplicate state-modifying actions│
+          └─────────────────────────────────────────────────────────────────────┘
 </pre>
       </figure>
-      <h3>What each piece does</h3>
+
+      <h3>Core Design Principles</h3>
       <dl class="defs">
-        <dt>Interruption taxonomy</dt>
-        <dd>Every barge-in is classified in under a millisecond as a <b>slot revision</b> ("make it New York"), a <b>retraction</b> ("never mind") or an <b>intent switch</b> ("forget the flight, my TV is broken"). Each one gets its own cancel-and-replan policy, so a slot revision only redoes the work that depended on the changed slot.</dd>
-        <dt>Epoch-guarded grounding</dt>
-        <dd>Each interruption increments an epoch. Perception and tool outputs carry the epoch they were started in, and any stale output is dropped. That covers the race where a call slips through cancellation.</dd>
-        <dt>Uncertainty-aware ASR</dt>
-        <dd>Two independent Whisper decoders run. When they disagree, or the word-level probability on a slot value is low, the agent asks "did you say Austin or Boston?" instead of acting on a guess. The candidates come from what was actually heard.</dd>
-        <dt>Zero-shot tools</dt>
-        <dd>Tools are ranked by overlap with the manifest's name, description and arguments, plus a bonus when every required argument can be filled. Arguments are built by what each schema field means (city, date, name, enum, nested object). Answers come from whatever fields the result returns.</dd>
-        <dt>Visual grounding</dt>
-        <dd>Printed-label OCR (tried at several rotations, including inverted) is combined with CLIP zero-shot on a centre crop. The 512-d CLIP embedding is passed to <code>lookup_manual</code> for hybrid search. If vision finds nothing, the agent asks the user rather than guessing a port type.</dd>
-        <dt>Safety by construction</dt>
-        <dd>At most 3 fillers, never the same one twice. State-modifying calls are deduplicated by argument hash. Replies promise actions ("booking it now") and only claim them once the tool has finished. Every spoken action carries a snapshot.</dd>
+        <dt>Zero-Latency Barge-In</dt>
+        <dd>Every user utterance or interruption is processed in under 5 milliseconds. The fast path immediately updates internal slot hypotheses, halts outdated TTS speech, issues contextual filler acknowledgments, and halts obsolete background work without freezing the event consumer.</dd>
+
+        <dt>Epoch-Guarded Invalidation</dt>
+        <dd>Each interruption increments a monotonic epoch counter. Outbound tool calls and perception tasks carry their originating epoch; any completion arriving with a superseded epoch is immediately discarded, preventing race conditions.</dd>
+
+        <dt>Uncertainty-Aware ASR</dt>
+        <dd>When speech transcription exhibits low confidence or multiple phonetically plausible options (e.g. Austin vs Boston), the agent generates a focused clarification request ("Did you say Austin or Boston?") rather than guessing blindly.</dd>
+
+        <dt>Zero-Shot Schema Tools</dt>
+        <dd>Tools are dynamically ranked by semantic overlap with function declarations, parameter schemas, and type definitions. Required arguments are intelligently synthesized directly from user requests.</dd>
+
+        <dt>Multi-Modal Visual Grounding</dt>
+        <dd>Multi-angle OCR is coupled with zero-shot CLIP embeddings on center-cropped frames. High-confidence visual features guide tool invocation, while ambiguous frames trigger explicit user confirmation.</dd>
+
+        <dt>Deterministic Safety Ledger</dt>
+        <dd>Fillers are capped at an evaluation budget of 3 per turn. State-modifying operations are indexed in an idempotency register to guarantee at-most-once execution under all network conditions.</dd>
       </dl>
     </div>
   </section>
 </main>
 
-<div id="tip" class="tip hidden"></div>
+<div id="tip" class="tip hidden" role="tooltip" aria-hidden="true"></div>
 <script src="app.js"></script>
 </body>
 </html>
