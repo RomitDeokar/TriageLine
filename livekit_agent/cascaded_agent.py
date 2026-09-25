@@ -1,54 +1,61 @@
 #!/usr/bin/env python3
 """
-Cascaded Voice Agent: Silero VAD + OpenAI Whisper STT + OpenAI TTS, driven by
-the EXISTING TriageLine interruption/epoch/cancellation/dedup engine.
+TriageLine cascaded voice agent for the official FDB-v3 benchmark.
 
-Pipeline:
-  User Audio -> Silero VAD -> OpenAI Whisper STT
-      -> TriageAdapter (livekit_agent/adapter.py, UNMODIFIED)
-         -> ParticipantAgent (agent/agent.py, UNMODIFIED): epoch/version
-            handling, stale-work cancellation, revise/retract classification,
-            duplicate-action dedup ledger
-      -> FDB_TOOLS (livekit_agent/fdb_tools.py) executed via mock_apis.py
-      -> OpenAI TTS -> Agent Audio
+MODEL / PROVIDER DECLARATION (guide: "clear declaration of the model provider or custom agent")
+------------------------------------------------------------------------------------------------
+This is a CUSTOM LiveKit agent. There is NO large language model in the default configuration.
 
-Fix note (docs/LIVEKIT_WIRING_FIX.md): a prior version of this file used
-OpenAI gpt-4o for LLM tool-calling directly against mock_apis.py, completely
-bypassing TriageAdapter/ParticipantAgent (Path A in
-docs/LIVEKIT_AGENT_TECHNICAL_AUDIT.md). That LLM tool-calling path is REMOVED
-here on purpose: keeping it running alongside the adapter would have created
-a second, uncoordinated way to invoke state-changing tools with no epoch
-tracking or dedup, defeating the point of wiring the adapter in at all. Voice
-turn-taking is still real LiveKit (VAD + Whisper STT + TTS); language
-understanding and tool selection are now entirely the existing
-ParticipantAgent/nlu.py logic, the same as triage_livekit_agent.py already
-does for the Triage Line brain.
+  User audio -> Silero VAD (local)            [livekit-plugins-silero]
+             -> OpenAI Whisper STT (hosted)   [whisper-1, or any OpenAI-compatible STT via env]
+             -> TriageAdapter  (livekit_agent/adapter.py: non-blocking tool tasks, utterance
+                                settling, barge-in)
+                -> ParticipantAgent (agent/agent.py + agent/nlu.py: rule-based, schema-driven
+                   tool selection + argument extraction, epoch-guarded interruption handling,
+                   cancellation, duplicate-action ledger)
+                   [optional] agent/llm_extract.py: a DECLARED small hosted LLM that only
+                   extracts arguments when TRIAGELINE_LLM_MODEL is set (off by default)
+             -> FDB-v3 mock tools (official mock_apis.py, unmodified)
+             -> OpenAI TTS (hosted)           [tts-1 / voice "nova"]
+
+The upstream FDB-v3 template (v3/cascaded_agent.py) uses gpt-4o for tool calling. That LLM
+step is replaced here by ParticipantAgent on purpose: every state-changing tool call goes through
+one epoch-tracked, deduplicated path (see docs/ARCHITECTURE.md).
+
+Telemetry contract with the official runner (v3/run_tool_benchmark.py):
+  /tmp/agent_heartbeat.log   "!!! CASCADED AGENT JOINING ROOM ..." + "LATENCY_TRACK_JSON: {...}"
+  /tmp/agent_tool_calls.log  one JSON line per tool call {"room", "call": {function,args,ts}}
 
 Usage:
-    python cascaded_agent.py dev
-    python cascaded_agent.py console
+    python cascaded_agent.py start            # production worker (used by run_fdb_v3.sh)
+    python cascaded_agent.py dev | console    # local development
+    python cascaded_agent.py start --latency normal
 
-Environment variables (in .env.local):
-    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-    OPENAI_API_KEY     - OpenAI API key (for STT + TTS)
+Environment (.env.local next to this file, or exported):
+    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, OPENAI_API_KEY
+    optional: TRIAGELINE_SETTLE_S (default 0.9), TRIAGELINE_BACKCHANNEL (default 1),
+              TRIAGELINE_STT_MODEL (default whisper-1), TRIAGELINE_TTS_MODEL (default tts-1),
+              TRIAGELINE_LLM_MODEL / TRIAGELINE_LLM_BASE_URL / TRIAGELINE_LLM_API_KEY
 """
 
-import os
-import sys
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
+import os
+import sys
 import time
-import asyncio
+
 from dotenv import load_dotenv
-
 from livekit import agents
-from livekit.agents import Agent, AgentSession, AgentServer
+from livekit.agents import Agent, AgentServer, AgentSession, JobProcess
 
-# Make both `agent.*` (ParticipantAgent) and `livekit_agent.*` (this package)
-# importable regardless of cwd, the same way fdb_scenario_run.py does.
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_HERE)
+for p in (_REPO_ROOT, _HERE):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from livekit_agent.adapter import TriageAdapter, attach_livekit_session  # noqa: E402
 from livekit_agent.fdb_tools import FDB_TOOLS  # noqa: E402
@@ -62,195 +69,198 @@ if "--latency" in sys.argv:
         sys.argv.pop(idx)
         sys.argv.pop(idx)
 
-# Import mock APIs for tool execution -- this is the ONLY place tools are
-# actually invoked now; it is called from tool_executor() below, which is
-# itself only reachable through TriageAdapter/ParticipantAgent, not directly
-# from LiveKit callbacks.
+load_dotenv(os.path.join(_HERE, ".env.local"))
+
+# Official mock backend (copied from the pinned FDB-v3 commit by run_fdb_v3.sh stage 4).
 try:
     from mock_apis import MockAPIRegistry
     registry = MockAPIRegistry(latency_profile=LATENCY_PROFILE)
     print(f"API Backend running with '{LATENCY_PROFILE}' latency profile.")
 except ImportError:
-    logging.warning("mock_apis.py not found. Tools will be mocked or fail.")
+    logging.warning("mock_apis.py not found. Tools will return errors.")
     registry = None
-
-env_path = os.path.join(os.path.dirname(__file__), ".env.local")
-load_dotenv(env_path)
 
 log = logging.getLogger("triageline.cascaded_agent")
 
-
-# ---------------------------------------------------------------------------
-# Latency Tracker (unchanged from the previous version of this file)
-# ---------------------------------------------------------------------------
-class LatencyTracker:
-    def __init__(self):
-        self.user_done_at = 0
-        self.tool_start_at = 0
-        self.tool_end_at = 0
-        self.agent_start_at = 0
-        self.query_received = False
-
-    def reset(self):
-        self.__init__()
-
-    def log_breakdown(self, tool_name="", room_name="unknown"):
-        if not self.user_done_at or not self.agent_start_at:
-            return
-        reasoning = (self.tool_start_at - self.user_done_at) if self.tool_start_at else 0
-        execution = (self.tool_end_at - self.tool_start_at) if self.tool_start_at and self.tool_end_at else 0
-        synthesis = (self.agent_start_at - (self.tool_end_at or self.user_done_at))
-        total = self.agent_start_at - self.user_done_at
-
-        report = f"\nLATENCY BREAKDOWN ({tool_name}) for room {room_name}:\n"
-        report += f"  - Reasoning (ASR -> tool decision): {reasoning:.2f}s\n"
-        if execution:
-            report += f"  - Tool Execution (API):    {execution:.2f}s\n"
-        report += f"  - Synthesis (Tool -> Spoken): {synthesis:.2f}s\n"
-        report += f"  - TOTAL SEARCH LATENCY:      {total:.2f}s\n"
-
-        metrics = {
-            "room": room_name, "tool": tool_name,
-            "reasoning": round(reasoning, 3), "execution": round(execution, 3),
-            "synthesis": round(synthesis, 3), "total": round(total, 3),
-            "agent_start_at": self.agent_start_at,
-        }
-        logging.info(report)
-        logging.info(f"LATENCY_TRACK_JSON: {json.dumps(metrics)}")
-        print(report)
-        try:
-            with open("/tmp/agent_heartbeat.log", "a") as f:
-                f.write(report + "\n")
-        except OSError:
-            pass
+HEARTBEAT = "/tmp/agent_heartbeat.log"
+TOOL_LOG = "/tmp/agent_tool_calls.log"
+SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", "0.9"))
+BACKCHANNEL = os.environ.get("TRIAGELINE_BACKCHANNEL", "1") == "1"
 
 
-def _log_tool_call(room_name: str, func_name: str, args: dict, t_start: float, t_end: float):
+def _append(path: str, *lines: str) -> None:
     try:
-        with open("/tmp/agent_tool_calls.log", "a") as f:
-            f.write(json.dumps({
-                "room": room_name,
-                "call": {"function": func_name, "args": args,
-                         "timestamp_start": t_start, "timestamp_end": t_end},
-            }) + "\n")
+        with open(path, "a", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line + "\n")
     except OSError:
         pass
 
 
+async def append_async(path: str, *lines: str) -> None:
+    """File telemetry off the event loop (ruff ASYNC230 / audit §7)."""
+    await asyncio.to_thread(_append, path, *lines)
+
+
 # ---------------------------------------------------------------------------
-# Agent definition -- no LLM, no function-tool-calling. Tool selection comes
-# entirely from ParticipantAgent (agent/agent.py + agent/nlu.py) via the
-# adapter, same as triage_livekit_agent.py's TriageVoiceAgent.
+# Latency tracker — same record shape as the upstream template, but tracks every
+# tool call separately (chained / concurrent calls no longer overwrite each other).
 # ---------------------------------------------------------------------------
+class LatencyTracker:
+    def __init__(self):
+        self.user_done_at = 0.0
+        self.agent_start_at = 0.0          # first agent speech of ANY kind (filler counts)
+        self.calls: list[dict] = []        # [{tool, start, end}]
+        self.query_received = False
+        self.logged = False
+
+    def tool_started(self, tool: str) -> dict:
+        rec = {"tool": tool, "start": time.time(), "end": 0.0}
+        self.calls.append(rec)
+        return rec
+
+    def breakdown(self, room_name: str) -> tuple[str, str] | None:
+        if not self.user_done_at or not self.agent_start_at:
+            return None
+        first = self.calls[0] if self.calls else None
+        tool_start = first["start"] if first else 0.0
+        tool_end = max((c["end"] for c in self.calls if c["end"]), default=0.0)
+        reasoning = (tool_start - self.user_done_at) if tool_start else 0.0
+        execution = (tool_end - tool_start) if tool_start and tool_end else 0.0
+        synthesis = self.agent_start_at - (tool_end or self.user_done_at)
+        total = self.agent_start_at - self.user_done_at
+        tool_name = ",".join(c["tool"] for c in self.calls) or "none"
+        report = (f"\nLATENCY BREAKDOWN ({tool_name}) for room {room_name}:\n"
+                  f"  - Reasoning (ASR -> tool decision): {reasoning:.2f}s\n"
+                  + (f"  - Tool Execution (API):    {execution:.2f}s\n" if execution else "")
+                  + f"  - Synthesis (Tool -> Spoken): {synthesis:.2f}s\n"
+                  f"  - TOTAL SEARCH LATENCY:      {total:.2f}s\n")
+        metrics = {"room": room_name, "tool": tool_name, "reasoning": round(reasoning, 3),
+                   "execution": round(execution, 3), "synthesis": round(synthesis, 3),
+                   "total": round(total, 3), "agent_start_at": self.agent_start_at,
+                   "tool_calls": [{"tool": c["tool"], "start": c["start"], "end": c["end"]} for c in self.calls]}
+        return report, f"LATENCY_TRACK_JSON: {json.dumps(metrics)}"
+
+
 class CascadedVoiceAgent(Agent):
     def __init__(self) -> None:
         super().__init__(instructions="")
 
 
-def build_cascaded_pipeline():
-    """VAD + STT + TTS only. No LLM here on purpose -- see module docstring
-    ("Fix note") for why the previous gpt-4o tool-calling step was removed."""
-    from livekit.plugins import openai
-    from livekit.plugins import silero
+def build_cascaded_pipeline(vad=None):
+    """VAD + STT + TTS. Language understanding is ParticipantAgent (no LLM here)."""
+    from livekit.plugins import openai, silero
 
-    vad = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
-    stt = openai.STT(model="whisper-1", language="en")
-    tts = openai.TTS(model="tts-1", voice="nova")
+    vad = vad or silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
+    stt = openai.STT(model=os.environ.get("TRIAGELINE_STT_MODEL", "whisper-1"), language="en")
+    tts = openai.TTS(model=os.environ.get("TRIAGELINE_TTS_MODEL", "tts-1"), voice="nova")
     return vad, stt, tts
 
 
-# ---------------------------------------------------------------------------
-# Agent server & session
-# ---------------------------------------------------------------------------
-server = AgentServer()
+def prewarm(proc: JobProcess):
+    """Load Silero once per worker process, not once per room (audit B-11)."""
+    from livekit.plugins import silero
+    proc.userdata["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
+
+
+server = AgentServer(setup_fnc=prewarm)
 
 
 @server.rtc_session()
 async def entrypoint(ctx: agents.JobContext):
     room_name = ctx.room.name
+    await append_async(HEARTBEAT, f"!!! CASCADED AGENT JOINING ROOM: {room_name} at {time.ctime()} !!!")
     print(f"!!! CASCADED AGENT JOINING ROOM: {room_name} !!!")
 
-    vad, stt, tts = build_cascaded_pipeline()
+    vad, stt, tts = build_cascaded_pipeline(getattr(ctx.proc, "userdata", {}).get("vad"))
     tracker = LatencyTracker()
+    session = AgentSession(vad=vad, stt=stt, tts=tts,
+                           min_endpointing_delay=0.5, max_endpointing_delay=5.0)
 
-    session = AgentSession(
-        vad=vad,
-        stt=stt,
-        tts=tts,
-        min_endpointing_delay=0.5,
-        max_endpointing_delay=5.0,
-    )
-
-    # call_id -> cancelled. Best-effort: mock_apis.py's calls are short/sync
-    # (run via asyncio.to_thread below), so we can't preempt one mid-flight;
-    # this set prevents a *result* that arrives after cancellation from ever
-    # reaching ParticipantAgent, which is the actual stale-result-emission
-    # risk. (ParticipantAgent/adapter also drop stale call_ids independently
-    # -- this is belt-and-suspenders at the execution boundary, not a
-    # reimplementation of that logic.)
-    _cancelled_calls: set[str] = set()
+    cancelled: set[str] = set()
 
     async def tool_executor(call_id: str, api_name: str, args: dict) -> None:
-        """The ONLY place FDB tools are invoked. Reachable exclusively through
-        TriageAdapter's out_q -> ParticipantAgent decided to call `api_name`.
-        cascaded_agent.py never calls registry.call() on its own."""
-        tracker.tool_start_at = time.time()
+        """The ONLY place FDB tools are invoked; runs as its own task (adapter B-05)."""
+        rec = tracker.tool_started(api_name)
         if registry is None:
-            result = {"status": "error", "message": "mock_apis registry unavailable"}
+            result = {"status": "error", "error": "unavailable", "message": "mock_apis registry unavailable"}
         else:
             try:
                 result = await asyncio.to_thread(registry.call, api_name, **args)
-            except Exception as e:  # never let one bad tool call kill the session
-                result = {"status": "error", "message": str(e)}
-        tracker.tool_end_at = time.time()
-        _log_tool_call(room_name, api_name, args, tracker.tool_start_at, tracker.tool_end_at)
-
-        if call_id in _cancelled_calls:
-            _cancelled_calls.discard(call_id)
-            # The thread-bound registry call could not be preempted, so its side effect (if any) is
-            # REAL. We still forward the late result: ParticipantAgent ignores late read-only results
-            # (no grounding on stale work) but reconciles and discloses a late state-modifying commit
-            # through its operation ledger (audit R03) instead of silently losing it.
+            except TypeError as e:          # official mocks raise on missing/extra kwargs
+                result = {"status": "error", "error": "invalid_args", "message": str(e)}
+            except Exception as e:  # noqa: BLE001 - never let one bad tool call kill the session
+                result = {"status": "error", "error": "error", "message": str(e)}
+        rec["end"] = time.time()
+        await append_async(TOOL_LOG, json.dumps({"room": room_name, "call": {
+            "function": api_name, "args": args, "timestamp_start": rec["start"], "timestamp_end": rec["end"]}}))
+        if call_id in cancelled:
+            cancelled.discard(call_id)
             log.info("late result for cancelled call_id=%s (%s) -> ledger reconciliation", call_id, api_name)
-        await adapter.on_tool_completed(call_id, result, status=result.get("status", "ok"))
+        status = "error" if isinstance(result, dict) and result.get("status") == "error" else "ok"
+        await adapter.on_tool_completed(call_id, result, status=status)
 
     async def tool_canceller(call_id: str) -> None:
-        _cancelled_calls.add(call_id)
+        cancelled.add(call_id)
 
     async def speak(kind: str, text: str) -> None:
-        if not text:
-            return
-        if kind == "final_response" and tracker.query_received and not tracker.agent_start_at:
-            tracker.agent_start_at = time.time()
-            tracker.log_breakdown(tool_name="fdb_tool", room_name=room_name)
-            tracker.reset()
-        session.say(text)
+        if text:
+            session.say(text, allow_interruptions=True)
 
-    adapter = TriageAdapter(tool_executor=tool_executor, tool_canceller=tool_canceller, speak=speak)
+    async def interrupt_speech() -> None:
+        try:
+            session.interrupt()
+        except RuntimeError:  # nothing playing / session not running yet
+            pass
+
+    adapter = TriageAdapter(tool_executor=tool_executor, tool_canceller=tool_canceller, speak=speak,
+                            settle_s=SETTLE_S, interrupt_speech=interrupt_speech)
     await adapter.start(FDB_TOOLS)
-
-    # This is the actual P0 fix: attach_livekit_session() was previously
-    # defined in adapter.py but never called anywhere in the repo. Calling it
-    # here routes real LiveKit STT transcript/barge-in events into
-    # TriageAdapter -> ParticipantAgent instead of a hand-rolled/LLM path.
     attach_livekit_session(session, adapter, room_name=room_name)
 
     @session.on("user_input_transcribed")
     def on_user_input(msg: agents.voice.UserInputTranscribedEvent):
-        logging.info(f"STT TRANSCRIPT: '{msg.transcript}' (is_final={msg.is_final})")
-        print(f"  STT: '{msg.transcript}' (final={msg.is_final})")
+        logging.info("STT TRANSCRIPT: '%s' (is_final=%s)", msg.transcript, msg.is_final)
         if msg.is_final and not tracker.query_received:
-            tracker.user_done_at = time.time()
+            tracker.user_done_at = time.time()    # same anchor as the upstream template
             tracker.query_received = True
+            if BACKCHANNEL and not adapter.busy():
+                # immediate acknowledgement while the utterance settles (fast path)
+                session.say("Mm-hm.", allow_interruptions=True, add_to_chat_ctx=False)
+
+    @session.on("agent_state_changed")
+    def on_agent_state(ev: agents.voice.AgentStateChangedEvent):
+        # stamp the moment audio actually starts, not when speech was queued (audit B-07)
+        if ev.new_state == "speaking" and tracker.query_received and not tracker.agent_start_at:
+            tracker.agent_start_at = time.time()
+
+    async def _flush_latency():
+        out = tracker.breakdown(room_name)
+        if out and not tracker.logged:
+            tracker.logged = True
+            print(out[0])
+            await append_async(HEARTBEAT, out[0], out[1])
+
+    async def _latency_watch():
+        # write the record once the first tool chain has settled (or on teardown)
+        while True:
+            await asyncio.sleep(1.0)
+            if tracker.agent_start_at and not adapter.busy() and not tracker.logged:
+                await _flush_latency()
+
+    watch = asyncio.create_task(_latency_watch())
 
     async def _teardown(*_args, **_kwargs) -> None:
+        watch.cancel()
+        await adapter.flush()
+        await _flush_latency()
         await adapter.stop()
 
     ctx.room.on("disconnected", lambda *a, **k: asyncio.create_task(_teardown()))
     ctx.add_shutdown_callback(_teardown)
 
     await session.start(room=ctx.room, agent=CascadedVoiceAgent())
-    print("!!! CASCADED AGENT STARTED (Silero VAD + OpenAI Whisper STT + TriageAdapter/ParticipantAgent + OpenAI TTS) !!!")
+    print("!!! TRIAGELINE CASCADED AGENT STARTED (Silero VAD + Whisper STT + ParticipantAgent + OpenAI TTS) !!!")
 
 
 if __name__ == "__main__":
