@@ -197,19 +197,22 @@ class ParticipantAgent:
             await self.on_audio_result(p["results"])
         elif kind == "vision_done":
             if p["frame_seq"] == self.frame_seq:
-                self.vision = p["vis"]
+                self.vision = {**(p["vis"] or {}), "frame_seq": p["frame_seq"]}
             w = self.waiting_vision
             if w and (p["frame_seq"] >= w["frame_seq"]):
+                # the question targets the frame visible when it was asked (or newer): hand THAT result
+                # to the lookup directly, never an unrelated cached analysis (R17)
                 self.waiting_vision = None
                 if w["version"] == self.version:
-                    await self._issue_manual(w["turn"], w["visual"])
+                    await self._issue_manual(w["turn"], w["visual"], vis=p["vis"])
         elif kind == "vision_timeout":
             w = self.waiting_vision
             if w and w["token"] == p["token"]:
                 self.waiting_vision = None
                 if w["version"] == self.version:
                     self.note("vision_timeout")
-                    await self._issue_manual(w["turn"], w["visual"])
+                    fresh = self.vision if (self.vision or {}).get("frame_seq", -1) >= w["frame_seq"] else {}
+                    await self._issue_manual(w["turn"], w["visual"], vis=fresh)
 
     # ------------------------------------------------------------------ output
     def snapshot(self) -> Dict[str, Any]:
@@ -806,8 +809,8 @@ class ParticipantAgent:
         await asyncio.sleep(secs)
         await self.post("vision_timeout", token=token)
 
-    async def _issue_manual(self, turn: str, visual: bool):
-        vis = (self.vision or {}) if visual else {}
+    async def _issue_manual(self, turn: str, visual: bool, vis: Optional[Dict[str, Any]] = None):
+        vis = ((self.vision or {}) if vis is None else (vis or {})) if visual else {}
         label, conf = vis.get("label"), float(vis.get("confidence") or 0.0)
         if label and conf < VISION_MIN_CONF:
             self.note("vision_low_confidence", f"{label}:{conf:.2f}")
@@ -844,6 +847,10 @@ class ParticipantAgent:
 
     async def on_interruption(self, text: str):
         low = text.lower()
+        # a barge-in may still be the answer to our clarification question (R19)
+        if self.pending_clarify and not (nlu.RETRACTION.search(low) and not self._has_new_values(text)):
+            if await self.resume_clarification(text):
+                return
         if await self.revoke_booking(text):
             if self._has_new_values(text):
                 await self.revise(text)

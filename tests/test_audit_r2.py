@@ -141,3 +141,71 @@ def test_r21_live_repeat_request_gets_ack():
             assert len(r.calls("flight_search")) == 2
             assert len(r.spoken("filler_speech")) == n + 1
     run(go())
+
+
+# ====================================================================== Phase 3: live / perception
+def test_r17_lookup_uses_frame_at_question_time():
+    async def go():
+        async with Rig() as r:
+            r.agent.frame = {"image_ref": "x"}
+            r.agent.frame_seq = 3
+            r.agent.vision = {"label": "HDMI port", "confidence": 0.9, "frame_seq": 1}   # stale cached result
+            r.agent.waiting_vision = {"turn": "what is this port", "visual": True, "version": r.agent.version,
+                                      "frame_seq": 3, "token": 99}
+            await r.send("_internal", kind="vision_done", frame_seq=3,
+                         vis={"label": "Ethernet port", "confidence": 0.9, "embedding": None, "source": "ocr"})
+            q = r.calls("lookup_manual")[-1]["args"]["query"]
+            assert "Ethernet" in q and "HDMI" not in q
+    run(go())
+
+
+def test_r19_clarification_answer_during_speech():
+    async def go():
+        async with Rig() as r:
+            await r.say("Find a flight to Boston and book it.")
+            await r.result(r.calls("flight_search")[0], **flights("BOS"))
+            await r.send("interruption", text="priya sharma")      # barge-in while the question plays
+            b = r.calls("book_flight")
+            assert b and b[-1]["args"]["passenger_name"] == "Priya Sharma"
+    run(go())
+
+
+def test_r20_provider_exception_reaches_terminal_state():
+    import asyncio
+    from ui import live as L
+
+    async def go():
+        sess = L.LiveSession.__new__(L.LiveSession)
+        sess.pending, sess.events = {"c1": None}, []
+        sess.in_q = asyncio.Queue()
+        sess.emit = lambda kind, **kw: sess.events.append((kind, kw))
+
+        class Boom:
+            mode = "mock"
+
+            async def execute(self, api, args):
+                raise RuntimeError("secret-token-xyz")
+        sess.tools = Boom()
+        await sess._exec("c1", "book_flight", {"flight_id": "FL-1", "passenger_name": "A"})
+        assert "c1" not in sess.pending
+        ev = sess.in_q.get_nowait()
+        assert ev["payload"]["status"] == "error" and ev["payload"]["result"]["error"] == "provider_exception"
+        assert "secret" not in str(sess.events)
+    asyncio.run(go())
+
+
+def test_r20_provider_exception_on_booking_is_unknown():
+    async def go():
+        async with Rig() as r:
+            await r.say("Find a flight to Boston and book it for Alice.")
+            await r.result(r.calls("flight_search")[0], **flights("BOS"))
+            b = r.calls("book_flight")[0]
+            await r.result(b, status="error", error="provider_exception")
+            assert r.agent.ledger.for_call(b["call_id"])["status"] == "unknown"
+    run(go())
+
+
+def test_r18_live_audio_goes_through_uncertainty_gate():
+    from ui import live as L
+    src = open(L.__file__).read()
+    assert '"user_audio_chunk"' in src and "sess.user_text(r[\"text\"]" not in src
