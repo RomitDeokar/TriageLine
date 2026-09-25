@@ -52,7 +52,8 @@ ARGS = [
      {"doc_type": "passport", "doc_number": "X1234567"}),
     ("Set up autopay for my credit card from checking", "modify_autopay",
      {"bill_type": "credit_card", "source_account": "checking"}),
-    ("Change the bedrooms filter to 2", "update_search_filter", {"filter_name": "bedrooms", "value": "2"}),
+    # official mock: update_search_filter(filter_name, value: Any) -- numeric filters are sent as numbers
+    ("Change the bedrooms filter to 2", "update_search_filter", {"filter_name": "bedrooms", "value": 2}),
     ("I need a two bedroom place in Seattle for under 2500 a month", "search_apartments",
      {"city": "Seattle", "bedrooms": 2, "max_price": 2500}),
 ]

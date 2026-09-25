@@ -570,7 +570,9 @@ class ParticipantAgent:
                 if tool == ptool and not correction:
                     a1, m1 = nlu.build_args(self.tools.get(tool, {}), ptext, {})
                     a2, m2 = nlu.build_args(self.tools.get(tool, {}), text, {})
-                    independent = not m2 and a1 != a2
+                    # two requests are independent only if EACH is complete on its own and they differ;
+                    # "track it for me. The order ID is X" is one request whose slot arrives later
+                    independent = not m1 and not m2 and a1 != a2
                 if same_family and not independent:
                     merged[-1][0] = ptext + " " + text
                     continue

@@ -96,7 +96,9 @@ FDB_TOOLS = {
         "args": {
             "origin_address": {"type": "string", "required": True, "description": "Starting location"},
             "destination_address": {"type": "string", "required": True, "description": "Destination location"},
-            "mode": {"type": "string", "required": False, "default": "driving", "enum": ["driving", "transit", "walking", "cycling"], "description": "Transport mode, defaults to 'driving'"},
+            # upstream wrapper signature is mode: str = "driving" and it ALWAYS forwards mode to the mock,
+            # so the schema default is applied when the caller doesn't name a mode (no enum upstream)
+            "mode": {"type": "string", "required": True, "default": "driving", "description": "Transport mode, defaults to 'driving'"},
         },
     },
     "update_search_filter": {
@@ -104,7 +106,8 @@ FDB_TOOLS = {
         "description": "Instantly update the user's search filter in the backend system.",
         "args": {
             "filter_name": {"type": "string", "required": True, "description": "Filter key to modify"},
-            "value": {"type": "string", "required": True, "description": "Filter value to apply"},
+            # upstream mock: value: Any (the wrapper annotates str, but numbers/booleans are the natural values)
+            "value": {"type": "any", "required": True, "description": "Filter value to apply"},
         },
     },
     # ── E-Commerce Support ───────────────────────────────────────────

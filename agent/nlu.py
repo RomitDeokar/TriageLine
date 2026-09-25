@@ -24,7 +24,20 @@ CITIES = {
     "seoul": "Seoul", "berlin": "Berlin", "toronto": "Toronto", "vancouver": "Vancouver",
     "bangalore": "Bangalore", "bengaluru": "Bangalore", "delhi": "Delhi",
     "mumbai": "Mumbai", "singapore": "Singapore", "sydney": "Sydney", "dubai": "Dubai",
+    "vegas": "Las Vegas",
 }
+# Generic gazetteer extension (audit §4 ethics): widely-used major world / North-American cities
+# (capitals + the largest metro areas by population/air traffic), not values taken from any test set.
+for _c in ("Amsterdam Athens Auckland Baltimore Bangkok Barcelona Beijing Beirut Bogota Brisbane Brussels "
+           "Budapest Cairo Calgary Cancun Cape_Town Chennai Cleveland Copenhagen Dublin Edinburgh "
+           "Florence Frankfurt Geneva Glasgow Hamburg Hanoi Havana Helsinki Hong_Kong Honolulu Hyderabad "
+           "Indianapolis Istanbul Jakarta Jerusalem Johannesburg Kansas_City Karachi Kolkata Kuala_Lumpur "
+           "Lagos Lima Lisbon Madrid Manila Melbourne Mexico_City Milan Montreal Moscow Munich Nairobi Naples "
+           "New_Orleans Osaka Oslo Ottawa Perth Pittsburgh Prague Quebec Raleigh Reykjavik Rio_de_Janeiro Riyadh "
+           "Rome Sacramento Salt_Lake_City San_Antonio San_Jose Santiago Sao_Paulo Shanghai St_Louis Stockholm "
+           "Taipei Tampa Tel_Aviv Tucson Venice Vienna Warsaw Zurich Columbus Cincinnati Milwaukee Buffalo "
+           "Anchorage Albuquerque Memphis Louisville Richmond Hanover Lyon Marseille Seville Porto Krakow").split():
+    CITIES.setdefault(_c.replace("_", " ").lower(), _c.replace("_", " "))
 _CITY_RE = re.compile(r"\b(" + "|".join(sorted(map(re.escape, CITIES), key=len, reverse=True)) + r")\b", re.I)
 _CAP_AFTER_PREP = re.compile(r"\b(?:to|in|at|from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
 # lowercase unknown place after a travel cue ("flights to kochi", "weather in pune")
@@ -53,7 +66,9 @@ DATE_RE = re.compile(
     r"|\d{4}-\d{2}-\d{2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2}(?:st|nd|rd|th)?)\b", re.I)
 TIME_RE = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)", re.I)
 TIME24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
-NAME_RE = re.compile(r"\b(?:for|passenger|name is|named|i am|i'm|under)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
+NAME_RE = re.compile(r"\b(?:for|passenger|name is|named|i am|i'm|under(?: the name)?|"
+                     r"the name(?: on the (?:ticket|booking|reservation))?(?: should be| is| will be)?|"
+                     r"name should be)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
 ID_RE = re.compile(r"\b([A-Za-z]{2,4}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\b")
 ID_PREFIX = {"booking_id": "BK", "flight_id": "FL", "ticket_id": "TK"}
 NEG_BOOK = re.compile(r"\b(?:do not|don'?t|dont|never|no need to|without|not)\s+(?:\w+\s+){0,2}?(?:book|booking|reserve)\b|"
@@ -131,6 +146,69 @@ DEVICE_ALIASES = {"QN90": ["qn90", "tv", "television", "neo qled"],
 
 def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
+
+
+_FILLERS = re.compile(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|ah|like|you know|well|so|okay|ok|alright|"
+                      r"let me (?:think|see)(?: about (?:it|what it'?s called))?|kind of|sort of|basically)\b[,.]*")
+
+
+def strip_fillers(s: str) -> str:
+    """Remove spoken disfluencies (fillers, hesitation ellipses) but keep the content words."""
+    s = re.sub(r"\.{2,}|\u2026", " ", s or "")
+    s = _FILLERS.sub(" ", s)
+    return norm(re.sub(r"\s+([,.?!])", r"\1", s)).strip(" ,")
+
+
+def settled_mention(text: str, options: List[str]) -> Optional[str]:
+    """The option the user settled on: last mention after the last self-repair marker; directly
+    negated mentions ("not yen", "not a laptop") never win (A-03 generic self-repair)."""
+    low = (text or "").lower()
+    hits = []
+    for o in options:
+        for m in re.finditer(r"\b" + re.escape(o.lower()) + r"\b", low):
+            if re.search(r"\b(?:not|no|never|instead of|rather than)\s+(?:a\s+|an\s+|the\s+|my\s+|from\s+)?$",
+                         low[max(0, m.start() - 16):m.start()]):
+                continue
+            hits.append((m.start(), o))
+    if not hits:
+        return None
+    hits.sort()
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(low)), default=-1)
+    after = [o for p, o in hits if p >= last_marker]
+    return after[-1] if after else hits[-1][1]
+
+
+_QUERY_CUE = re.compile(
+    r"(?i)\b(?:search(?:ing)? (?:for|the catalog for)|look(?:ing)? for|find(?: me)?|shop(?:ping)? for|need(?: a| an| some)?|"
+    r"want(?: a| an| some| to buy)?|buy(?: a| an| some)?|get(?: me)?(?: a| an| some)?|called|a new|an new|recommend(?: a| an)?|"
+    r"interested in|show me|browse)\s+")
+_QUERY_END = re.compile(r"(?i)\s*(?:\b(?:under|below|less than|for (?:less|under)|within|around|that|which|with a budget|"
+                        r"because|so that|so|if|since|to my|and then|then|and also|and|but|or|first|instead|"
+                        r"please|for me|for my|from|in the|on the)\b|[?.!,;:\u2014]).*$")
+_QUERY_BAD = set("""something anything one thing things it that this them what stuff product products item items
+new good nice few some any options option place places gift""".split())
+
+
+def extract_query(text: str) -> Optional[str]:
+    """Free-text search term = the noun phrase after the search verb, from the clause the user settled
+    on (after the last correction), with disfluencies removed (A-02). Falls back to None so a search
+    is never issued with the whole rambling utterance as its query."""
+    for seg in (_repaired_tail(text), text):
+        clean = strip_fillers(seg)
+        cands = []
+        for m in _QUERY_CUE.finditer(clean):
+            phrase = _QUERY_END.sub("", clean[m.end():])
+            phrase = re.sub(r"(?i)^(?:a|an|the|some|any|new|a new|pair of|a pair of|nice|good|cheap)\s+", "", phrase)
+            phrase = re.sub(r"(?i)^(?:a|an|the|pair of|new|nice)\s+", "", phrase).strip(" ,.")
+            words = phrase.split()
+            if not words or len(words) > 4 or all(w.lower() in _QUERY_BAD | STOP for w in words):
+                continue
+            if words[0].lower() in ("to", "what", "you", "me", "my", "if", "it", "i", "flights", "flight"):
+                continue
+            cands.append(phrase)
+        if cands:
+            return cands[-1]
+    return None
 
 
 def tokens(s: str) -> List[str]:
@@ -217,9 +295,16 @@ def extract_origin(text: str) -> Optional[str]:
     return _pick_after_repair(text, [(p, c) for p, c in cities_in(text) if _is_origin(text, p)])
 
 
+_ORDINAL_SUFFIX = re.compile(r"(\d)(?:st|nd|rd|th)\b", re.I)
+
+
 def extract_date(text: str) -> Optional[str]:
+    """Last date mention (repair-aware by position); calendar dates are returned without the spoken
+    ordinal suffix ("August 20th" -> "August 20"), the canonical form tool schemas expect (A-11)."""
     m = list(DATE_RE.finditer(text or ""))
-    return m[-1].group(1) if m else None
+    if not m:
+        return None
+    return _ORDINAL_SUFFIX.sub(r"\1", m[-1].group(1))
 
 
 def extract_time(text: str) -> Optional[str]:
@@ -464,9 +549,11 @@ CURRENCY_WORDS = {"dollar": "USD", "dollars": "USD", "usd": "USD", "buck": "USD"
                   "sterling": "GBP", "yen": "JPY", "jpy": "JPY", "rupee": "INR", "rupees": "INR", "inr": "INR",
                   "yuan": "CNY", "cny": "CNY", "franc": "CHF", "francs": "CHF", "chf": "CHF",
                   "cad": "CAD", "aud": "AUD", "mxn": "MXN", "peso": "MXN", "pesos": "MXN"}
-DOC_TYPES = {"passport": "passport", "driver's license": "drivers_license", "drivers license": "drivers_license",
-             "driver license": "drivers_license", "driving licence": "drivers_license", "license": "drivers_license",
-             "licence": "drivers_license", "id card": "id_card", "national id": "id_card", "identity card": "id_card"}
+# canonical forms follow the tool docstring convention ('passport', 'id_card' -> snake_case singular nouns)
+DOC_TYPES = {"passport": "passport", "driver's license": "driver_license", "drivers license": "driver_license",
+             "driver license": "driver_license", "driving licence": "driver_license", "license": "driver_license",
+             "licence": "driver_license", "id card": "id_card", "national id": "id_card", "identity card": "id_card",
+             "visa": "visa", "residence permit": "residence_permit"}
 BILL_TYPES = ["credit_card", "credit card", "utilities", "utility", "electricity", "electric", "water", "gas",
               "internet", "phone", "rent", "mortgage", "insurance", "cable"]
 ACCOUNTS = ["checking", "savings", "credit", "brokerage"]
@@ -484,21 +571,75 @@ def _currencies(text: str) -> List[str]:
     return out
 
 
+# national adjectives that qualify an ambiguous currency word ("Canadian dollars", "British pounds")
+CURRENCY_QUALIFIERS = {
+    ("canadian", "dollar"): "CAD", ("australian", "dollar"): "AUD", ("singapore", "dollar"): "SGD",
+    ("hong kong", "dollar"): "HKD", ("new zealand", "dollar"): "NZD", ("us", "dollar"): "USD",
+    ("u.s.", "dollar"): "USD", ("american", "dollar"): "USD", ("mexican", "peso"): "MXN",
+    ("british", "pound"): "GBP", ("swiss", "franc"): "CHF", ("japanese", "yen"): "JPY",
+    ("indian", "rupee"): "INR", ("chinese", "yuan"): "CNY",
+}
+_CUR_TOKEN = re.compile(r"\b(?:(canadian|australian|singapore|hong kong|new zealand|us|u\.s\.|american|mexican|british|"
+                        r"swiss|japanese|indian|chinese)\s+)?([A-Za-z]+)\b", re.I)
+
+
+def _currency_mentions(text: str) -> List[Tuple[int, int, str]]:
+    """(start, end, ISO code) for every currency mention, qualifier-aware ("100 Canadian dollars" -> CAD)."""
+    out = []
+    for m in _CUR_TOKEN.finditer(text or ""):
+        qual, word = (m.group(1) or "").lower(), m.group(2)
+        code = CURRENCY_WORDS.get(word.lower())
+        if code is None and len(word) == 3 and word.isupper() and word not in ("THE", "AND", "FOR", "ATM"):
+            code = word
+        if code is None:
+            continue
+        if qual:
+            code = CURRENCY_QUALIFIERS.get((qual, word.lower().rstrip("s")), code)
+        out.append((m.start(), m.end(), code))
+    return out
+
+
+def _repaired_tail(text: str) -> str:
+    """The part of the utterance after the last self-repair marker (the version the user settled on)."""
+    last = max((m.end() for m in REPAIR_MARKERS.finditer(text or "")), default=-1)
+    return text[last:] if last >= 0 else text
+
+
 def _currency_pair(text: str) -> Tuple[Optional[str], Optional[str]]:
-    low = text.lower()
-    codes = _currencies(text)
-    if not codes:
+    """(source, target). Direction comes from the sentence structure, not mention order:
+    "<amount> X (would be|in|into|to) Y" -> X->Y; "how many Y is <amount> X" -> X->Y.
+    Self-repair aware: a corrected source/target ("...to yen -- no wait, British pounds") wins,
+    and a directly negated currency ("not yen") is never used."""
+    ments = _currency_mentions(text)
+    if not ments:
         return None, None
-    # "how many euros is 250 dollars" -> target stated first, source after the amount
-    if re.search(r"\bhow (?:many|much)\b", low) and len(codes) > 1:
-        return codes[1], codes[0]
-    m = re.search(r"\b(?:to|into|in)\s+([A-Za-z]{3,8})\b", text)
-    if m:
-        tgt = CURRENCY_WORDS.get(m.group(1).lower()) or (m.group(1) if m.group(1).isupper() else None)
-        if tgt:
-            src = next((c for c in codes if c != tgt), None)
-            return src, tgt
-    return codes[0], (codes[1] if len(codes) > 1 else None)
+    low = text.lower()
+    negated = {c for s, e, c in ments if re.search(r"\bnot\s+(?:in\s+)?$", low[max(0, s - 8):s])}
+    ments = [m for m in ments if m[2] not in negated] or ments
+    # source = currency attached to an amount ("200 euros", "$50", "USD 100")
+    src_hits = [(s, c) for s, e, c in ments
+                if re.search(r"\d[\d,.]*\s*(?:k\s*)?(?:(?:us|u\.s\.|canadian|australian|british|swiss|japanese|"
+                             r"indian|chinese|mexican|american|new zealand|hong kong|singapore)\s+)?$",
+                             low[max(0, s - 24):s])]
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(text)), default=-1)
+
+    def settle(hits):
+        after = [c for p, c in hits if p >= last_marker]
+        return after[-1] if after else (hits[-1][1] if hits else None)
+
+    src = settle(src_hits)
+    # target = currency introduced by a direction cue, or the one that is not the source
+    tgt_hits = [(s, c) for s, e, c in ments if c != src and re.search(
+        r"\b(?:to|into|in|be in|would be|as|for|get|many|much)\s+(?:(?:the|some|us|u\.s\.|canadian|australian|"
+        r"british|swiss|japanese|indian|chinese|mexican|american)\s+)?$", low[max(0, s - 20):s])]
+    tgt = settle(tgt_hits) or settle([(s, c) for s, e, c in ments if c != src])
+    if src is None:
+        # no amount-attached currency: "how many euros is it in dollars" / "rate from X to Y"
+        rest = [c for s, e, c in ments if c != tgt]
+        src = rest[0] if rest else None
+        if re.search(r"\bhow (?:many|much)\b", low) and len(ments) > 1 and tgt is None:
+            src, tgt = ments[1][2], ments[0][2]
+    return src, tgt
 
 
 def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
@@ -507,11 +648,7 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
         src, tgt = _currency_pair(text)
         return tgt if lname.startswith("to") or "target" in lname else src
     if lname.endswith("address"):
-        m = _ADDR_RE.search(text)
-        if m:
-            return norm(m.group(1) if ("origin" in lname or "from" in lname or "start" in lname)
-                        else m.group(2)).strip(" .,")
-        return None
+        return extract_address(text, origin=("origin" in lname or "from" in lname or "start" in lname))
     if lname in ("doc_type", "document_type"):
         for k in sorted(DOC_TYPES, key=len, reverse=True):
             if k in low:
@@ -536,27 +673,119 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
             return m.group(1)
         return None
     if lname == "bill_type":
-        for b in BILL_TYPES:
-            if re.search(r"\b" + re.escape(b) + r"\b", low):
-                b = {"credit card": "credit_card", "utility": "utilities", "electric": "electricity"}.get(b, b)
-                return b
-        return None
+        b = settled_mention(text, BILL_TYPES)
+        return {"credit card": "credit_card", "utility": "utilities", "electric": "electricity"}.get(b, b) if b else None
     if lname in ("source_account", "account", "from_account"):
-        for a in ACCOUNTS:
-            if re.search(r"\b" + a + r"\b", low) and not (a == "credit" and "credit card" in low):
-                return a
-        return None
+        cands = [a for a in ACCOUNTS if not (a == "credit" and "credit card" in low)]
+        return settled_mention(text, cands)
     if lname in ("filter_name", "filter", "filter_key"):
-        m = re.search(r"\b(?:set|change|update|make)\s+(?:my\s+|the\s+)?([a-z_]+(?:\s[a-z_]+)?)\s+filter\b", low) or \
-            re.search(r"\bfilter\s+(?:for\s+|on\s+)?([a-z_]+)\b", low)
-        if m:
-            name = m.group(1).strip().replace(" ", "_")
-            return {"bedroom": "bedrooms", "price": "price_range" if "price_range" in low else "max_price"}.get(name, name)
+        got = extract_filter(text)
+        return got[0] if got else None
+    if lname == "value":
+        got = extract_filter(text)
+        return got[1] if got else None
+    return None
+
+
+# --------------------------------------------------------------------------- search filters
+# Generic listing-filter vocabulary (rent/real-estate search UIs): phrase -> canonical filter key.
+_FILTER_KEYS = [
+    (r"\bpets?(?:[- ]friendly)?\b|\bpets? (?:are )?allowed\b|\ballow(?:s)? pets\b", "pets_allowed"),
+    (r"\b(?:min(?:imum)?|at least)\s+(?:number of\s+)?bed(?:room)?s?\b", "min_bedrooms"),
+    (r"\b(?:max(?:imum)?|top|highest)\s+(?:rent|price|budget)\b|\bprice (?:cap|limit)\b|\bbudget\b", "max_price"),
+    (r"\b(?:min(?:imum)?|lowest)\s+(?:rent|price)\b", "min_price"),
+    (r"\bbed(?:room)?s?\b", "bedrooms"),
+    (r"\bneighbou?rhoods?\b|\barea\b|\bdistrict\b", "neighborhood"),
+    (r"\bparking\b", "parking"),
+    (r"\bfurnished\b", "furnished"),
+]
+_BOOL_FILTERS = {"pets_allowed", "parking", "furnished"}
+
+
+def extract_filters(text: str) -> List[Tuple[str, Any]]:
+    """Every (filter_key, value) the user asks to set, in order, self-repair aware per key
+    ("set the max price to 3000 ... actually change the max price to 3500" -> one max_price=3500)."""
+    t = text or ""
+    low = t.lower()
+    found: Dict[str, Tuple[int, Any]] = {}
+    order: List[str] = []
+    for pat, key in _FILTER_KEYS:
+        for m in re.finditer(pat, low):
+            if key == "bedrooms" and any(k in found and abs(found[k][0] - m.start()) < 30 for k in ("min_bedrooms",)):
+                continue
+            if key == "max_price" and "min_price" in found and abs(found["min_price"][0] - m.start()) < 10:
+                continue
+            if key in _BOOL_FILTERS:
+                neg = re.search(r"\b(?:no|not|don'?t|without|disallow)\b[^.?!]{0,15}$", low[max(0, m.start() - 20):m.start()])
+                val: Any = not bool(neg)
+            else:
+                after = t[m.end():m.end() + 40]
+                if key == "neighborhood":
+                    mv = re.search(r"^\s*(?:\w+\s+){0,4}?(?:to|as|=|:)\s+(?:the\s+)?([A-Z][\w\-]*(?:\s+[A-Z][\w\-]*)?)", after)
+                    val = mv.group(1) if mv else None
+                else:
+                    mv = re.search(r"^\D{0,25}?\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k\b)?", after, re.I)
+                    if mv is None:
+                        mv2 = re.search(r"(\d[\d,]*)\s*[- ]?bed", low[max(0, m.start() - 12):m.end()])
+                        val = int(mv2.group(1).replace(",", "")) if mv2 and key in ("bedrooms", "min_bedrooms") else None
+                    else:
+                        v = float(mv.group(1).replace(",", "")) * (1000 if mv.group(2) else 1)
+                        val = int(v) if v.is_integer() else v
+            if val is None:
+                continue
+            if key not in found:
+                order.append(key)
+            found[key] = (m.start(), val)         # later mention (a correction) wins
+    return [(k, found[k][1]) for k in order]
+
+
+def extract_filter(text: str) -> Optional[Tuple[str, Any]]:
+    got = extract_filters(text)
+    return got[0] if got else None
+
+
+# --------------------------------------------------------------------------- addresses
+_ADDR_STOP = re.compile(r"\s*(?:\b(?:by|via|using|during|on a|at|in the|around|because|so|since|for|when|where|which|that|if|and|"
+                        r"then|instead|every|each|in|on foot|driving|walking|transit|cycling|biking)\b|[?.!,;\u2014]).*$",
+                        re.I)
+_PLACE_WORDS = r"(?:office|gym|work|school|university|station|airport|stadium|store|shop|mall|park|library|hospital|" \
+               r"downtown|house|home|apartment|place|clinic|campus|center|centre|beach|church|studio|cafe|restaurant)"
+
+
+def _clean_place(s: str) -> Optional[str]:
+    s = _ADDR_STOP.sub("", norm(s or "")).strip(" .,'\"")
+    s = re.sub(r"(?i)\b(?:um+|uh+|like|you know)\b", "", s)
+    s = norm(s).strip(" .,")
+    if not s or s.lower() in STOP or len(s.split()) > 7:
         return None
-    if lname == "value" and "filter" in low:
-        m = re.search(r"\bfilter\s+(?:to|at|as|=)\s*([\w\-.$]+(?:\s[\w\-.]+)?)", text, re.I) or \
-            re.search(r"\bto\s+([\w\-.$]+)\s*[.?!]?\s*$", text, re.I)
-        return norm(m.group(1)).strip(" .,") if m else None
+    # a named place is a name: "the University" -> "University"; common nouns keep it ("the gym")
+    return re.sub(r"^(?:the)\s+(?=[A-Z])", "", s)
+
+
+def extract_address(text: str, origin: bool) -> Optional[str]:
+    """Origin / destination of a commute, repair-aware (the clause after the last correction wins).
+    Handles "from A to B", "to B from A", "walk from A to B" and deictic "from there" (-> None so the
+    planner can bind it to a previous result)."""
+    tail = _repaired_tail(text)
+    for seg in (tail, text):
+        frm = list(re.finditer(r"\bfrom\s+(.+?)(?=\s+to\b|[?.!,;\u2014]|$)", seg, re.I))
+        to = list(re.finditer(r"\bto\s+(?!(?:walk|drive|bike|take|get|go|be|pull|use|make|check|keep|set|see)\b)"
+                              r"(.+?)(?=\s+from\b|[?.!,;\u2014]|$)", seg, re.I))
+        if origin and frm:
+            v = _clean_place(frm[-1].group(1))
+            if v and v.lower() in ("there", "here", "it", "that", "that place", "whatever you find"):
+                return None
+            if v:
+                return v
+        if not origin and to:
+            cands = [_clean_place(m.group(1)) for m in to]
+            cands = [c for c in cands if c and not re.fullmatch(r"(?i)(?:there|here|it|that)", c)]
+            # prefer a real place noun over e.g. "to keep it under budget"
+            placey = [c for c in cands if re.search(r"(?i)\b" + _PLACE_WORDS + r"\b", c) or re.search(r"\d|\b[A-Z]", c)]
+            if placey or cands:
+                return (placey or cands)[-1]
+        if seg is text:
+            break
     return None
 
 
@@ -573,6 +802,8 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
         return obj
     if enum:
         got = pick_enum(text, enum)
+        if got is None and lname in ("mode", "travel_mode", "transport_mode"):
+            got = extract_mode(text, enum)
         if got is not None:
             return got
         if lname == "severity":
@@ -613,7 +844,11 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
         return m.group(1) if m else None
     if lname in ("model", "device", "device_model"):
         return ctx.get("device_model")
-    if lname in ("query", "summary", "question", "text", "message", "description", "issue"):
+    if lname in ("mode", "travel_mode", "transport_mode"):
+        return extract_mode(text, DEFAULT_MODES)
+    if lname == "query":
+        return extract_query(text)
+    if lname in ("summary", "question", "text", "message", "description", "issue"):
         return norm(text)
     # generic fallback for typed string fields with no dedicated semantic role
     # above (e.g. currency codes, bare alphanumeric ids without a dash prefix,
@@ -641,6 +876,41 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     if m:
         return norm(m.group(1)).strip(" .,")
     return None
+
+
+_MODE_WORDS = {
+    "walking": r"walk(?:ing|able)?|on foot|stroll", "driving": r"driv(?:e|ing)|by car",
+    "transit": r"transit|bus|train|subway|metro|public transport(?:ation)?|tram",
+    "biking": r"bik(?:e|ing)|bicycle", "cycling": r"cycl(?:e|ing)",
+}
+DEFAULT_MODES = ["walking", "driving", "transit", "biking", "cycling"]
+
+
+def extract_mode(text: str, enum: List[Any]) -> Any:
+    """Transport mode from its everyday verbs ("walk", "I'd be driving", "bike there"), repair-aware and
+    negation-aware ("not take transit"). Only values the schema allows are returned."""
+    low = (text or "").lower()
+    hits = []
+    for e in enum:
+        pat = _MODE_WORDS.get(str(e).lower())
+        if not pat:
+            continue
+        if str(e).lower() == "cycling" and "biking" not in [str(x).lower() for x in enum]:
+            pat = pat + "|" + _MODE_WORDS["biking"]
+        if str(e).lower() == "biking" and "cycling" not in [str(x).lower() for x in enum]:
+            pat = pat + "|" + _MODE_WORDS["cycling"]
+        for m in re.finditer(r"\b(?:" + pat + r")\b", low):
+            if str(e).lower() == "transit" and m.group() == "train" and re.search(r"\bstation\b", low[m.end():m.end() + 9]):
+                continue                          # "the train station" is a place, not a mode
+            if re.search(r"\b(?:not|no|never|instead of|rather than)\s+(?:\w+\s+)?$", low[max(0, m.start() - 18):m.start()]):
+                continue
+            hits.append((m.start(), e))
+    if not hits:
+        return None
+    hits.sort(key=lambda h: h[0])
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(low)), default=-1)
+    after = [e for p, e in hits if p >= last_marker]
+    return after[-1] if after else hits[-1][1]
 
 
 def pick_enum(text: str, enum: List[Any]) -> Any:
@@ -724,6 +994,10 @@ def _fill(props: Dict[str, Any], text: str, ctx: Dict[str, Any], prefix: str,
         v = ctx.get(path) if ctx.get(path) not in _UNSET else _arg_for(name, aspec, text, ctx)
         if v not in _UNSET and not validate_value(v, aspec):
             v = None                               # invalid values never reach the tool (R15)
+        if v in _UNSET and "default" in aspec and aspec.get("required"):
+            # a required arg whose schema declares a default is filled from the schema, never
+            # guessed and never asked (A-05: add_to_cart.quantity defaults to 1 upstream)
+            v = aspec["default"]
         if v not in _UNSET:
             out[name] = v
         elif req:
@@ -780,32 +1054,83 @@ def parse_field_answer(answer: str, name: str, fspec: Dict[str, Any]) -> Any:
 
 
 BUDGET_FIELD_HINTS = ("price", "budget", "rent", "cost", "limit", "amount")
-BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|at most|max(?:imum)?(?: of)?|"
-                       r"budget(?: of| is)?|cheaper than|within)\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
+BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up,? to|at most|max(?:imum)?(?: price| rent| budget)?"
+                       r"(?: of| is| to| at)?|budget(?: of| is| to)?|cheaper than|within|raise (?:it |my budget |the budget )?to|"
+                       r"bump (?:it )?up to)\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
 
 WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
             "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
 
 
+_AMOUNT_UNIT = r"(?:(?:us|u\.s\.|canadian|australian|british|swiss|japanese|indian|chinese|mexican|american)\s+)?" \
+               r"(?:dollars?|bucks|euros?|pounds?|yen|rupees?|yuan|francs?|pesos?|usd|eur|gbp|jpy|inr|cny|chf|cad|aud|mxn)\b"
+_QTY_RE = re.compile(r"\b(?:add|put|get|order|buy|make it|just|only|quantity(?: of| to)?|want)\s+(?:like,?\s+)?(\d+)\b"
+                     r"|\b(\d+)\s+(?:of (?:them|those|these|it|item|product|whatever)|units?|pieces?|pcs|items?|copies)\b"
+                     r"|\b(\d+)\s+(?:of\s+)?(?:item|product)\b|\bjust\s+(\d+)\b", re.I)
+_BED_RE = re.compile(r"\b(\d+)\s*[- ]?(?:bed(?:room)?s?|br|bd)\b|\bbed(?:room)?s?\s+(?:to\s+)?(\d+)\b"
+                     r"|\bstudio\b", re.I)
+
+
+def _num(g: str, integer: bool):
+    v = float(g.replace(",", ""))
+    if integer and not v.is_integer():
+        return v                                    # keep the fraction so validation rejects it (R15)
+    return int(v) if integer or v.is_integer() else v
+
+
+def _settled_match(regex, text: str):
+    """Last regex match after the last self-repair marker (else the last match overall)."""
+    ms = list(regex.finditer(text))
+    if not ms:
+        return None
+    last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(text)), default=-1)
+    after = [m for m in ms if m.start() >= last_marker]
+    return (after or ms)[-1]
+
+
 def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = False) -> Optional[float]:
-    """Prefer the number next to a word from the field's name/description ("3 nights" for nights)."""
-    t = text or ""
+    """Role-anchored number extraction (A-07): a number is bound to a field only when a unit/keyword of
+    that field is next to it; the value the user settled on wins (\"3 of them -- no wait, just 1\" -> 1)."""
+    t = re.sub(r"\.{2,}|\u2026", " ", text or "")
+    t = norm(re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|like)\b[,.]*", " ", t))     # "go up... um, to 1600"
     for w, n in WORD_NUM.items():
         t = re.sub(r"\b" + w + r"\b", str(n), t, flags=re.I)
     t = TIME_RE.sub(" ", t)
     t = ID_RE.sub(" ", t)
+    t = _SPELLED_RE.sub(lambda m: " " if "-" in m.group(1) else m.group(0), t)   # spelled ids are not numbers
+    t = re.sub(r"(?i)\b(\d+)(?:st|nd|rd|th)\b", " ", t)                        # ordinals / dates
+    t = DATE_RE.sub(" ", t)
     nums = [(m.start(), m.end(), m.group()) for m in NUMBER_RE.finditer(t)]
     if not nums:
         return None
-    # upper-bound / budget fields (max_price, budget, max_rent, ...): the value is
-    # the number introduced by a ceiling phrase ("under 3000", "below $50",
-    # "up to 2k", "budget of 900"), not whichever number happens to come first.
     lname = (name or "").lower()
-    if lname and (lname.startswith("max") or any(k in lname for k in BUDGET_FIELD_HINTS)):
-        m = BUDGET_RE.search(t)
+    # money amount to convert: the number attached to a currency, repair-aware
+    if lname in ("amount", "value_amount", "sum") or lname.endswith("_amount"):
+        m = _settled_match(re.compile(r"\$\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:k\s+)?" + _AMOUNT_UNIT, re.I), t)
         if m:
-            v = float(m.group(1).replace(",", ""))
-            return int(v) if integer or v.is_integer() else v
+            return _num(m.group(1) or m.group(2), integer)
+    if lname in ("quantity", "qty", "count", "number_of_items"):
+        m = _settled_match(_QTY_RE, t)
+        if m:
+            return _num(next(g for g in m.groups() if g), integer)
+        return None                                  # never guess a quantity from an unrelated number
+    if "bedroom" in lname or lname in ("beds", "rooms"):
+        m = _settled_match(_BED_RE, t)
+        if m:
+            g = next((x for x in m.groups() if x), None)
+            return 0 if g is None else _num(g, integer)
+        return None                                  # \"1500\" is a price, not a bedroom count
+    # upper-bound / budget fields (max_price, budget, max_rent, ...): the value is
+    # the number introduced by a ceiling phrase (\"under 3000\", \"below $50\",
+    # \"up to 2k\", \"budget of 900\", \"go up to 1600\"), not whichever number comes first.
+    if lname and (lname.startswith("max") or any(k in lname for k in BUDGET_FIELD_HINTS)):
+        m = _settled_match(BUDGET_RE, t)
+        if m:
+            return _num(m.group(1), integer)
+        m = _settled_match(re.compile(r"\$\s*(\d[\d,]*)|(\d[\d,]*)\s*(?:dollars|bucks|a month|per month|/mo|/month)\b", re.I), t)
+        if m:
+            return _num(m.group(1) or m.group(2), integer)
+        return None
     cues = {_stem(w) for w in tokens(name.replace("_", " "))} or \
         {_stem(w) for w in tokens(str(spec.get("description", "")))}
     words = [(m.start(), _stem(m.group().lower())) for m in re.finditer(r"[A-Za-z]+", t)]
@@ -820,10 +1145,7 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
         if len(nums) > 1 and cues:
             return None  # several numbers and none tied to this field: ask rather than guess
         best = nums[0][2]
-    v = float(best)
-    if integer and not v.is_integer():
-        return v                                    # keep the fraction so validation rejects it (R15)
-    return int(v) if integer or v.is_integer() else v
+    return _num(best, integer)
 
 
 def extract_bool(text: str, name: str) -> Optional[bool]:
