@@ -90,7 +90,7 @@ async def replay(example_dir: Path, registry, provider: str):
         try:
             res = registry.call(api, **args)
         except Exception as e:  # official mocks raise on bad kwargs → structured error
-            res = {"status": "error", "error": "invalid_args", "message": type(e).__name__}
+            res = {"status": "error", "error": "invalid_args", "message": f"{type(e).__name__}: {e}"}
         calls.append({"function": api, "args": args, "timestamp_start": round(ts - t0, 3),
                       "timestamp_end": round(time.time() - t0, 3), "call_id": cid})
         if isinstance(res, dict) and "status" not in res:

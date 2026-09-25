@@ -77,6 +77,28 @@ def _find_key(obj: Any, keys: List[str]) -> Any:
     return None
 
 
+def _depart(f: Dict[str, Any]) -> str:
+    """Departure wording from whatever keys the backend returned (depart/time/date); '' if none (B-12)."""
+    v = f.get("depart") or f.get("departure_time") or f.get("time") or f.get("date")
+    return str(v) if v not in (None, "") else ""
+
+
+def _price(f: Dict[str, Any]) -> str:
+    v = f.get("price_usd", f.get("price"))
+    return f"${v:g}" if isinstance(v, (int, float)) else (f"${v}" if v not in (None, "") else "")
+
+
+def _flight_phrase(f: Dict[str, Any], lead: str = "departing") -> str:
+    """'FL123 departing 09:00 for $450' — only the facts the result actually contains."""
+    d, pr = _depart(f), _price(f)
+    return f"{f.get('flight_id', 'that flight')}" + (f" {lead} {d}" if d else "") + (f" for {pr}" if pr else "")
+
+
+def _booking_ref(res: Dict[str, Any]) -> Optional[str]:
+    v = res.get("booking_id") or res.get("booking_ref") or res.get("confirmation") or res.get("reference")
+    return str(v) if v not in (None, "") else None
+
+
 class ParticipantAgent:
     def __init__(self, in_queue: asyncio.Queue, out_queue: asyncio.Queue, live: bool = False):
         self.in_q, self.out_q = in_queue, out_queue
@@ -633,10 +655,10 @@ class ParticipantAgent:
         if not name:
             self.pending_clarify = {"field": "passenger_name", "api": "book_flight", "args": {},
                                     "text": turn, "version": self.version}
-            return await self.say("clarification_request", f"Sure — {pick['flight_id']} at {pick.get('depart')}. "
+            return await self.say("clarification_request", f"Sure — {_flight_phrase(pick, 'at')}. "
                                                            f"Whose name should I book it under?")
         await self.issue_booking({"flight_id": pick["flight_id"], "passenger_name": name}, {"flight_id": pick["flight_id"]},
-                                 announce=f"Booking {pick['flight_id']} at {pick.get('depart')} for {name} now.")
+                                 announce=f"Booking {_flight_phrase(pick, 'at')} for {name} now.")
 
     def _booking_pending(self) -> bool:
         pc = self.pending_clarify or {}
@@ -728,7 +750,7 @@ class ParticipantAgent:
                 if self._actionable(turn) and len(nlu.tokens(turn)) > 3:
                     return False
                 self.pending_clarify = pc
-                opts = " or ".join(f"{f['flight_id']} at {f.get('depart')}" for f in pc["options"][:3])
+                opts = " or ".join(_flight_phrase(f, "at") for f in pc["options"][:3])
                 await self.say("clarification_request", f"Sorry — which one: {opts}?")
                 return True
             self.state["slots"]["depart_time"] = str(pick.get("depart", ""))[:5]
@@ -737,8 +759,7 @@ class ParticipantAgent:
             else:
                 self.state["slots"]["flight_id"] = pick["flight_id"]
                 self.presented = list(pc["options"])
-                await self.say("final_response", f"{pick['flight_id']} departs {pick.get('depart')} for "
-                                                 f"${pick.get('price_usd')}. Want me to book it?")
+                await self.say("final_response", f"{_flight_phrase(pick, 'departs')}. Want me to book it?")
             return True
         cands = pc.get("candidates") or []
         value = None
@@ -1221,7 +1242,7 @@ class ParticipantAgent:
             where = (rec.get("ctx") or {}).get("destination") or "the earlier flight"
             await self.say("final_response",
                            f"Heads-up: the earlier {where} booking had already gone through before I could stop it — "
-                           f"booking reference {res.get('booking_id')}. I won't book a replacement until you decide "
+                           f"booking reference {_booking_ref(res) or 'pending'}. I won't book a replacement until you decide "
                            f"what to do with it.")
         else:
             await self.say("final_response",
@@ -1284,6 +1305,13 @@ class ParticipantAgent:
                 self.plan = c["plan"]
                 await self.call(api, c["args"], retries=c["retries"] + 1, deps=c["deps"])
                 return
+            need = re.findall(r"'([a-z_]+)'", str(res.get("message", ""))) if err == "invalid_args" else []
+            if need:
+                # the backend says exactly which argument it needs: ask for that instead of "rephrase"
+                what = " and ".join(n.replace("_", " ") for n in need[:2])
+                return await self.say("clarification_request",
+                                      f"I started that {self.what(api)}, but the system also needs the {what} — "
+                                      f"what should I use?")
             await self.say("final_response", {
                 "timeout": "Sorry — the service timed out and I was unable to finish that. Want me to try again?",
                 "not_found": "Sorry, I couldn't find that — can you double-check the details?",
@@ -1297,7 +1325,7 @@ class ParticipantAgent:
         if api == "lookup_manual":
             return await self.on_manual(res, c)
         if api == "book_flight":
-            self.state["slots"]["booking_id"] = res.get("booking_id")
+            self.state["slots"]["booking_id"] = _booking_ref(res)
         if api == "create_support_ticket":
             self.state["slots"]["ticket_id"] = res.get("ticket_id")
         if api == "cancel_booking":
@@ -1323,7 +1351,8 @@ class ParticipantAgent:
         s = s or {}
         if api == "book_flight":
             return (f"Done — you're booked on {res.get('flight_id', s.get('flight_id'))} to {s.get('destination', 'your destination')}"
-                    f"{' for ' + s['passenger_name'] if s.get('passenger_name') else ''}. Booking reference {res.get('booking_id')}.")
+                    f"{' for ' + s['passenger_name'] if s.get('passenger_name') else ''}."
+                    + (f" Booking reference {_booking_ref(res)}." if _booking_ref(res) else ""))
         if api == "cancel_booking":
             return f"Your booking {res.get('cancelled', '')} has been cancelled."
         if api == "create_support_ticket":
@@ -1355,7 +1384,7 @@ class ParticipantAgent:
         plan = self.plan or c.get("plan") or []
         if not matched:
             self.plan = []
-            opts = " or ".join(f"{f['flight_id']} at {f.get('depart')} (${f.get('price_usd')})" for f in flights[:3])
+            opts = " or ".join(_flight_phrase(f, "at") for f in flights[:3])
             self.pending_clarify = {"kind": "select", "field": "depart_time", "api": "flight_search", "args": {},
                                     "text": c["turn"], "options": list(flights), "plan": plan,
                                     "version": self.version}
@@ -1369,19 +1398,17 @@ class ParticipantAgent:
                 self.pending_clarify = {"field": "passenger_name", "api": "book_flight", "args": {},
                                         "text": c["turn"], "version": self.version}
                 return await self.say("final_response",
-                                      f"I found a flight to {dest}: {pick['flight_id']} departing "
-                                      f"{pick.get('depart')} for ${pick.get('price_usd')}. Whose name should I book it under?")
+                                      f"I found a flight to {dest}: {_flight_phrase(pick)}. Whose name should I book it under?")
             await self.issue_booking({"flight_id": pick["flight_id"], "passenger_name": name},
                                      {"flight_id": pick["flight_id"]},
-                                     announce=f"Found {pick['flight_id']} at {pick.get('depart')} — booking it for {name} now.")
+                                     announce=f"Found {_flight_phrase(pick, 'at')} — booking it for {name} now.")
             return
         s["flight_id"] = pick["flight_id"]
         others = [f for f in flights if f is not pick]
-        extra = (f" There's also {others[0]['flight_id']} at {others[0].get('depart')} for ${others[0].get('price_usd')}."
+        extra = (f" There's also {_flight_phrase(others[0], 'at')}."
                  if others else "")
         await self.say("final_response",
-                       f"I found a flight to {dest}: {pick['flight_id']} departing {pick.get('depart')} "
-                       f"for ${pick.get('price_usd')}.{extra}")
+                       f"I found a flight to {dest}: {_flight_phrase(pick)}.{extra}")
 
     async def on_manual(self, res: Dict[str, Any], c: Dict[str, Any]):
         pages = res.get("pages") or []
