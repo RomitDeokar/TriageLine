@@ -4,10 +4,10 @@ Language understanding is NOT here: it is the rule-based ParticipantAgent (FDB-v
 legacy triage brain (extension). No LLM is involved. Only the hosted speech endpoints are swappable,
 so the agent can run on free tiers (see docs/FREE_API_KEYS.md):
 
-    TRIAGELINE_STT_PROVIDER = auto (default) | openai | groq | deepgram
-        auto = deepgram nova-3 if DEEPGRAM_API_KEY is set, else groq whisper-large-v3-turbo if
+    TRIAGELINE_STT_PROVIDER = auto (default) | gemini | openai | groq | deepgram
+        auto = Gemini if GEMINI_API_KEY / GOOGLE_API_KEY is set, else deepgram nova-3 if DEEPGRAM_API_KEY is set, else groq whisper-large-v3-turbo if
         GROQ_API_KEY is set, else openai whisper-1. The stronger models are the documented default (C1).
-    TRIAGELINE_TTS_PROVIDER = openai (default) | deepgram
+    TRIAGELINE_TTS_PROVIDER = auto (default: Gemini > Deepgram > OpenAI) | gemini | openai | deepgram
 
     provider   STT model (override: TRIAGELINE_STT_MODEL)   TTS model/voice (TRIAGELINE_TTS_MODEL / _VOICE)
     openai     whisper-1                                     tts-1 / nova
@@ -25,8 +25,8 @@ import os
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-STT_DEFAULTS = {"openai": "whisper-1", "groq": "whisper-large-v3-turbo", "deepgram": "nova-3"}
-TTS_DEFAULTS = {"openai": ("tts-1", "nova"), "deepgram": ("aura-2-andromeda-en", None)}
+STT_DEFAULTS = {"gemini": "gemini-2.5-flash", "openai": "whisper-1", "groq": "whisper-large-v3-turbo", "deepgram": "nova-3"}
+TTS_DEFAULTS = {"gemini": ("gemini-2.5-flash-preview-tts", "Kore"), "openai": ("tts-1", "nova"), "deepgram": ("aura-2-andromeda-en", None)}
 
 
 class ProviderConfigError(RuntimeError):
@@ -35,17 +35,20 @@ class ProviderConfigError(RuntimeError):
 
 def selected() -> dict:
     """Resolve the provider/model choice from the environment (pure function: unit-testable)."""
+    from agent.llm_planner import gemini_key
     stt = os.environ.get("TRIAGELINE_STT_PROVIDER", "auto").strip().lower()
     if stt == "auto":
-        stt = "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else \
+        stt = "gemini" if gemini_key() else "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else \
             "groq" if os.environ.get("GROQ_API_KEY") else "openai"
-    tts = os.environ.get("TRIAGELINE_TTS_PROVIDER", "openai").strip().lower()
+    tts = os.environ.get("TRIAGELINE_TTS_PROVIDER", "auto").strip().lower()
+    if tts == "auto":
+        tts = "gemini" if gemini_key() else "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else "openai"
     if stt not in STT_DEFAULTS:
         raise ProviderConfigError(f"TRIAGELINE_STT_PROVIDER={stt!r}; use one of {sorted(STT_DEFAULTS)}")
     if tts not in TTS_DEFAULTS:
         raise ProviderConfigError(f"TRIAGELINE_TTS_PROVIDER={tts!r}; use one of {sorted(TTS_DEFAULTS)}")
-    need = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY", "deepgram": "DEEPGRAM_API_KEY"}
-    missing = sorted({need[p] for p in (stt, tts) if not os.environ.get(need[p])})
+    need = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY", "deepgram": "DEEPGRAM_API_KEY", "gemini": "GEMINI_API_KEY (or GOOGLE_API_KEY)"}
+    missing = sorted({need[p] for p in (stt, tts) if not (gemini_key() if p == "gemini" else os.environ.get(need[p]))})
     tts_model, tts_voice = TTS_DEFAULTS[tts]
     return {
         "stt_provider": stt,
@@ -65,7 +68,7 @@ def describe(cfg: dict | None = None) -> str:
         from agent import llm_planner
         if llm_planner.enabled():
             lc = llm_planner.config()
-            brain = f"hybrid agent (rules + {lc['provider']}:{lc['model']} planner, T=0, seed={llm_planner.SEED})"
+            brain = f"hybrid agent (rules + {lc['provider']}:{lc['model']} planner, T=0, schema validated)"
     except Exception:  # noqa: BLE001
         pass
     return (f"Silero VAD (local) -> {c['stt_provider']}:{c['stt_model']} STT -> {brain} "
@@ -98,6 +101,9 @@ def whisper_prompt(terms: list) -> str:
 def build_stt(cfg: dict, tools: dict | None = None):
     p, model = cfg["stt_provider"], cfg["stt_model"]
     terms = bias_terms(tools)
+    if p == "gemini":
+        from livekit_agent.gemini_speech import GeminiSTT
+        return GeminiSTT(model=model, prompt=whisper_prompt(terms))
     if p == "deepgram":
         from livekit.plugins import deepgram
         kw = {"keyterm": terms[:50]} if terms and model.startswith("nova-3") else {}
@@ -114,6 +120,9 @@ def build_stt(cfg: dict, tools: dict | None = None):
 
 def build_tts(cfg: dict):
     p = cfg["tts_provider"]
+    if p == "gemini":
+        from livekit_agent.gemini_speech import GeminiTTS
+        return GeminiTTS(model=cfg["tts_model"], voice=cfg["tts_voice"] or "Kore")
     if p == "deepgram":
         from livekit.plugins import deepgram
         return deepgram.TTS(model=cfg["tts_model"])

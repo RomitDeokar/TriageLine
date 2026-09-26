@@ -124,14 +124,24 @@ stage_2_configure() {
     fi
     local missing=()
     for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET; do [ -n "${!v:-}" ] || missing+=("$v"); done
-    local stt="${TRIAGELINE_STT_PROVIDER:-openai}" tts="${TRIAGELINE_TTS_PROVIDER:-openai}"
-    case "$stt" in openai|groq|deepgram) ;; *) fail "TRIAGELINE_STT_PROVIDER='$stt' (use openai|groq|deepgram)" ;; esac
-    case "$tts" in openai|deepgram) ;; *) fail "TRIAGELINE_TTS_PROVIDER='$tts' (use openai|deepgram)" ;; esac
-    local need_openai=0
-    { [ "$stt" = openai ] || [ "$tts" = openai ] || [ "$USE_LLM" = 1 ]; } && need_openai=1
-    [ "$need_openai" = 0 ] || [ -n "${OPENAI_API_KEY:-}" ] || missing+=("OPENAI_API_KEY (OpenAI STT/TTS and/or gpt-4o judge; or use groq/deepgram + --no-llm-judge)")
-    { [ "$stt" != groq ] || [ -n "${GROQ_API_KEY:-}" ]; } || missing+=("GROQ_API_KEY")
-    { [ "$stt" != deepgram ] && [ "$tts" != deepgram ] || [ -n "${DEEPGRAM_API_KEY:-}" ]; } || missing+=("DEEPGRAM_API_KEY")
+    # Use the exact same resolver as dev/console; avoid conflicting shell defaults.
+    local providers
+    providers=$(cd "$ROOT_DIR" && "$PY" - <<'PYCONFIG'
+from livekit_agent.speech_providers import selected
+c = selected()
+if c["missing_keys"]:
+    raise SystemExit("missing speech credentials: " + ", ".join(c["missing_keys"]))
+print(c["stt_provider"], c["tts_provider"])
+PYCONFIG
+    ) || fail "invalid speech provider configuration"
+    local stt tts
+    read -r stt tts <<< "$providers"
+    export TRIAGELINE_STT_PROVIDER="$stt" TRIAGELINE_TTS_PROVIDER="$tts"
+    if [ "$USE_LLM" = 1 ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+        [ "$REQUIRE_JUDGE" = 0 ] || fail "--require-judge needs OPENAI_API_KEY for the official gpt-4o judge"
+        log "no OPENAI_API_KEY: judge disabled (exact match; not the official judged score)"
+        USE_LLM=0
+    fi
     [ ${#missing[@]} -eq 0 ] || fail "missing: ${missing[*]}. Copy livekit_agent/.env.example to livekit_agent/.env.local and fill it in (see docs/FREE_API_KEYS.md)."
     log "credentials present (STT=$stt, TTS=$tts, judge=$([ "$USE_LLM" = 1 ] && echo gpt-4o || echo off))"
 }
