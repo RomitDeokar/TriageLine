@@ -181,7 +181,8 @@ def _clip_image(img):
 def _cheap_embedding(img) -> List[float]:
     """Dependency-light fallback descriptor (spatial colour/intensity grid, L2-normed)."""
     im = img.convert("L").resize((8, 8))
-    px = [p / 255.0 for p in im.getdata()]
+    data = im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata()
+    px = [p / 255.0 for p in data]
     n = math.sqrt(sum(p * p for p in px)) or 1.0
     return [round(p / n, 5) for p in px]
 

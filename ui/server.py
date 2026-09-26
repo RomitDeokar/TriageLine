@@ -71,6 +71,25 @@ class BadRequest(Exception):
     pass
 
 
+def _sse(ev) -> bytes:
+    return f"id: {ev['id']}\ndata: {json.dumps(ev)}\n\n".encode()
+
+
+def _qs(path):
+    from urllib.parse import parse_qs, urlsplit
+    return {k: v[-1] for k, v in parse_qs(urlsplit(path).query).items()}
+
+
+def _num(v, name, default):
+    try:
+        f = float(default if v is None else v)
+    except (TypeError, ValueError):
+        raise BadRequest(f"{name} must be a number")
+    if f != f or f in (float("inf"), float("-inf")):
+        raise BadRequest(f"{name} must be finite")
+    return f
+
+
 def validate_scenario(sc):
     if not isinstance(sc, dict) or not isinstance(sc.get("events"), list):
         raise BadRequest("scenario must be an object with an events list")
@@ -79,7 +98,7 @@ def validate_scenario(sc):
     for e in sc["events"]:
         if not isinstance(e, dict) or e.get("event_type") not in ("user_speech_chunk", "interruption", "user_audio_chunk", "video_frame"):
             raise BadRequest("unsupported event type")
-        if not (0 <= float(e.get("timestamp_ms", 0)) <= MAX_SCENARIO_MS):
+        if not (0 <= _num(e.get("timestamp_ms"), "timestamp_ms", 0) <= MAX_SCENARIO_MS):
             raise BadRequest("timestamp out of range")
         p = e.get("payload") or {}
         for k in ("audio_ref", "image_ref"):
@@ -122,13 +141,21 @@ class H(SimpleHTTPRequestHandler):
         self.wfile.write(b)
 
     def _body(self):
-        n = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            raise BadRequest("invalid Content-Length")
+        if n < 0:
+            raise BadRequest("invalid Content-Length")
         if n > MAX_BODY:
             raise BadRequest("request too large")
         try:
-            return json.loads(self.rfile.read(n) or b"{}")
-        except json.JSONDecodeError:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
             raise BadRequest("invalid JSON")
+        if not isinstance(body, dict):
+            raise BadRequest("JSON body must be an object")
+        return body
 
     # ------------------------------------------------------------------ GET
     def do_GET(self):
@@ -141,14 +168,19 @@ class H(SimpleHTTPRequestHandler):
         m = re.fullmatch(r"/api/live/([\w\-]+)/stream", self.path.split("?")[0])
         if m:
             return self._stream(m.group(1))
-        if self.path in ("/live", "/app"):
+        if self.path.split("?")[0] in ("/live", "/app"):
             self.path = "/live.html"
         return super().do_GET()
 
     def _stream(self, sid):
         s = live.SESSIONS.get(sid)
         if not s:
-            return self._json({"error": "no such session"}, 404)
+            return self._json({"error": "no such session", "code": "no_session"}, 404)
+        try:
+            last = int(self.headers.get("Last-Event-ID") or _qs(self.path).get("last", "0") or 0)
+        except ValueError:
+            last = 0
+        gen = s.claim_stream()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -158,17 +190,28 @@ class H(SimpleHTTPRequestHandler):
         self.close_connection = True
         try:
             self.wfile.write(b"retry: 1500\n\n")
+            sent = last
+            for ev in s.events_after(last):          # replay what a reconnecting client missed
+                self.wfile.write(_sse({**ev, "replay": True}))
+                sent = ev["id"]
             self.wfile.flush()
-            while not s.closed:
+            while s.stream_gen == gen:
                 try:
                     ev = s.out.get(timeout=15)
                 except queue.Empty:
+                    if s.closed:
+                        break
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
                     continue
-                self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                if ev["id"] <= sent:
+                    continue
+                self.wfile.write(_sse(ev))
                 self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+                sent = ev["id"]
+                if ev.get("kind") == "closed":
+                    break
+        except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
     # ------------------------------------------------------------------ POST
@@ -224,7 +267,7 @@ class H(SimpleHTTPRequestHandler):
             sc = json.load(open(path))
         agent = req.get("agent") if req.get("agent") in AGENTS else "triageline"
         factory = load_agent_factory(AGENTS[agent])
-        ts = min(max(float(req.get("time_scale", 1)), 1.0), 8.0)
+        ts = min(max(_num(req.get("time_scale"), "time_scale", 1), 1.0), 8.0)
         tail = OFFICIAL_TAIL_MS
         if not _QUEUE.acquire(blocking=False):
             raise OverflowError("run queue full — try again in a moment")
@@ -249,5 +292,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
     if os.environ.get("PRELOAD", "1") == "1":
         threading.Thread(target=lambda: (live.P.load_asr(), live.P.load_clip()), daemon=True).start()
+    live.SESSIONS.start_reaper()
     print(f"TriageLine on http://0.0.0.0:{port}   (console /  ·  live assistant /live.html)")
     ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
