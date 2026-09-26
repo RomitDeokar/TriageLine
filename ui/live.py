@@ -54,6 +54,9 @@ class LiveSession:
         self.created = self.touched = time.time()
         self.out: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=500)
         self.log: list = []
+        self.seq = 0                      # monotonically increasing SSE event id (replay on reconnect)
+        self.stream_gen = 0               # newest SSE consumer wins; stale streams exit
+        self.lock = threading.Lock()
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
         self.closed = False
@@ -78,19 +81,51 @@ class LiveSession:
         self.loop.call_soon(self.in_q.put_nowait, {"event_type": "tool_manifest",
                                                    "payload": {"tools": dict(self.tools.env.registry)}})
         self.ready.set()
-        self.loop.run_forever()
+        try:
+            self.loop.run_forever()
+        finally:
+            # let cancelled tasks unwind, then release the loop (no "Task was destroyed" leaks)
+            pending = [t for t in asyncio.all_tasks(self.loop) if not t.done()]
+            for t in pending:
+                t.cancel()
+            if pending:
+                self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            self.loop.close()
 
     def ms(self) -> int:
         return int((time.monotonic() - self.t0) * 1000)
 
     def emit(self, kind: str, **data):
-        ev = {"kind": kind, "t_ms": self.ms(), **data}
-        self.log.append(ev)
-        del self.log[:-400]
+        with self.lock:
+            self.seq += 1
+            ev = {"id": self.seq, "kind": kind, "t_ms": self.ms(), **data}
+            self.log.append(ev)
+            del self.log[:-400]
         try:
             self.out.put_nowait(ev)
-        except queue.Full:
-            pass
+        except queue.Full:                # slow/absent consumer: drop oldest, keep newest
+            try:
+                self.out.get_nowait()
+                self.out.put_nowait(ev)
+            except (queue.Empty, queue.Full):
+                pass
+
+    def events_after(self, last_id: int) -> list:
+        """Events a reconnecting client missed (bounded by the 400-event log)."""
+        with self.lock:
+            return [e for e in self.log if e["id"] > last_id]
+
+    def claim_stream(self) -> int:
+        """Register a new SSE consumer; any older consumer stops reading the queue."""
+        with self.lock:
+            self.stream_gen += 1
+            # drain the live queue: the new consumer replays from the log instead
+            while True:
+                try:
+                    self.out.get_nowait()
+                except queue.Empty:
+                    break
+            return self.stream_gen
 
     async def _pump(self):
         while True:
@@ -192,16 +227,15 @@ class LiveSession:
     def close(self):
         if self.closed:
             return
-        self.closed = True
         self.emit("closed")
+        self.closed = True
         # uploads (camera frames / voice clips) never outlive the session (audit §7)
         shutil.rmtree(self.dir, ignore_errors=True)
 
-        def stop():
-            for t in asyncio.all_tasks(self.loop):
-                t.cancel()
-            self.loop.stop()
-        self.loop.call_soon_threadsafe(stop)
+        try:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        except RuntimeError:              # loop already closed
+            pass
 
 
 _AUDIO_MAGIC = (b"\x1a\x45\xdf\xa3",  # WebM / Matroska (MediaRecorder default)
@@ -260,6 +294,14 @@ class Sessions:
             s = LiveSession(sid)
             self.by_id[sid] = s
             return s
+
+    def start_reaper(self, every_s: float = 60.0):
+        def run():
+            while True:
+                time.sleep(every_s)
+                with self.lock:
+                    self.reap()
+        threading.Thread(target=run, daemon=True, name="session-reaper").start()
 
     def get(self, sid: str) -> Optional[LiveSession]:
         s = self.by_id.get(sid)
