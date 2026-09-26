@@ -1,0 +1,73 @@
+{
+  "example_id": "finance_10",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "First off... could you tell me what the benefits are for the travel card? I'm considering applying. And then separately,... um, I also need to know how much 200 British pounds would be in Japanese yen.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "travel"
+      },
+      "timestamp_start": 0.018,
+      "timestamp_end": 0.018
+    },
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 200,
+        "from_currency": "GBP",
+        "to_currency": "JPY"
+      },
+      "timestamp_start": 0.023,
+      "timestamp_end": 0.023
+    }
+  ],
+  "transcript": "Sure, let me run a get card benefits for travel. Here's what I found: travel, 2% Cashback, No Foreign Transaction Fee. Sure, let me run a get exchange rate for 200. Here's what I found for Japanese: converted amount 180.0, rate 0.9.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get card benefits for travel.",
+      "t": 0.018
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: travel, 2% Cashback, No Foreign Transaction Fee.",
+      "t": 0.023
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 200.",
+      "t": 0.023
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Japanese: converted amount 180.0, rate 0.9.",
+      "t": 0.024
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "travel"
+      }
+    },
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 200,
+        "from_currency": "GBP",
+        "to_currency": "JPY"
+      }
+    }
+  ]
+}

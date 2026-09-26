@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
+import io
 import os
 import queue
 import re
 import secrets
+import shutil
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -146,9 +149,21 @@ class LiveSession:
         return et
 
     def _save(self, b64: str, ext: str) -> str:
-        raw = base64.b64decode(b64.split(",", 1)[-1], validate=False)
+        """Decode, validate and store one upload. Content is checked, not the client's claim (audit §7):
+        images must decode with Pillow and are re-encoded as JPEG; audio must carry a WebM/Ogg/WAV/MP4
+        container signature."""
+        try:
+            raw = base64.b64decode(b64.split(",", 1)[-1], validate=True)
+        except (ValueError, binascii.Error) as e:
+            raise ValueError("upload is not valid base64") from e
         if len(raw) > MAX_UPLOAD:
             raise ValueError("upload too large")
+        if not raw:
+            raise ValueError("empty upload")
+        if ext == "jpg":
+            raw = _validated_jpeg(raw)
+        elif not _looks_like_audio(raw):
+            raise ValueError("unsupported audio format (expected webm/ogg/wav/mp4)")
         self.frame_n += 1
         name = f"{ext}_{self.frame_n:04d}.{ext}"
         path = os.path.join(self.dir, name)
@@ -166,7 +181,6 @@ class LiveSession:
         """Server-side ASR path (for browsers without on-device speech recognition)."""
         ref = self._save(b64, "webm")
         self.touched = time.time()
-        sess = self
 
         # One perception contract for live and harness (R18): the clip enters the agent as a
         # user_audio_chunk, so word confidences, alternative decodes, utterance ordering (version) and
@@ -180,12 +194,40 @@ class LiveSession:
             return
         self.closed = True
         self.emit("closed")
+        # uploads (camera frames / voice clips) never outlive the session (audit §7)
+        shutil.rmtree(self.dir, ignore_errors=True)
 
         def stop():
             for t in asyncio.all_tasks(self.loop):
                 t.cancel()
             self.loop.stop()
         self.loop.call_soon_threadsafe(stop)
+
+
+_AUDIO_MAGIC = (b"\x1a\x45\xdf\xa3",  # WebM / Matroska (MediaRecorder default)
+                b"OggS", b"RIFF")         # Ogg/Opus (Firefox), WAV
+
+
+def _looks_like_audio(raw: bytes) -> bool:
+    return raw.startswith(_AUDIO_MAGIC) or raw[4:8] == b"ftyp"   # MP4/M4A (Safari)
+
+
+def _validated_jpeg(raw: bytes) -> bytes:
+    """Decode with Pillow (rejects non-images and decompression bombs), re-encode as JPEG."""
+    try:
+        from PIL import Image
+    except ImportError as e:  # pillow is in requirements.txt; refuse rather than store unchecked bytes
+        raise ValueError("image validation unavailable (pip install pillow)") from e
+    Image.MAX_IMAGE_PIXELS = 40_000_000
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im.verify()
+        with Image.open(io.BytesIO(raw)) as im:
+            buf = io.BytesIO()
+            im.convert("RGB").save(buf, "JPEG", quality=88)
+            return buf.getvalue()
+    except Exception as e:  # noqa: BLE001 - any decoder error means "not an image we accept"
+        raise ValueError("upload is not a valid image") from e
 
 
 def _short(o: Any, n: int = 240) -> Any:

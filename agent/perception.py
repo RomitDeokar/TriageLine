@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional
 KIT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASR_MODEL_NAME = os.environ.get("ASR_MODEL")  # default chosen by device in load_asr()
 CLIP_REPO = os.environ.get("CLIP_REPO", "Xenova/clip-vit-base-patch32")
+# Pinned HF revision (audit B-04 / bandit B615): model files can't change underneath a scored run.
+# Override both together if you change CLIP_REPO.
+CLIP_REVISION = os.environ.get("CLIP_REVISION", "d15189d7028b43f1d3e65039190477f6af591c2a")
 
 _ASR = None
 _ASR2 = None
@@ -127,9 +130,9 @@ def load_clip() -> bool:
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
         from tokenizers import Tokenizer
-        v = hf_hub_download(CLIP_REPO, "onnx/vision_model_quantized.onnx")
-        t = hf_hub_download(CLIP_REPO, "onnx/text_model_quantized.onnx")
-        tk = hf_hub_download(CLIP_REPO, "tokenizer.json")
+        v = hf_hub_download(CLIP_REPO, "onnx/vision_model_quantized.onnx", revision=CLIP_REVISION)
+        t = hf_hub_download(CLIP_REPO, "onnx/text_model_quantized.onnx", revision=CLIP_REVISION)
+        tk = hf_hub_download(CLIP_REPO, "tokenizer.json", revision=CLIP_REVISION)
         so = ort.SessionOptions()
         so.intra_op_num_threads = 2
         _CLIP = (ort.InferenceSession(v, so, providers=["CPUExecutionProvider"]),

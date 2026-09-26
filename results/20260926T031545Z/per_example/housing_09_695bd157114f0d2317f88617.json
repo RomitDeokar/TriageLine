@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_09",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... well... uh... i'm interested in a 2-bedroom in Boston — wait, actually,... um, I changed my mind. Let's look in Chicago instead, and keep the max price around 2000 per month.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Chicago",
+        "bedrooms": 2,
+        "max_price": 2000
+      },
+      "timestamp_start": 0.025,
+      "timestamp_end": 0.378
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Chicago. Here's what I found for Chicago: Chicago, ref APT1, $1900, beds 2.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Chicago.",
+      "t": 0.025
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Chicago: Chicago, ref APT1, $1900, beds 2.",
+      "t": 0.378
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Chicago",
+        "bedrooms": 2,
+        "max_price": 2000
+      }
+    }
+  ]
+}

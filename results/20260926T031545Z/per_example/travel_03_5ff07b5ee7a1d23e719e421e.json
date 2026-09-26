@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_03",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... um, I've been looking at flights and... um, I was wondering if you could, like, check what's available to London around August 20th for me?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "London",
+        "date": "August 20"
+      },
+      "timestamp_start": 0.01,
+      "timestamp_end": 0.8
+    }
+  ],
+  "transcript": "Sure, checking flights to London for August 20. I found a flight to London: FL123 departing August 20 for $450.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, checking flights to London for August 20.",
+      "t": 0.01
+    },
+    {
+      "kind": "final_response",
+      "text": "I found a flight to London: FL123 departing August 20 for $450.",
+      "t": 0.801
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "London",
+        "date": "August 20"
+      }
+    }
+  ]
+}

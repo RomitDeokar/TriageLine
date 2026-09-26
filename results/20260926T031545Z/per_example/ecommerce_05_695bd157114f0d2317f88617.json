@@ -1,0 +1,47 @@
+{
+  "example_id": "ecommerce_05",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um, so like, uh... I'm looking... um, for a new... let me think... a desk. Something under 300 dollars if you have any options like that.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "desk",
+        "max_price": 300
+      },
+      "timestamp_start": 0.02,
+      "timestamp_end": 0.02
+    }
+  ],
+  "transcript": "Sure, let me run a search products for desk. Here's what I found: ref PROD1, desk Premium, $290.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for desk.",
+      "t": 0.02
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, desk Premium, $290.",
+      "t": 0.02
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "desk",
+        "max_price": 300
+      }
+    }
+  ]
+}

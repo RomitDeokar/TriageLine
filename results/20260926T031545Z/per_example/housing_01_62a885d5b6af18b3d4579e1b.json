@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_01",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... hmm... uh... i'm trying... um...... um... to find a 2-bedroom apartment in Seattle, and I'd like to keep the rent under 2500 a month if possible. Could you see what's available?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Seattle",
+        "bedrooms": 2,
+        "max_price": 2500
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.353
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Seattle. Here's what I found for Seattle: Seattle, ref APT1, $2400, beds 2.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Seattle.",
+      "t": 0.027
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Seattle: Seattle, ref APT1, $2400, beds 2.",
+      "t": 0.354
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Seattle",
+        "bedrooms": 2,
+        "max_price": 2500
+      }
+    }
+  ]
+}

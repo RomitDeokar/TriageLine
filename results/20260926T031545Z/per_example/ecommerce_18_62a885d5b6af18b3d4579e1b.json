@@ -1,0 +1,90 @@
+{
+  "example_id": "ecommerce_18",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so like... first, search for a gaming mouse —... um, I want to see what you have. Then add the cheapest option to my cart so I can buy it later. And while you're at it, could you also track my order P-O-9-9-9? I've been waiting on that one.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "gaming mouse"
+      },
+      "timestamp_start": 0.028,
+      "timestamp_end": 0.028
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "quantity": 1,
+        "product_id": "PROD1"
+      },
+      "timestamp_start": 0.035,
+      "timestamp_end": 0.035
+    },
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "PO999"
+      },
+      "timestamp_start": 0.04,
+      "timestamp_end": 0.04
+    }
+  ],
+  "transcript": "Sure, let me run a search products for gaming mouse. Here's what I found: ref PROD1, gaming mouse Premium, $99.99. Sure, let me run a add to cart for 1. Here's what I found: ref PROD1, quantity 1, cart total 99.99. Here's what I found: ref PO999, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for gaming mouse.",
+      "t": 0.028
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, gaming mouse Premium, $99.99.",
+      "t": 0.035
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for 1.",
+      "t": 0.035
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, quantity 1, cart total 99.99.",
+      "t": 0.039
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PO999, Out for delivery.",
+      "t": 0.04
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "gaming mouse"
+      }
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "$RESULT_0.cheapest_product_id",
+        "quantity": 1
+      }
+    },
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "PO999"
+      }
+    }
+  ]
+}

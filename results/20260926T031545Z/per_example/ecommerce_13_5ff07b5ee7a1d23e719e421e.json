@@ -1,0 +1,71 @@
+{
+  "example_id": "ecommerce_13",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so well... well... first... could you add item K-2... um, to my cart? Just one of them. And then can you check on my last order too? The order ID is D-E-L-I-V.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "K2",
+        "quantity": 1
+      },
+      "timestamp_start": 0.021,
+      "timestamp_end": 0.021
+    },
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "DELIV"
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.027
+    }
+  ],
+  "transcript": "Sure, let me run a add to cart for K2. Here's what I found: ref K2, quantity 1, cart total 99.99. Sure, let me run a track order for DELIV. Here's what I found: ref DELIV, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for K2.",
+      "t": 0.021
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref K2, quantity 1, cart total 99.99.",
+      "t": 0.027
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for DELIV.",
+      "t": 0.027
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref DELIV, Out for delivery.",
+      "t": 0.028
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "K2",
+        "quantity": 1
+      }
+    },
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "DELIV"
+      }
+    }
+  ]
+}

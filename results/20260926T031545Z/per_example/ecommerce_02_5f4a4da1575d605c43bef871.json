@@ -1,0 +1,47 @@
+{
+  "example_id": "ecommerce_02",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so i'm looking for a pair of wireless headphones... and I'd like... um, to keep it under 100 dollars if possible. What do you have?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "wireless headphones",
+        "max_price": 100
+      },
+      "timestamp_start": 0.03,
+      "timestamp_end": 0.03
+    }
+  ],
+  "transcript": "Sure, let me run a search products for wireless headphones. Here's what I found: ref PROD1, wireless headphones Premium, $90.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for wireless headphones.",
+      "t": 0.03
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, wireless headphones Premium, $90.",
+      "t": 0.031
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "wireless headphones",
+        "max_price": 100
+      }
+    }
+  ]
+}

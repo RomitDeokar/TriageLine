@@ -1,0 +1,88 @@
+{
+  "example_id": "travel_18",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... alright, first... um, I need to find flights to Dubai on April 10th. Then go ahead and book the cheapest option — the name on the ticket should be Casey Lee. Oh, and I almost forgot, I also need to update my passport number to E-7-7-2-2-1-1.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Dubai",
+        "date": "April 10"
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.745
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "flight_id": "FL123",
+        "passenger_name": "Casey Lee"
+      },
+      "timestamp_start": 0.746,
+      "timestamp_end": 0.746
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "E772211"
+      },
+      "timestamp_start": 0.752,
+      "timestamp_end": 0.752
+    }
+  ],
+  "transcript": "On it — finding flights to Dubai for April 10 first. Found FL123 at April 10 for $450 — booking it for Casey Lee now. Done — you're booked on FL123 to Dubai for Casey Lee. Booking reference B789. Here's what I found for Dubai: passport, 2211.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "On it — finding flights to Dubai for April 10 first.",
+      "t": 0.027
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Found FL123 at April 10 for $450 — booking it for Casey Lee now.",
+      "t": 0.746
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — you're booked on FL123 to Dubai for Casey Lee. Booking reference B789.",
+      "t": 0.752
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Dubai: passport, 2211.",
+      "t": 0.752
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Dubai",
+        "date": "April 10"
+      }
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "passenger_name": "Casey Lee"
+      }
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "E772211"
+      }
+    }
+  ]
+}

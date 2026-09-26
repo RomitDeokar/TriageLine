@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_04",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "I need... um... to figure out how much 1000 US dollars would be in... British pounds. Do you know the current rate?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "GBP"
+      },
+      "timestamp_start": 0.015,
+      "timestamp_end": 0.015
+    }
+  ],
+  "transcript": "Sure, let me run a get exchange rate for 1000. Here's what I found: converted amount 900.0, rate 0.9.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 1000.",
+      "t": 0.015
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 900.0, rate 0.9.",
+      "t": 0.015
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "GBP"
+      }
+    }
+  ]
+}

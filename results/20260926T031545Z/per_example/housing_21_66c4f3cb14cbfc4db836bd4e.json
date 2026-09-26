@@ -1,0 +1,39 @@
+{
+  "example_id": "housing_21",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well, hmm... you know... i want to search for a place with 2 bedrooms. Wait... actually... um, I meant 3 bedrooms, we decided we need a home office. Also check the transit time to the train station — actually, I'd rather walk, so make that walking time.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [],
+  "transcript": "Sure — which city?",
+  "agent_actions": [
+    {
+      "kind": "clarification_request",
+      "text": "Sure — which city?",
+      "t": 0.026
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "bedrooms": 3
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_0.apartments[0].address",
+        "destination_address": "train station",
+        "mode": "walking"
+      }
+    }
+  ]
+}

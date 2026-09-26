@@ -6,7 +6,7 @@ It does own the transport-level concurrency: tool calls run as independent
 tasks (never blocking speech/cancellation), finals are optionally settled
 before routing, and VAD/partial-transcript barge-in cuts agent speech early. Every
 behavior listed below already lives in `agent/agent.py` + `agent/nlu.py` and is
-covered by `tests/test_regressions.py`; this module only translates LiveKit's
+covered by `tests/test_regressions.py` and adapter_tests/test_1..9; this module only translates LiveKit's
 callback shapes into the event-queue shapes ParticipantAgent already consumes,
 and translates ParticipantAgent's out_q actions into LiveKit calls. That keeps
 one implementation instead of two forks that can drift.

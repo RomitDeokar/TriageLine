@@ -1,0 +1,47 @@
+{
+  "example_id": "housing_03",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so well, like... um,... um, I want to update my search filter so the max price is, like, 1800 a month. Everything I've been seeing is over budget.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 1800
+      },
+      "timestamp_start": 0.02,
+      "timestamp_end": 0.11
+    }
+  ],
+  "transcript": "Sure, let me run a update search filter for max_price. Here's what I found: max_price, new value 1800.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for max_price.",
+      "t": 0.02
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: max_price, new value 1800.",
+      "t": 0.11
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 1800
+      }
+    }
+  ]
+}

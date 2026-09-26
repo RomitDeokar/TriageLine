@@ -1,0 +1,14 @@
+{
+  "timestamp_utc": "20260926T031545Z",
+  "provider": "triageline_text",
+  "mode": "offline_text_replay",
+  "limit": 0,
+  "llm_judge": false,
+  "latency_profile": "instant",
+  "fdb_commit": "3e799c45a045256f47d5f1c9cda90157e2d2ec9e",
+  "triageline_commit": "e019ea97b94c17d9be320bf6f46a86635b8b6044",
+  "python": "Python 3.13.14",
+  "stt_provider": "openai",
+  "tts_provider": "openai",
+  "seeds": {"mock_latency_profile": "instant", "whisper_temperature": 0, "agent": "deterministic (rule-based, no sampling)"}
+}

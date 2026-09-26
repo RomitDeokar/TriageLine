@@ -1,10 +1,8 @@
 team: "TriageLine"
-entry_point: "agent.agent:ParticipantAgent"
+entry_point: "livekit_agent/cascaded_agent.py"      # official FDB-v3 agent (custom LiveKit agent, no LLM)
+reproduce: "./run_fdb_v3.sh"
+provider_name: "triageline"
 python: "3.12"
-requirements:
-  - faster-whisper
-  - onnxruntime
-  - huggingface_hub
-  - tokenizers
-  - numpy
-  - pillow
+requirements: "requirements-fdb.txt"
+fdb_commit: "3e799c45a045256f47d5f1c9cda90157e2d2ec9e"
+practice_harness_entry_point: "agent.agent:ParticipantAgent"   # old kit (run_local.py), not scored

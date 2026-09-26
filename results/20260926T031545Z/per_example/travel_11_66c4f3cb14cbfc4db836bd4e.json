@@ -1,0 +1,67 @@
+{
+  "example_id": "travel_11",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... we need a flight to Austin on February 2nd... and go ahead and book it under the name Morgan Smith. That's the person who'll be traveling.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Austin",
+        "date": "February 2"
+      },
+      "timestamp_start": 0.015,
+      "timestamp_end": 0.693
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "flight_id": "FL123",
+        "passenger_name": "Morgan Smith"
+      },
+      "timestamp_start": 0.694,
+      "timestamp_end": 0.694
+    }
+  ],
+  "transcript": "On it — finding flights to Austin for February 2 first. Found FL123 at February 2 for $450 — booking it for Morgan Smith now. Done — you're booked on FL123 to Austin for Morgan Smith. Booking reference B789.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "On it — finding flights to Austin for February 2 first.",
+      "t": 0.015
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Found FL123 at February 2 for $450 — booking it for Morgan Smith now.",
+      "t": 0.694
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — you're booked on FL123 to Austin for Morgan Smith. Booking reference B789.",
+      "t": 0.695
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Austin",
+        "date": "February 2"
+      }
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "passenger_name": "Morgan Smith"
+      }
+    }
+  ]
+}

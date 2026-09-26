@@ -1,0 +1,68 @@
+{
+  "example_id": "housing_20",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... hmm... you know... um... so here's what I'm thinking. Search for places in Austin under 2000. Then check the commute to my office. If it's under 15 minutes, that's perfect. But if it's longer, then raise my budget to 2500 so... um, I can look at places closer to work.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "max_price": 2000
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.272
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Austin. I started that search apartments, but the system also needs the bedrooms — what should I use? Sure — what origin address should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Austin.",
+      "t": 0.027
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the bedrooms — what should I use?",
+      "t": 0.277
+    },
+    {
+      "kind": "clarification_request",
+      "text": "Sure — what origin address should I use?",
+      "t": 0.277
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "max_price": 2000
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_0.apartments[0].address",
+        "destination_address": "my office",
+        "mode": "driving"
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 2500
+      },
+      "note": "Only if commute > 15 min"
+    }
+  ]
+}

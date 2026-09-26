@@ -1,0 +1,47 @@
+{
+  "example_id": "ecommerce_16",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... like, uh... i need a new... let me think about what it's called... a coffee maker! Yeah... I'm looking... um, for a coffee maker. Something under 50 dollars would be ideal.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "coffee maker",
+        "max_price": 50
+      },
+      "timestamp_start": 0.034,
+      "timestamp_end": 0.034
+    }
+  ],
+  "transcript": "Sure, let me run a search products for coffee maker. Here's what I found: ref PROD1, coffee maker Premium, $40.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for coffee maker.",
+      "t": 0.033
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, coffee maker Premium, $40.",
+      "t": 0.034
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "coffee maker",
+        "max_price": 50
+      }
+    }
+  ]
+}

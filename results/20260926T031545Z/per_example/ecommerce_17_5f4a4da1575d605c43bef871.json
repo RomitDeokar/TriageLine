@@ -1,0 +1,45 @@
+{
+  "example_id": "ecommerce_17",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... hmm... can you cancel my — actually... never mind the cancellation,... um... I changed my mind about that. Could you just track order G-G-5 for me instead? I want to see where it is.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "GG5"
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.026
+    }
+  ],
+  "transcript": "Sure, let me run a track order for GG5. Here's what I found: ref GG5, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for GG5.",
+      "t": 0.025
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref GG5, Out for delivery.",
+      "t": 0.026
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "GG5"
+      }
+    }
+  ]
+}

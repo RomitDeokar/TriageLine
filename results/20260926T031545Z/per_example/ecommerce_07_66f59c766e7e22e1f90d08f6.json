@@ -1,0 +1,45 @@
+{
+  "example_id": "ecommerce_07",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... um... so you know... i was going... um...... um, to search for a new product but — never mind that for now. Could you just track my order instead? The ID is F-A-S-T-9-9.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "FAST99"
+      },
+      "timestamp_start": 0.04,
+      "timestamp_end": 0.04
+    }
+  ],
+  "transcript": "Sure, let me run a track order for FAST99. Here's what I found: ref FAST99, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for FAST99.",
+      "t": 0.04
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref FAST99, Out for delivery.",
+      "t": 0.04
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "FAST99"
+      }
+    }
+  ]
+}

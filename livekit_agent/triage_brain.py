@@ -49,7 +49,6 @@ from core.commit.state_machine import CommitState, CommitStateMachine  # noqa: E
 from core.deliberation.engine import (  # noqa: E402
     DeliberationBackedInterruptionStrategy,
     DeliberationEngine,
-    FALLBACK_ESCALATE_TO_HUMAN,
     FALLBACK_REQUEST_MORE_INFO,
 )
 from core.dialogue.engine import DialogueEngine  # noqa: E402

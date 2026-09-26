@@ -1,0 +1,52 @@
+{
+  "example_id": "ecommerce_11",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... like... well, go ahead and add product B-7 to my cart. Make it 3 of them — no, wait, that's too many. Just put 1 in there for now, I'll order more later if... um, I need to.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "B7",
+        "quantity": 1
+      },
+      "timestamp_start": 0.018,
+      "timestamp_end": 0.018
+    }
+  ],
+  "transcript": "Sure, let me run a add to cart for B7. Here's what I found: ref B7, quantity 1, cart total 99.99. Sure — what filter name should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for B7.",
+      "t": 0.018
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref B7, quantity 1, cart total 99.99.",
+      "t": 0.021
+    },
+    {
+      "kind": "clarification_request",
+      "text": "Sure — what filter name should I use?",
+      "t": 0.021
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "B7",
+        "quantity": 1
+      }
+    }
+  ]
+}

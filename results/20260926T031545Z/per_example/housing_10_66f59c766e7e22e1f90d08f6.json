@@ -1,0 +1,75 @@
+{
+  "example_id": "housing_10",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so well... uh... like... first, could you check how long the transit commute would be from 500 Central Ave... um, to the University? And also, while you're at it, update my preferred neighborhood in the search to Northside.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "500 Central Ave",
+        "destination_address": "University",
+        "mode": "transit"
+      },
+      "timestamp_start": 0.025,
+      "timestamp_end": 0.425
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "neighborhood",
+        "value": "Northside"
+      },
+      "timestamp_start": 0.432,
+      "timestamp_end": 0.616
+    }
+  ],
+  "transcript": "Sure, let me run a calculate commute for 500 Central Ave. Here's what I found: duration mins 25, transit. Sure, let me run a update search filter for neighborhood. Here's what I found for Northside: neighborhood, Northside.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a calculate commute for 500 Central Ave.",
+      "t": 0.025
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, transit.",
+      "t": 0.432
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for neighborhood.",
+      "t": 0.432
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Northside: neighborhood, Northside.",
+      "t": 0.617
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "500 Central Ave",
+        "destination_address": "University",
+        "mode": "transit"
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "neighborhood",
+        "value": "Northside"
+      }
+    }
+  ]
+}

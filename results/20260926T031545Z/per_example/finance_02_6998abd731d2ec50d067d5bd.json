@@ -1,0 +1,45 @@
+{
+  "example_id": "finance_02",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so could you tell me what kind of benefits come with the platinum card?... um, I want to know if it's worth switching to.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "platinum"
+      },
+      "timestamp_start": 0.006,
+      "timestamp_end": 0.006
+    }
+  ],
+  "transcript": "Sure, let me run a get card benefits for platinum. Here's what I found: platinum, 2% Cashback, No Foreign Transaction Fee.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get card benefits for platinum.",
+      "t": 0.006
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: platinum, 2% Cashback, No Foreign Transaction Fee.",
+      "t": 0.007
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "platinum"
+      }
+    }
+  ]
+}
