@@ -17,6 +17,13 @@ from __future__ import annotations
 import asyncio
 import json
 
+import sys as _sys
+
+if "pytest" in _sys.modules:  # under pytest: skip cleanly instead of a collection error (B13); the plain
+    import pytest              # tests/_run_all.py runner reports the ModuleNotFoundError below as SKIPPED
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
 from fastapi.testclient import TestClient
 
 from api.app import create_app

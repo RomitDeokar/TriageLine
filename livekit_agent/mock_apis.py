@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-from typing import Optional, Any
+import json
+import logging
+from typing import List, Optional, Any, Dict
 from latency_injector import LatencyInjector
 
 class CallLogger:

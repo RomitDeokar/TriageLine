@@ -82,7 +82,7 @@ class TriageAdapter:
     def __init__(self, *, tool_executor: ToolExecutor, tool_canceller: ToolCanceller,
                  speak: Speak, live: bool = True, settle_s: float = 0.0,
                  interrupt_speech: Optional[Callable[[], Awaitable[None]]] = None,
-                 load_models: bool = False):
+                 load_models: bool = False, max_settle_s: Optional[float] = None):
         self.in_q: asyncio.Queue = asyncio.Queue()
         self.out_q: asyncio.Queue = asyncio.Queue()
         self.agent = ParticipantAgent(self.in_q, self.out_q, live=live)
@@ -103,7 +103,12 @@ class TriageAdapter:
         # `settle_s` of each other are merged before they are routed, so the second
         # half of a sentence is never mistaken for a barge-in on the first half.
         self.settle_s = max(0.0, float(settle_s))
+        # speculate-then-commit (C2): the running transcript of the whole turn is re-planned at every
+        # fragment; a turn that still looks unfinished (dangling connective / filler, or a ranked tool
+        # whose required args are not all present yet) waits up to `max_settle_s` before committing.
+        self.max_settle_s = max(self.settle_s, float(max_settle_s if max_settle_s is not None else self.settle_s * 2))
         self._pending_final: list = []
+        self._closed = False
         self._settle_task: Optional[asyncio.Task] = None
         self._interrupt_speech = interrupt_speech
         # FDB/LiveKit path never uses local ASR/CLIP (LiveKit does STT), so the
@@ -121,9 +126,12 @@ class TriageAdapter:
     async def stop(self):
         if self._settle_task:
             self._settle_task.cancel()
-        for t in list(self._tool_tasks.values()):
+        pending = list(self._tool_tasks.values()) + list(self.agent.tasks)
+        for t in pending:
             t.cancel()
         self._tool_tasks.clear()
+        if pending:   # await them so no "Task was destroyed but it is pending" (B14)
+            await asyncio.gather(*pending, return_exceptions=True)
         for t in (self._pump_task, self._run_task):
             if t:
                 t.cancel()
@@ -171,7 +179,7 @@ class TriageAdapter:
         With `settle_s > 0` finals are buffered briefly and merged (see B-09);
         otherwise they are routed immediately (unit tests / offline replay)."""
         text = (text or "").strip()
-        if not text:
+        if not text or self._closed:
             return
         if self.settle_s <= 0:
             return await self._route_final(text)
@@ -181,16 +189,41 @@ class TriageAdapter:
         self._settle_task = asyncio.create_task(self._settle_then_route())
 
     async def flush(self):
-        """Route any buffered final immediately (end of stream / teardown)."""
+        """Route any buffered final immediately (end of stream). After close() nothing is routed (B8)."""
         if self._settle_task and not self._settle_task.done():
             self._settle_task.cancel()
-        if self._pending_final:
+        if self._pending_final and not self._closed:
             text, self._pending_final = " ".join(self._pending_final), []
             await self._route_final(text)
 
+    def close(self):
+        """Room gone: drop buffered speech, never issue a late tool call (B8)."""
+        self._closed = True
+        self._pending_final = []
+        if self._settle_task and not self._settle_task.done():
+            self._settle_task.cancel()
+
+    def settle_for(self, text: str) -> float:
+        """Commit delay for the running transcript: short when the turn plans to a complete call,
+        long when it still looks unfinished (speculative plan, nothing emitted)."""
+        if turn_looks_unfinished(text):
+            return self.max_settle_s
+        try:
+            from agent import nlu
+            tools = self.agent.tools
+            norm = nlu.normalize_asr(text)
+            ranked = nlu.score_tools(norm, tools)
+            if ranked and ranked[0][0] >= 1.5 and not self.agent.pending_clarify:
+                _, missing = nlu.build_args(tools[ranked[0][1]], norm, dict(self.agent.state["slots"]))
+                if missing:
+                    return self.max_settle_s
+        except Exception:  # noqa: BLE001 - the speculative plan is advisory only
+            pass
+        return self.settle_s
+
     async def _settle_then_route(self):
         try:
-            await asyncio.sleep(self.settle_s)
+            await asyncio.sleep(self.settle_for(" ".join(self._pending_final)))
         except asyncio.CancelledError:
             return
         text, self._pending_final = " ".join(self._pending_final), []
@@ -276,6 +309,15 @@ class TriageAdapter:
             if external == ext:
                 return internal
         return ext
+
+
+_UNFINISHED = re.compile(r"(?i)(?:\b(?:and|or|but|then|so|to|for|of|the|a|an|my|with|is|was|um+|uh+|like|"
+                         r"actually|wait|i mean|let me (?:see|find|check)|hold on)\s*[,.…]*|\.{2,}|…|,)\s*$")
+
+
+def turn_looks_unfinished(text: str) -> bool:
+    """Dangling connective / filler / trailing comma or ellipsis: the speaker has more to say."""
+    return bool(_UNFINISHED.search((text or "").strip()))
 
 
 _CORRECTION_CUE = re.compile(

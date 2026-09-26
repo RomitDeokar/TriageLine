@@ -35,7 +35,7 @@ OUT_DIR="$ROOT_DIR/results/$STAMP"
 AGENT_LOG="$OUT_DIR/agent.log"
 LOG="$OUT_DIR/run.log"
 
-LIMIT=0; SKIP_INSTALL=0; SKIP_NEMO=0; USE_LLM=1; OFFLINE_TEXT=0; LATENCY="instant"; FORCE=0
+LIMIT=0; SKIP_INSTALL=0; SKIP_NEMO=0; USE_LLM=1; OFFLINE_TEXT=0; LATENCY="instant"; FORCE=0; REQUIRE_JUDGE=0
 usage() { sed -n '2,20p' "$0"; cat <<'EOF'
 Options:
   --limit N          only the first N examples (smoke run)
@@ -46,6 +46,7 @@ Options:
                      and score with the official evaluators (diagnostic, no keys needed)
   --latency P        mock API latency profile passed to the agent (instant|normal|slow), default instant
   --force            re-run examples that already have result files
+  --require-judge    fail loudly if the gpt-4o judge is unreachable (never silently drop to exact match)
 EOF
 }
 while [ $# -gt 0 ]; do
@@ -57,6 +58,7 @@ while [ $# -gt 0 ]; do
         --offline-text) OFFLINE_TEXT=1; SKIP_NEMO=1; shift ;;
         --latency) LATENCY="$2"; shift 2 ;;
         --force) FORCE=1; shift ;;
+        --require-judge) REQUIRE_JUDGE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1"; usage; exit 2 ;;
     esac
@@ -222,6 +224,7 @@ PYEOF
     then
         log "LLM judge preflight: gpt-4o reachable${OPENAI_BASE_URL:+ via \$OPENAI_BASE_URL}"
     else
+        [ "$REQUIRE_JUDGE" = 1 ] && fail "gpt-4o judge NOT reachable and --require-judge was given (check OPENAI_API_KEY/OPENAI_BASE_URL)"
         log "WARNING: gpt-4o judge NOT reachable with the configured OPENAI_API_KEY/OPENAI_BASE_URL -> running WITHOUT --use-llm (exact match, lower bound). See docs/FREE_API_KEYS.md"
         USE_LLM=0
     fi
@@ -283,9 +286,14 @@ stage_6_save() {
   "fdb_commit": "$(git -C "$FDB_CLONE" rev-parse HEAD 2>/dev/null)",
   "triageline_commit": "$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)",
   "python": "$("$PY" -V 2>&1)",
-  "stt_provider": "${TRIAGELINE_STT_PROVIDER:-openai}",
+  "stt_provider": "${TRIAGELINE_STT_PROVIDER:-auto}",
+  "stt_temperature": 0,
+  "stt_bias": "${TRIAGELINE_STT_BIAS:-1}",
+  "settle_s": "${TRIAGELINE_SETTLE_S:-1.6}", "max_settle_s": "${TRIAGELINE_MAX_SETTLE_S:-2.5}",
+  "benchmark_policy": "${TRIAGELINE_BENCHMARK_POLICY:-1}",
+  "llm_planner": "${TRIAGELINE_LLM_PLANNER:-0}", "llm_model": "${TRIAGELINE_LLM_MODEL:-gpt-4o-mini}", "llm_seed": 7,
   "tts_provider": "${TRIAGELINE_TTS_PROVIDER:-openai}",
-  "seeds": {"mock_latency_profile": "$LATENCY", "whisper_temperature": 0, "agent": "deterministic (rule-based, no sampling)"}
+  "seeds": {"mock_latency_profile": "$LATENCY", "stt_temperature": 0, "llm_temperature": 0, "llm_seed": 7}
 }
 EOF
     "$PY" "$ROOT_DIR/results/summarize_fdb_v3.py" "$OUT_DIR" | tee -a "$LOG"

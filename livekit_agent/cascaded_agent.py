@@ -84,7 +84,10 @@ log = logging.getLogger("triageline.cascaded_agent")
 
 HEARTBEAT = "/tmp/agent_heartbeat.log"
 TOOL_LOG = "/tmp/agent_tool_calls.log"
-SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", "0.9"))
+SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", "1.6"))          # commit gate (C2)
+MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.5"))  # unfinished-looking turns
+# FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4)
+os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")
 BACKCHANNEL = os.environ.get("TRIAGELINE_BACKCHANNEL", "1") == "1"
 
 
@@ -147,6 +150,19 @@ class CascadedVoiceAgent(Agent):
         super().__init__(instructions="")
 
 
+def build_turn_handling() -> dict:
+    """livekit-agents 1.8 TurnHandlingOptions (B16: replaces deprecated min/max_endpointing_delay).
+    Uses the semantic end-of-turn model when livekit-plugins-turn-detector is installed (C2)."""
+    th: dict = {"endpointing": {"min_delay": 0.5, "max_delay": 5.0}}
+    if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1":
+        try:
+            from livekit.plugins.turn_detector.multilingual import MultilingualModel
+            th["turn_detection"] = MultilingualModel()
+        except Exception as e:  # noqa: BLE001 - plugin optional; VAD endpointing + commit gate still apply
+            log.info("semantic turn detector unavailable (%s); using VAD endpointing", e)
+    return th
+
+
 def build_cascaded_pipeline(vad=None):
     """VAD + STT + TTS (provider chosen by env, see speech_providers.py). No LLM here."""
     from livekit_agent.speech_providers import build_pipeline
@@ -171,8 +187,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     vad, stt, tts = build_cascaded_pipeline(getattr(ctx.proc, "userdata", {}).get("vad"))
     tracker = LatencyTracker()
-    session = AgentSession(vad=vad, stt=stt, tts=tts,
-                           min_endpointing_delay=0.5, max_endpointing_delay=5.0)
+    session = AgentSession(vad=vad, stt=stt, tts=tts, turn_handling=build_turn_handling())
 
     cancelled: set[str] = set()
 
@@ -211,7 +226,7 @@ async def entrypoint(ctx: agents.JobContext):
             pass
 
     adapter = TriageAdapter(tool_executor=tool_executor, tool_canceller=tool_canceller, speak=speak,
-                            settle_s=SETTLE_S, interrupt_speech=interrupt_speech)
+                            settle_s=SETTLE_S, max_settle_s=MAX_SETTLE_S, interrupt_speech=interrupt_speech)
     await adapter.start(FDB_TOOLS)
     attach_livekit_session(session, adapter, room_name=room_name)
 
@@ -222,13 +237,18 @@ async def entrypoint(ctx: agents.JobContext):
             tracker.user_done_at = time.time()    # same anchor as the upstream template
             tracker.query_received = True
             if BACKCHANNEL and not adapter.busy():
-                # immediate acknowledgement while the utterance settles (fast path)
+                # immediate acknowledgement while the utterance settles (fast path). It is NOT counted
+                # as the first response (B17): latency is stamped on the first substantive line.
+                tracker.backchannel_pending = True
                 session.say("Mm-hm.", allow_interruptions=True, add_to_chat_ctx=False)
 
     @session.on("agent_state_changed")
     def on_agent_state(ev: agents.voice.AgentStateChangedEvent):
         # stamp the moment audio actually starts, not when speech was queued (audit B-07)
         if ev.new_state == "speaking" and tracker.query_received and not tracker.agent_start_at:
+            if getattr(tracker, "backchannel_pending", False):
+                tracker.backchannel_pending = False     # the "Mm-hm." itself: not a substantive reply
+                return
             tracker.agent_start_at = time.time()
 
     async def _flush_latency():
@@ -247,9 +267,17 @@ async def entrypoint(ctx: agents.JobContext):
 
     watch = asyncio.create_task(_latency_watch())
 
+    torn_down = False
+
     async def _teardown(*_args, **_kwargs) -> None:
+        # registered on both room "disconnected" and shutdown: run once (B8). Buffered text is
+        # dropped, never routed, so no tool call can be logged after the room is gone.
+        nonlocal torn_down
+        if torn_down:
+            return
+        torn_down = True
         watch.cancel()
-        await adapter.flush()
+        adapter.close()
         await _flush_latency()
         await adapter.stop()
 
