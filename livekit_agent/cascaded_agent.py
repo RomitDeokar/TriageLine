@@ -71,14 +71,8 @@ if "--latency" in sys.argv:
 
 load_dotenv(os.path.join(_HERE, ".env.local"))
 
-# Official mock backend (copied from the pinned FDB-v3 commit by run_fdb_v3.sh stage 4).
-try:
-    from mock_apis import MockAPIRegistry
-    registry = MockAPIRegistry(latency_profile=LATENCY_PROFILE)
-    print(f"API Backend running with '{LATENCY_PROFILE}' latency profile.")
-except ImportError:
-    logging.warning("mock_apis.py not found. Tools will return errors.")
-    registry = None
+# Construct a fresh official backend per room: no state may cross conversations.
+from mock_apis import MockAPIRegistry
 
 log = logging.getLogger("triageline.cascaded_agent")
 
@@ -181,6 +175,7 @@ server = AgentServer(setup_fnc=prewarm)
 
 @server.rtc_session()
 async def entrypoint(ctx: agents.JobContext):
+    registry = MockAPIRegistry(latency_profile=LATENCY_PROFILE)
     room_name = ctx.room.name
     await append_async(HEARTBEAT, f"!!! CASCADED AGENT JOINING ROOM: {room_name} at {time.ctime()} !!!")
     print(f"!!! CASCADED AGENT JOINING ROOM: {room_name} !!!")

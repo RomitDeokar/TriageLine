@@ -273,7 +273,11 @@ class ParticipantAgent:
             self.state["intent"] = api
             self.state["slots"].update(args)
             await self.say("filler_speech", self.ack(api, args))
-            await self.call(api, args, deps=dict(args))
+            if api == "book_flight":
+                # A model recommendation must not bypass the replacement/unknown-outcome gate.
+                await self.issue_booking(args, dict(args))
+            else:
+                await self.call(api, args, deps=dict(args))
             self.note("llm_planner_used", api)
         elif kind == "asr_done":
             if p["version"] != self.version:
