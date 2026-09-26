@@ -154,7 +154,7 @@ def test_real_livekit_gemini_stt_and_tts():
             async with engine.synthesize("Done") as stream:
                 frames = [e.frame async for e in stream]
             # LiveKit appends a synthetic 10 ms final marker frame (240 samples).
-        assert sum(f.samples_per_channel for f in frames) == 4800 + 240
+            assert sum(f.samples_per_channel for f in frames) == 4800 + 240
             await recognizer.aclose()
             await engine.aclose()
     asyncio.run(check())
