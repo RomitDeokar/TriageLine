@@ -137,3 +137,18 @@ def build_pipeline(vad=None):
         raise ProviderConfigError("missing API key(s) for the selected speech providers: "
                                   + ", ".join(cfg["missing_keys"]) + " (see docs/FREE_API_KEYS.md)")
     return vad or load_vad(), build_stt(cfg), build_tts(cfg), cfg
+
+
+def preflight(command: str) -> None:
+    """Fail once in the CLI, before spawning workers that would fail per room."""
+    if command not in ("start", "dev", "console"):
+        return
+    cfg = selected()
+    missing = list(cfg["missing_keys"])
+    if command in ("start", "dev"):
+        missing += [key for key in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+                    if not os.environ.get(key) or "<" in os.environ.get(key, "")]
+    if missing:
+        raise SystemExit("Configuration error: set " + ", ".join(missing) +
+                         " in livekit_agent/.env.local. For key-free mode use: python ui/server.py --offline")
+    print(describe(cfg), flush=True)

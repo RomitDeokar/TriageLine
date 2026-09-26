@@ -285,4 +285,6 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
+    from livekit_agent.speech_providers import preflight
+    preflight(sys.argv[1] if len(sys.argv) > 1 else "")
     agents.cli.run_app(server)

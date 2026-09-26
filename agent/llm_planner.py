@@ -54,18 +54,28 @@ def _client(cfg):
 
 def _schema(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
     def schema(spec):
-        out = {k: v for k, v in spec.items() if k in ("type", "description", "enum", "items")}
+        if isinstance(spec, str):
+            spec = {"type": spec}
+        out = {k: v for k, v in spec.items() if k in ("type", "description", "enum", "minimum", "maximum")}
+        # Gemini's OpenAPI Schema rejects `any`; JSON Schema represents it by
+        # omitting type. Nested array items must be schemas, never bare strings.
+        if out.get("type") == "any":
+            out.pop("type")
+        if "items" in spec:
+            out["items"] = schema(spec["items"])
         if spec.get("properties"):
             out["properties"] = {k: schema(v) for k, v in spec["properties"].items()}
             out["required"] = [k for k, v in spec["properties"].items() if v.get("required")]
         return out
     return [{"name": name, "description": spec.get("description", ""),
-             "parameters": {"type": "object", "properties": {k: schema(v) for k, v in (spec.get("args") or {}).items()},
+             "parametersJsonSchema": {"type": "object", "properties": {k: schema(v) for k, v in (spec.get("args") or {}).items()},
                             "required": [k for k, v in (spec.get("args") or {}).items() if v.get("required")]}}
             for name, spec in tools.items()]
 
 
 def _value(value, spec):
+    if isinstance(spec, str):
+        spec = {"type": spec}
     typ = spec.get("type", "string")
     if typ in ("integer", "number"):
         if isinstance(value, bool):
@@ -88,6 +98,13 @@ def _value(value, spec):
         if not isinstance(value, list):
             raise ValueError("invalid array")
         value = [_value(v, spec.get("items", {})) for v in value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(value):
+            raise ValueError("nonfinite value")
+        if "minimum" in spec and value < spec["minimum"]:
+            raise ValueError("below minimum")
+        if "maximum" in spec and value > spec["maximum"]:
+            raise ValueError("above maximum")
     if "enum" in spec and value not in spec["enum"]:
         raise ValueError("invalid enum")
     return value
@@ -96,6 +113,7 @@ def _value(value, spec):
 def _args(values, props):
     if not isinstance(values, dict) or set(values) - set(props):
         raise ValueError("undeclared arguments")
+    values = {**{k: v["default"] for k, v in props.items() if "default" in v}, **values}
     if any(v.get("required") and (k not in values or values[k] in (None, "")) for k, v in props.items()):
         raise ValueError("missing required arguments")
     return {k: _value(v, props[k]) for k, v in values.items() if v is not None}
@@ -123,8 +141,9 @@ def _gemini_plan(cfg, payload, tools):
             "contents": [{"role": "user", "parts": [{"text": json.dumps(payload)}]}],
             "tools": [{"functionDeclarations": _schema(tools)}],
             "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
-            "generationConfig": {"temperature": 0, "maxOutputTokens": 2048,
-                                 "thinkingConfig": {"thinkingBudget": 0}}}
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 2048}}
+    if cfg["model"] == "gemini-2.5-flash":
+        body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
     from urllib.parse import quote
     req = urllib.request.Request(f"{GEMINI_BASE_URL}/models/{quote(cfg['model'], safe='')}:generateContent",
                                  data=json.dumps(body).encode(),

@@ -85,8 +85,8 @@ FDB_TOOLS = {
             # bedrooms / max_price are not asked for when the caller doesn't state them: the benchmark is
             # single-turn and the upstream prompt forbids clarifying questions. The official mock accepts
             # **kwargs, so optional filters stated in the tool's own domain are passed through (A-12).
-            "bedrooms": {"type": "integer", "required": False, "description": "Number of bedrooms"},
-            "max_price": {"type": "number", "required": False, "description": "Maximum monthly rent budget"},
+            "bedrooms": {"type": "integer", "required": True, "description": "Number of bedrooms"},
+            "max_price": {"type": "number", "required": True, "description": "Maximum monthly rent budget"},
             "pets_allowed": {"type": "boolean", "required": False, "description": "Only pet-friendly listings"},
         },
     },

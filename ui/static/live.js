@@ -634,6 +634,10 @@
     } catch (_) { /* Safari doesn't support mic permission query */ }
     try {
       const r = await (await fetch("/api/ready")).json();
+      out.push(row("Tool planner", r.planner?.configured, r.planner?.provider || "local rules"),
+        row("Available tools", !!r.tools?.length, String(r.tools?.length || 0)),
+        row("Server speech", true, r.speech || "local Whisper"),
+        row("Local-only mode", !!r.offline, r.offline ? "no hosted API calls" : "hosted APIs allowed"));
       out.push(row("Whisper ASR model", r.asr_loaded, r.asr_loaded ? "" : "lazy-loads on first clip"),
         row("CLIP vision model", r.clip_loaded, r.clip_loaded ? "" : "lazy-loads on first frame"),
         row("Tesseract OCR", r.tesseract));

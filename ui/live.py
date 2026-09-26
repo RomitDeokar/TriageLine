@@ -27,6 +27,8 @@ from typing import Any, Dict, Optional
 from agent.agent import ParticipantAgent
 from agent import perception as P
 from harness.mock_env import MockEnvironment
+from livekit_agent.fdb_tools import FDB_TOOLS
+from livekit_agent.fdb_v3_offline_replay import load_registry
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOADS = os.path.join(ROOT, "live_uploads")
@@ -43,8 +45,18 @@ class ToolAdapter:
 
     def __init__(self, sid: str):
         self.env = MockEnvironment(scenario_id=f"live-{sid}", time_scale=1.0)
+        self.fdb = load_registry()
+        # Keep the practice flight backend as a unit (search/book/cancel share
+        # its booking store), while exposing all the other FDB domains.
+        self.fdb_tools = {k: v for k, v in FDB_TOOLS.items() if k not in ("search_flights", "book_flight")}
+        self.registry = {**self.env.registry, **self.fdb_tools}
 
     async def execute(self, api: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if api in self.fdb_tools:
+            try:
+                return await asyncio.to_thread(self.fdb.call, api, **args)
+            except TypeError as exc:
+                return {"status": "error", "error": "invalid_args", "message": str(exc)}
         return await self.env.execute(api, args)
 
 
@@ -79,7 +91,7 @@ class LiveSession:
         self.loop.create_task(self.agent.run())
         self.loop.create_task(self._pump())
         self.loop.call_soon(self.in_q.put_nowait, {"event_type": "tool_manifest",
-                                                   "payload": {"tools": dict(self.tools.env.registry)}})
+                                                   "payload": {"tools": dict(self.tools.registry)}})
         self.ready.set()
         try:
             self.loop.run_forever()
@@ -136,12 +148,21 @@ class LiveSession:
                 cid, api, args = p.get("call_id"), p.get("api_name"), p.get("args") or {}
                 self.emit("task", call_id=cid, api=api, status="running", args=_short(args))
                 self.pending[cid] = self.loop.create_task(self._exec(cid, api, args))
+                self.pending[cid].tool_api = api
             elif kind == "cancel_tool":
                 cid = p.get("call_id")
                 t = self.pending.pop(cid, None)
                 if t and not t.done():
-                    t.cancel()
-                    self.emit("task", call_id=cid, status="cancelled")
+                    api = getattr(t, "tool_api", "")
+                    if api in self.tools.fdb_tools:
+                        # A running synchronous provider cannot be cancelled by
+                        # cancelling its awaiter. Preserve its result for reconciliation.
+                        self.emit("task", call_id=cid, status="cancel_requested")
+                        self.pending[cid] = t
+                    else:
+                        t.cancel()
+                        await self.in_q.put({"event_type": "tool_cancelled", "payload": {"call_id": cid}})
+                        self.emit("task", call_id=cid, status="cancelled")
                 else:
                     self.emit("task", call_id=cid, status="cancel_noop")
             else:
@@ -325,6 +346,11 @@ def readiness() -> Dict[str, Any]:
             "audio/pub_06_turn1_part2.mp3", "frames/pub_07_f017.png"]
     return {
         "mode": MODE,
+        "offline": os.environ.get("TRIAGELINE_OFFLINE") == "1",
+        "planner": _planner_status(),
+        "speech": "local cached Whisper" if os.environ.get("TRIAGELINE_OFFLINE") == "1" else
+                  "Gemini (server audio)" if __import__("agent.llm_planner", fromlist=["gemini_key"]).gemini_key() else "local Whisper",
+        "tools": sorted(set(MockEnvironment("readiness").registry) | (set(FDB_TOOLS) - {"search_flights"})),
         "packages": {m: bool(u.find_spec(m)) for m in ("faster_whisper", "onnxruntime", "huggingface_hub", "tokenizers", "PIL", "numpy")},
         "tesseract": bool(shutil.which("tesseract")),
         "asr_loaded": P._ASR not in (None, False),
@@ -332,3 +358,14 @@ def readiness() -> Dict[str, Any]:
         "assets": {p: os.path.exists(os.path.join(ROOT, p)) for p in need},
         "sessions": len(SESSIONS.by_id),
     }
+
+
+def _planner_status():
+    from agent import llm_planner
+    if not llm_planner.enabled():
+        return {"provider": "local rules", "configured": True}
+    try:
+        cfg = llm_planner.config()
+        return {"provider": cfg["provider"], "model": cfg["model"], "configured": bool(llm_planner.gemini_key()) if cfg["provider"] == "gemini" else bool(os.getenv(cfg["provider"].upper() + "_API_KEY"))}
+    except ValueError:
+        return {"provider": "invalid configuration", "configured": False}

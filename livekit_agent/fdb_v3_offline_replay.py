@@ -45,7 +45,7 @@ from livekit_agent.fdb_tools import FDB_TOOLS  # noqa: E402
 TEXT_MODE = False  # set by --text
 GAP_S = float(os.environ.get("REPLAY_GAP_S", "0.5"))   # pause that ends an ASR segment (LiveKit-like finals)
 COMMIT_S = float(os.environ.get("REPLAY_COMMIT_S", "1.6"))  # adapter commit gate, same default as live (C2)
-os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")  # same policy as cascaded_agent.py (C4)
+# Importing this module must not change the browser's interactive safety policy.
 SETTLE_S = 0.15    # let the agent's queue drain between events
 
 
@@ -150,7 +150,10 @@ async def console(turns=None):
 
     async def execute(cid, api, args):
         print(f"TOOL {api} {json.dumps(args)}", flush=True)
-        result = await asyncio.to_thread(registry.call, api, **args)
+        try:
+            result = await asyncio.to_thread(registry.call, api, **args)
+        except TypeError as exc:
+            result = {"status": "error", "error": "invalid_args", "message": str(exc)}
         status = "error" if result.get("status") == "error" else "success"
         await adapter.on_tool_completed(cid, result, status=status)
 
@@ -206,6 +209,7 @@ def main():
         return
     if not Path(a.data).is_dir():
         ap.error(f"data directory not found: {a.data}; run ./run_fdb_v3.sh --offline-text first")
+    os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")
     dirs = sorted(p for p in Path(a.data).iterdir() if (p / "metadata.json").exists())
     if a.only:
         dirs = [d for d in dirs if d.name.startswith(a.only)]

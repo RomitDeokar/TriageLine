@@ -39,8 +39,6 @@ def _install_fake_livekit():
     unmodified cascaded_agent.py can be imported and its entrypoint() called
     without the actual livekit-agents package (unavailable in this sandbox --
     see docs/LIVEKIT_AGENT_TECHNICAL_AUDIT.md Section 1)."""
-    if "livekit" in sys.modules:
-        return
 
     livekit = types.ModuleType("livekit")
 
@@ -175,6 +173,24 @@ def _install_fake_livekit():
 
 
 class CascadedAgentWiringTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from unittest.mock import patch
+        self._modules = patch.dict(sys.modules)
+        self._modules.start()
+        self._env = patch.dict(os.environ, {"OPENAI_API_KEY": "unit-test", "TRIAGELINE_STT_PROVIDER": "openai",
+                                           "TRIAGELINE_TTS_PROVIDER": "openai", "TRIAGELINE_LLM_PLANNER": "0"})
+        self._env.start()
+        self._cwd = os.getcwd()
+        # Upstream telemetry uses /tmp; tests must remain within the repository.
+        self._log_patch = None
+
+    async def asyncTearDown(self):
+        if self._log_patch:
+            self._log_patch.stop()
+        os.chdir(self._cwd)
+        self._env.stop()
+        self._modules.stop()
+
     async def test_entrypoint_wires_adapter_and_reaches_interruption(self):
         _install_fake_livekit()
         os.chdir(LK_DIR)  # cascaded_agent.py loads mock_apis.py off cwd/sys.path[0]
@@ -183,6 +199,9 @@ class CascadedAgentWiringTest(unittest.IsolatedAsyncioTestCase):
         import cascaded_agent  # the REAL, unmodified file under audit
         importlib.reload(cascaded_agent)  # in case a prior test imported the fake livekit differently
 
+        from unittest.mock import patch, AsyncMock
+        self._log_patch = patch.object(cascaded_agent, "append_async", new=AsyncMock())
+        self._log_patch.start()
         ctx = cascaded_agent.agents.JobContext(room_name="wiring-test-room")
 
         # cascaded_agent.entrypoint is the function registered via
