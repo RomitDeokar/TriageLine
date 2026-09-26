@@ -294,6 +294,11 @@ def _gemini_transcribe(path: str, prompt: str) -> Dict[str, Any]:
         return {**empty, "error": "gemini_" + type(exc).__name__}
 
 
+def _local_asr_available() -> bool:
+    import importlib.util
+    return _ASR not in (None, False) or (_ASR is None and importlib.util.find_spec("faster_whisper") is not None)
+
+
 def speech_config() -> Dict[str, Any]:
     """Browser upload STT: honor explicit providers; no keys means local ASR."""
     from .llm_planner import gemini_key
@@ -309,7 +314,7 @@ def speech_config() -> Dict[str, Any]:
     return {"provider": provider,
             "model": (ASR_MODEL_NAME or "base.en") if provider == "local" else
                      os.getenv("TRIAGELINE_STT_MODEL") or STT_DEFAULTS.get(provider, ""),
-            "configured": True if provider == "local" else bool(keys.get(provider)),
+            "configured": _local_asr_available() if provider == "local" else bool(keys.get(provider)),
             "offline": offline}
 
 

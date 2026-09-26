@@ -901,6 +901,14 @@ class ParticipantAgent:
             return True
         cands = pc.get("candidates") or []
         value = None
+        # A reply that clearly names a DIFFERENT tool is a new request, not the answer we
+        # asked for ("what amount?" -> "track my order ABC123" must not become amount=123).
+        _api = pc.get("api")
+        _top = (nlu.score_tools(turn, self.tools) or [(0, None)])[0]
+        if _api and not cands and _top[0] >= 2.5 and _top[1] not in (None, _api) and \
+                not ({_top[1], _api} <= FLIGHT_FAMILY) and len(nlu.tokens(turn)) > 2:
+            self.note("clarification_superseded", f"{_api} -> {_top[1]}")
+            return False
         if cands:
             for c in cands:
                 if re.search(r"\b" + re.escape(c.lower()) + r"\b", turn.lower()):
@@ -1590,7 +1598,10 @@ class ParticipantAgent:
         if api == "create_support_ticket":
             return f"I've opened support ticket {res.get('ticket_id')} for your {self.device_word()} — a technician will follow up."
         summary = nlu.humanize_result(api, res)
-        subj = s.get("destination")
+        # a city subject only describes location-bound results (flights, weather, commute),
+        # never unrelated domains ("Here's what I found for Chicago: rate 0.9")
+        unrelated = ("exchange", "card", "autopay", "order", "product", "cart", "identity", "ticket", "manual")
+        subj = None if any(w in api for w in unrelated) else s.get("destination")
         if self.tools.get(api, {}).get("kind") == "state_modifying":
             return nlu.done_phrase(api, res) or (f"Done — {summary}." if summary else "Done.")
         return (f"Here's what I found{' for ' + subj if subj else ''}: {summary}." if summary

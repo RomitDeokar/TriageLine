@@ -1,5 +1,26 @@
 # TriageLine — Theme 05: Interruptible Real-Time Agents
 
+## Quick start (verified 2026-09-26)
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-fdb.txt pytest
+# 1) Key-free: live assistant with mock tools (rules planner, no hosted calls)
+.venv/bin/python ui/server.py --offline          # http://localhost:8080/live.html
+# 2) Gemini (recommended): put GEMINI_API_KEY + LIVEKIT_URL/_API_KEY/_API_SECRET in livekit_agent/.env.local
+.venv/bin/python ui/server.py                    # browser app: Gemini planner + Gemini STT
+.venv/bin/python livekit_agent/cascaded_agent.py dev   # LiveKit worker (Gemini STT -> rules+Gemini planner -> Gemini TTS)
+# 3) Tests / practice harness
+.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q     # 154 passed
+.venv/bin/python run_local.py --all                                 # 89.1/100
+```
+
+With `GEMINI_API_KEY` set, `auto` selects Gemini for STT, TTS, and the planner (native function calling, T=0,
+schema-validated, rules first). Groq, Deepgram, and OpenAI are still available through
+`TRIAGELINE_STT_PROVIDER` / `TRIAGELINE_TTS_PROVIDER` / `TRIAGELINE_LLM_PROVIDER`. In offline mode the browser
+uses local Whisper if `faster-whisper` is installed, and falls back to the browser recognizer otherwise.
+`console` mode needs the system PortAudio library (`apt install libportaudio2`); use `dev` + the LiveKit
+Agents Playground otherwise. The sections below that say "no LLM" describe the default key-free configuration.
+
 TriageLine has **three distinct pieces**. They are easy to conflate because
 they share vocabulary (interruption, epoch, deliberation) — this README
 keeps them separate on purpose.

@@ -201,3 +201,26 @@ def test_missing_hosted_speech_key_is_explicit(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with patch("urllib.request.urlopen", side_effect=AssertionError("must not connect")):
         assert perception.transcribe("missing.wav")["error"] == "speech_not_configured"
+
+
+def test_new_request_supersedes_unrelated_clarification():
+    """'what amount?' followed by 'track my order ABC123' must track, not convert 123 USD."""
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ui"))
+    import live
+
+    sess = live.SESSIONS.start()
+    try:
+        sess.user_text("what's the exchange rate from USD to EUR", False)
+        time.sleep(0.6)
+        sess.user_text("track my order ABC123", False)
+        deadline = time.time() + 5
+        while time.time() < deadline and not any(
+                e.get("kind") == "task" and e.get("status") == "done" for e in sess.log):
+            time.sleep(0.1)
+        calls = [(e["api"], e.get("args")) for e in sess.log if e.get("kind") == "task" and e.get("status") == "running"]
+        assert calls == [("track_order", {"order_id": "ABC123"})]
+        final = [e["text"] for e in sess.log if e.get("action") == "final_response"][-1]
+        assert "Chicago" not in final and "ABC123" in final
+    finally:
+        live.SESSIONS.end(sess.sid)
