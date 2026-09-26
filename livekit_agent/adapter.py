@@ -124,9 +124,12 @@ class TriageAdapter:
         self._pump_task = asyncio.create_task(self._pump_outputs())
 
     async def stop(self):
+        self.close()
         if self._settle_task:
             self._settle_task.cancel()
         pending = list(self._tool_tasks.values()) + list(self.agent.tasks)
+        if self._settle_task:
+            pending.append(self._settle_task)
         for t in pending:
             t.cancel()
         self._tool_tasks.clear()
@@ -152,7 +155,8 @@ class TriageAdapter:
     def busy(self) -> bool:
         """True while the agent owns live work for the current request: a tool in
         flight, or a turn it has not answered yet."""
-        return (bool(self.agent.inflight) or not self.agent.answered) and self.agent.last_api is not None
+        return bool(self.agent.planner_pending) or ((bool(self.agent.inflight) or not self.agent.answered)
+                                                   and self.agent.last_api is not None)
 
     async def on_user_speech_start(self):
         """VAD onset of user speech (audit B-08). If the agent is talking or working,
@@ -195,6 +199,21 @@ class TriageAdapter:
         if self._pending_final and not self._closed:
             text, self._pending_final = " ".join(self._pending_final), []
             await self._route_final(text)
+
+    async def wait_idle(self, timeout: float = 30.0):
+        """Drain queued events, planning and chained tools; do not truncate slow offline work."""
+        await self.flush()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        quiet = 0
+        while quiet < 2:
+            active = (not self.in_q.empty() or not self.out_q.empty() or self._tool_tasks
+                      or self.agent.tasks or self.agent.inflight or self.agent.planner_pending
+                      or self._pending_final)
+            quiet = 0 if active else quiet + 1
+            if loop.time() >= deadline:
+                raise TimeoutError("agent did not finish planning/tool execution before replay timeout")
+            await asyncio.sleep(0.01)
 
     def close(self):
         """Room gone: drop buffered speech, never issue a late tool call (B8)."""

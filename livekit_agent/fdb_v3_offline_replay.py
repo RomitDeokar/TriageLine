@@ -50,7 +50,8 @@ SETTLE_S = 0.15    # let the agent's queue drain between events
 
 
 def load_registry():
-    sys.path.insert(0, str(FDB_REPO))
+    # Bundled upstream mocks also work without a separate benchmark clone.
+    sys.path.insert(0, str(FDB_REPO if FDB_REPO.is_dir() else ROOT / "livekit_agent"))
     import mock_apis  # official, unmodified
     return mock_apis.MockAPIRegistry(latency_profile="instant", enable_logging=False)
 
@@ -92,7 +93,7 @@ async def replay(example_dir: Path, registry, provider: str):
     async def execute(cid, api, args):
         ts = time.time()
         try:
-            res = registry.call(api, **args)
+            res = await asyncio.to_thread(registry.call, api, **args)
         except Exception as e:  # official mocks raise on bad kwargs → structured error
             res = {"status": "error", "error": "invalid_args", "message": f"{type(e).__name__}: {e}"}
         calls.append({"function": api, "args": args, "timestamp_start": round(ts - t0, 3),
@@ -100,8 +101,7 @@ async def replay(example_dir: Path, registry, provider: str):
         if isinstance(res, dict) and "status" not in res:
             res = {"status": "success", **res}
         st = "error" if (isinstance(res, dict) and res.get("status") == "error") else "success"
-        asyncio.get_running_loop().call_soon(
-            lambda: asyncio.ensure_future(adapter.on_tool_completed(cid, res, status=st)))
+        await adapter.on_tool_completed(cid, res, status=st)
 
     async def cancel(cid):
         pass
@@ -115,17 +115,20 @@ async def replay(example_dir: Path, registry, provider: str):
     adapter = TriageAdapter(tool_executor=execute, tool_canceller=cancel, speak=speak,
                             settle_s=commit, max_settle_s=commit * 1.6)
     await adapter.start(FDB_TOOLS)
-    for i, t in enumerate(turns):
-        await adapter.on_user_final(t["text"])
-        nxt = turns[i + 1]["start"] if i + 1 < len(turns) else t["end"] + 3.0
-        gap = max(0.0, nxt - t["end"]) / 8 if not TEXT_MODE else SETTLE_S * 2
-        await asyncio.sleep(max(gap, 0.02))
-    await asyncio.sleep(max(SETTLE_S, commit * 2))
-    await adapter.flush()
-    await asyncio.sleep(SETTLE_S * 2)
-    await adapter.stop()
+    replay_status = "completed"
+    try:
+        for i, t in enumerate(turns):
+            await adapter.on_user_final(t["text"])
+            nxt = turns[i + 1]["start"] if i + 1 < len(turns) else t["end"] + 3.0
+            gap = max(0.0, nxt - t["end"]) / 8 if not TEXT_MODE else SETTLE_S * 2
+            await asyncio.sleep(max(gap, 0.02))
+        await adapter.wait_idle(timeout=float(os.environ.get("REPLAY_TIMEOUT_S", "30")))
+    except TimeoutError:
+        replay_status = "timeout"
+    finally:
+        await adapter.stop()
     result = {
-        "example_id": meta["id"], "provider": provider, "status": "completed",
+        "example_id": meta["id"], "provider": provider, "status": replay_status,
         "mode": "offline_replay_official_data",
         "user_turns_asr": turns, "asr_seconds": round(asr_s, 2),
         "actual_tool_calls": [{k: v for k, v in c.items() if k != "call_id"} for c in calls],
@@ -150,15 +153,20 @@ def main():
     TEXT_MODE = a.text
     if a.text and a.provider == "triageline":
         a.provider = "triageline_text"
-    registry = load_registry()
+    # Explicit offline means no hosted planner even if keys are exported in the shell.
+    os.environ["TRIAGELINE_LLM_PLANNER"] = "0"
+    if not Path(a.data).is_dir():
+        ap.error(f"data directory not found: {a.data}; run ./run_fdb_v3.sh --offline-text first")
     dirs = sorted(p for p in Path(a.data).iterdir() if (p / "metadata.json").exists())
     if a.only:
         dirs = [d for d in dirs if d.name.startswith(a.only)]
     if a.limit:
         dirs = dirs[: a.limit]
+    if not dirs:
+        ap.error("no metadata.json examples found in the selected data directory")
     ok = 0
     for i, d in enumerate(dirs, 1):
-        r = asyncio.run(replay(d, registry, a.provider))
+        r = asyncio.run(replay(d, load_registry(), a.provider))
         exp = [c["function"] for c in r["expected_tool_calls"] or []]
         got = [c["function"] for c in r["actual_tool_calls"]]
         hit = sorted(exp) == sorted(got)
