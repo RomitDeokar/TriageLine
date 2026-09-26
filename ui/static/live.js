@@ -27,7 +27,10 @@
   const opt = {
     tts: () => HAS_TTS && $("#m-tts").checked,
     hands: () => $("#m-hands").checked,
-    serverAsr: () => state.audio.offline || state.audio.provider !== "local" || $("#m-server-asr").checked || !SR,
+    // Server STT when it is configured (hosted provider or cached local Whisper); otherwise
+    // fall back to the browser recognizer so voice still works without faster-whisper.
+    serverAsr: () => !SR || (state.audio.configured && (state.audio.offline || state.audio.provider !== "local"))
+                     || ($("#m-server-asr").checked && state.audio.configured),
     haptics: () => $("#m-haptics").checked,
   };
 
@@ -313,9 +316,9 @@
     const u = new SpeechSynthesisUtterance(item.text);
     u.rate = 1.05; u.lang = "en-US";
     if (state.audio.offline) {
+      // Prefer an on-device voice; otherwise use the browser default rather than going silent.
       const localVoice = speechSynthesis.getVoices().find((v) => v.localService && v.lang.startsWith("en"));
-      if (!localVoice) { state.speaking = false; micBtn.classList.remove("speaking"); setWaveform(state.listening); state.speechQ = []; return; }
-      u.voice = localVoice;
+      if (localVoice) u.voice = localVoice;
     }
     item.el.classList.add("speaking");
     let finished = false;
