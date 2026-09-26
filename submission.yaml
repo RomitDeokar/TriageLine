@@ -6,3 +6,14 @@ python: "3.12"
 requirements: "requirements-fdb.txt"
 fdb_commit: "3e799c45a045256f47d5f1c9cda90157e2d2ec9e"
 practice_harness_entry_point: "agent.agent:ParticipantAgent"   # old kit (run_local.py), not scored
+
+# 2026-09-26: hybrid planner is optional and off by default
+llm_planner:
+  enabled_by: TRIAGELINE_LLM_PLANNER=1
+  default_model: gpt-4o-mini   # or groq llama-3.3-70b-versatile
+  temperature: 0
+  seed: 7
+reported_scores:
+  text_replay_strict: "85/100 (upper bound, public-set tuned)"
+  audio_replay_strict: "54/100 pre-fix; re-measure with fdb_v3_offline_replay.py (no --text)"
+  live_livekit: "not run"

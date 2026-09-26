@@ -796,6 +796,18 @@ def extract_filters(text: str) -> List[Tuple[str, Any]]:
             if key not in found:
                 order.append(key)
             found[key] = (m.start(), val)         # later mention (a correction) wins
+    # generic "<key> to <value>" pairs after a filter cue ("... and laundry to in-unit") — B7
+    if re.search(r"\bfilters?\b|\bset\b|\bupdate\b|\bchange\b", low):
+        for m in re.finditer(r"\b([a-z][a-z_\- ]{1,20}?)\s+(?:to|=|as)\s+([a-z0-9][a-z0-9_\-]*)", low):
+            k = re.sub(r"^(?:.*\b(?:for|filter|the|set|update|change|and|my)\s+)", "", m.group(1)).strip().replace(" ", "_")
+            if not k or k in STOP or k in ("filter", "search", "it", "that", "search_filter") or \
+                    any(m.start() <= pos < m.end() + 1 for pos, _ in found.values()):
+                continue
+            raw = m.group(2)
+            val = True if raw in ("true", "yes", "on") else False if raw in ("false", "no", "off") else raw
+            if k not in found:
+                order.append(k)
+            found[k] = (m.start(), val)
     return [(k, found[k][1]) for k in order]
 
 
@@ -901,7 +913,12 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
         if got:
             return got
         m = re.search(r"\b([A-Z]{2,}\d+|\d+[A-Z]{2,}\w*)\b", text)
-        return m.group(1) if m else None
+        if m:
+            return m.group(1)
+        # single-letter ids bound to an id cue ("item P52", "order ID 7Q9") — C1
+        m = re.search(r"(?i)\b(?:item|product|sku|order|id|number|code)\s+(?:is\s+|number\s+|#\s*)?"
+                      r"([A-Za-z]{0,3}\d[A-Za-z0-9]{0,11}|[A-Za-z]\d[A-Za-z0-9]*)\b", text)
+        return m.group(1).upper() if m and plausible_id(m.group(1)) else None
     if lname in ("model", "device", "device_model"):
         return ctx.get("device_model")
     if lname in ("mode", "travel_mode", "transport_mode"):
@@ -1153,6 +1170,8 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
     that field is next to it; the value the user settled on wins (\"3 of them -- no wait, just 1\" -> 1)."""
     t = re.sub(r"\.{2,}|\u2026", " ", text or "")
     t = norm(re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|like)\b[,.]*", " ", t))     # "go up... um, to 1600"
+    t = re.sub(r"(?i)\b(add|put|get|order|buy|want|make it)\s*,\s*", r"\1 ", t)    # "add, like, 2" (B6)
+    t = re.sub(r"\s*,\s*(?=\d)", " ", t) if re.search(r"(?i)\b(add|buy|order)\b", t) else t
     for w, n in WORD_NUM.items():
         t = re.sub(r"\b" + w + r"\b", str(n), t, flags=re.I)
     t = TIME_RE.sub(" ", t)
@@ -1258,3 +1277,202 @@ def humanize_result(tool: str, result: Dict[str, Any], _depth: int = 0) -> str:
         else:
             bits.append(f"{k.replace('_', ' ')} {v}")
     return ", ".join(b for b in bits if b)
+
+
+# --------------------------------------------------------------------------- spoken-form normalisation (C1)
+# Generic ASR repair applied BEFORE intent ranking / argument extraction. Language-level rules only
+# (letter names, digit words, "double"/"triple", common homophones next to their disambiguating
+# context) — nothing keyed to a benchmark item.
+_DIGIT_WORDS = {"zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2", "to": "2", "too": "2", "three": "3",
+                "four": "4", "for": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
+_STRICT_DIGITS = {k: v for k, v in _DIGIT_WORDS.items() if k not in ("oh", "o", "to", "too", "for")}
+_NATO = {"alpha": "A", "alfa": "A", "bravo": "B", "charlie": "C", "delta": "D", "echo": "E", "foxtrot": "F",
+         "golf": "G", "hotel": "H", "india": "I", "juliet": "J", "juliett": "J", "kilo": "K", "lima": "L",
+         "mike": "M", "november": "N", "oscar": "O", "papa": "P", "quebec": "Q", "romeo": "R", "sierra": "S",
+         "tango": "T", "uniform": "U", "victor": "V", "whiskey": "W", "xray": "X", "x-ray": "X", "yankee": "Y",
+         "zulu": "Z"}
+_LETTER_NAMES = {"ay": "A", "bee": "B", "see": "C", "cee": "C", "dee": "D", "ee": "E", "eff": "F", "gee": "G",
+                 "aitch": "H", "jay": "J", "kay": "K", "el": "L", "em": "M", "en": "N", "pee": "P", "cue": "Q",
+                 "queue": "Q", "ar": "R", "ess": "S", "tee": "T", "you": "U", "vee": "V", "ex": "X", "why": "Y",
+                 "zee": "Z", "zed": "Z"}
+_ID_CUE = r"(?:order|item|product|sku|booking|flight|ticket|confirmation|reference|tracking|passport|document|" \
+          r"card|account|id|number|code)"
+_ASR_CONFUSIONS = [
+    # (pattern, replacement) — each rewrite needs its disambiguating context in the same clause
+    (re.compile(r"\b(?:the\s+)?idea\s+(?:is|was|number)\b", re.I), "the ID is"),
+    (re.compile(r"\b(?:my|the|an?)\s+idea\s+(?=(?:[A-Za-z0-9][,\-\s]*){2,})", re.I), "the ID "),
+    (re.compile(r"\border\s+idea\b", re.I), "order ID"),
+    (re.compile(r"\bori?gin(?:al)?\s+(number|id|i\.d\.)\b", re.I), r"order \1"),
+    (re.compile(r"\b(to|in|into|from|on)\s+(?:my|the)\s+card\b(?=(?:(?!\bbenefit|\bpoints?\b|\breward).)*$)", re.I),
+     r"\1 my cart"),
+    (re.compile(r"\badd\b([^.?!]{0,40})\bto\s+(?:my\s+|the\s+)?car\b", re.I), r"add\1to my cart"),
+    (re.compile(r"\bi\.\s?d\.?(?=\s|$)", re.I), "ID"),
+]
+
+
+def _tok_char(tok: str) -> Optional[str]:
+    t = tok.lower().strip(".,;:!?'\"")
+    if not t:
+        return None
+    if t in _STRICT_DIGITS:
+        return _STRICT_DIGITS[t]
+    if t in _NATO:
+        return _NATO[t]
+    if re.fullmatch(r"[a-z]", t) or re.fullmatch(r"\d{1,3}", t):
+        return t.upper()
+    if re.fullmatch(r"[a-z]\d{1,3}|\d{1,3}[a-z]|[a-z]{2,3}\d{0,3}", t) and len(t) <= 4 and t not in STOP \
+            and t not in ("is", "it", "my", "the", "and", "for", "you", "can", "of", "to", "at", "in", "on", "am",
+                          "an", "as", "be", "by", "do", "go", "he", "if", "me", "no", "or", "so", "up", "us", "we"):
+        raw = tok.strip(".,;:!?'\"")
+        return t.upper() if any(ch.isdigit() for ch in t) or raw.isupper() else None
+    return None
+
+
+def _join_spelled(seq: List[str]) -> Optional[str]:
+    out, i = [], 0
+    while i < len(seq):
+        t = seq[i].lower().strip(".,;:!?")
+        if t in ("double", "triple") and i + 1 < len(seq):
+            c = _tok_char(seq[i + 1])
+            if c:
+                out.append(c * (2 if t == "double" else 3))
+                i += 2
+                continue
+        c = _tok_char(seq[i])
+        if c is None:
+            return None
+        out.append(c)
+        i += 1
+    s = "".join(out)
+    return s if 2 <= len(s) <= 14 and any(ch.isdigit() for ch in s) else None
+
+
+def normalize_spoken_ids(text: str) -> str:
+    """Collapse a spoken alphanumeric id after an id cue into one token:
+    "order number is x, y, z, eight, eight" -> "order number is XYZ88"; "item P five two" -> "item P52";
+    "double five" -> "55"; NATO letters ("Kilo two") -> K2. Only runs after an id cue word."""
+    if not text:
+        return text
+    words = re.findall(r"\S+", text)
+    res, i = [], 0
+    while i < len(words):
+        res.append(words[i])
+        w = words[i].lower().strip(".,;:!?")
+        cue_seen = any(re.fullmatch(_ID_CUE, x.lower().strip(".,;:!?")) for x in words[:i])
+        if re.fullmatch(_ID_CUE, w) or (cue_seen and w in ("it's", "its", "it", "that's", "is", "was")):
+            j = i + 1
+            while j < len(words) and words[j].lower().strip(".,;:!?") in ("is", "was", "it's", "its", "number",
+                                                                          "id", "code", "of", "the", "#", "uh", "um"):
+                j += 1
+            best = None
+            for k in range(min(len(words), j + 14), j + 1, -1):
+                joined = _join_spelled(words[j:k])
+                if joined and (k - j) >= 2:
+                    best = (k, joined)
+                    break
+            if best:
+                res.extend(words[i + 1:j])
+                tail = re.search(r"[.?!,]+$", words[best[0] - 1])
+                res.append(best[1] + (tail.group() if tail and tail.group() != "," else ""))
+                i = best[0]
+                continue
+        i += 1
+    return " ".join(res)
+
+
+def normalize_asr(text: str) -> str:
+    """Generic spoken-form repair: homophone confusions in context, then spoken ids (C1)."""
+    t = text or ""
+    for rx, rep in _ASR_CONFUSIONS:
+        t = rx.sub(rep, t)
+    return normalize_spoken_ids(t)
+
+
+def plausible_id(value: Any) -> bool:
+    """A free-text identifier must look like one (B2): has a digit, no spaces, 2-14 chars."""
+    v = str(value or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-_]{1,13}", v) and re.search(r"\d", v))
+
+
+def filler_only(text: str) -> bool:
+    """True for empty / filler / noise-only turns ("um", "...", "uh huh", "hmm okay") (B4)."""
+    t = re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|mm+|mhm|huh|erm?|ah+|oh|okay|ok|so|well|yeah|like|hm+)\b", " ",
+               text or "")
+    return not re.search(r"[A-Za-z0-9]", t)
+
+
+def tool_vocabulary(tools: Dict[str, Any], limit: int = 80) -> List[str]:
+    """Key terms from the tool manifest, used to bias STT (Whisper prompt / Deepgram keyterm)."""
+    words: List[str] = []
+    for name, spec in (tools or {}).items():
+        words += name.split("_")
+        words += re.findall(r"[A-Za-z]{3,}", str(spec.get("description", "")))
+        for arg, a in (spec.get("args") or {}).items():
+            words += arg.split("_")
+            words += re.findall(r"'([^']{2,20})'", str(a.get("description", "")))
+    seen, out = set(), []
+    for w in ["order ID", "cart", "SKU", "passport", "autopay", "exchange rate", "bedroom"] + words:
+        k = w.lower()
+        if k in STOP or k in seen or len(k) < 2:
+            continue
+        seen.add(k)
+        out.append(w)
+    return out[:limit]
+
+
+# --------------------------------------------------------------------------- spoken templates (B5/B17)
+def _v(args: Dict[str, Any], *keys: str) -> Optional[str]:
+    for k in keys:
+        if args.get(k) not in (None, ""):
+            return str(args[k])
+    return None
+
+
+def ack_phrase(api: str, args: Dict[str, Any], kind: str = "read_only") -> str:
+    """First substantive line: repeats the key argument so the user can correct it by barge-in."""
+    a = args or {}
+    n = api.lower()
+    if "cart" in n:
+        q, p = a.get("quantity"), _v(a, "product_id", "item_id", "sku")
+        return f"Adding {str(q) + ' × ' if q else ''}{p or 'that item'} to your cart."
+    if "track" in n:
+        return f"Checking order {_v(a, 'order_id') or ''}".rstrip() + " now."
+    if "apartment" in n:
+        bits = [f"{a['bedrooms']}-bedroom" if a.get("bedrooms") not in (None, "") else "",
+                "apartments", f"in {a['city']}" if a.get("city") else "",
+                f"under {a['max_price']:g}" if isinstance(a.get("max_price"), (int, float)) else ""]
+        return "Looking for " + " ".join(b for b in bits if b) + "."
+    if "commute" in n:
+        return f"Working out the commute from {_v(a, 'origin_address') or 'there'} to {_v(a, 'destination_address') or 'there'}."
+    if "product" in n:
+        return f"Searching for {_v(a, 'query') or 'that'}" + (f" under {a['max_price']:g}" if isinstance(a.get('max_price'), (int, float)) else "") + "."
+    if "exchange" in n:
+        return f"Checking the {_v(a, 'from_currency', 'base', 'source_currency') or ''} to {_v(a, 'to_currency', 'target', 'target_currency') or ''} rate.".replace("  ", " ")
+    if "benefit" in n:
+        return f"Looking up your {_v(a, 'card_type') or 'card'} card benefits."
+    if "flight" in n and "book" in n:
+        return f"Booking {_v(a, 'flight_id') or 'that flight'}" + (f" for {a['passenger_name']}" if a.get("passenger_name") else "") + "."
+    if "flight" in n:
+        return f"Checking flights to {_v(a, 'destination') or 'there'}" + (f" for {a['date']}" if a.get("date") else "") + "."
+    vals = [str(v) for v in a.values() if isinstance(v, (str, int, float)) and not isinstance(v, bool)][:1]
+    what = norm(api.replace("_", " "))
+    if kind == "state_modifying":
+        return f"Okay — updating that now{' (' + vals[0] + ')' if vals else ''}."
+    return f"Checking {what}" + (f" for {vals[0]}." if vals else ".")
+
+
+def done_phrase(api: str, res: Dict[str, Any]) -> Optional[str]:
+    r = res or {}
+    n = api.lower()
+    if "cart" in n:
+        q, p = r.get("quantity"), r.get("product_id")
+        tot = r.get("cart_total")
+        return f"Done — added {str(q) + ' × ' if q else ''}{p or 'the item'} to your cart" + \
+            (f"; your cart total is {tot:.2f}." if isinstance(tot, (int, float)) else ".")
+    if "filter" in n:
+        return f"Done — {r.get('filter_updated', 'the filter')} is now {r.get('new_value')}."
+    if "autopay" in n:
+        return "Done — your autopay settings are updated."
+    if "identity" in n or "doc" in n:
+        return "Done — your document details are updated."
+    return None

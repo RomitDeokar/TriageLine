@@ -10,7 +10,7 @@ Simulates real-world API latency to test how voice agents handle
 
 import time
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 

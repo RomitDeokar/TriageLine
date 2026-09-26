@@ -59,6 +59,22 @@ def test_free_combo_groq_plus_deepgram():
         restore(s)
 
 
+def test_auto_prefers_stronger_stt():
+    s = with_env(DEEPGRAM_API_KEY="x", GROQ_API_KEY="x", OPENAI_API_KEY="x")
+    try:
+        assert sp.selected()["stt_provider"] == "deepgram"
+    finally:
+        restore(s)
+    s = with_env(GROQ_API_KEY="x", OPENAI_API_KEY="x")
+    try:
+        c = sp.selected()
+        assert (c["stt_provider"], c["stt_model"]) == ("groq", "whisper-large-v3-turbo"), c
+    finally:
+        restore(s)
+    terms = sp.bias_terms()
+    assert any("cart" in t.lower() for t in terms) and "order ID" in sp.whisper_prompt(terms)
+
+
 def test_unknown_provider_rejected():
     for var in ("TRIAGELINE_STT_PROVIDER", "TRIAGELINE_TTS_PROVIDER"):
         s = with_env(**{var: "nope"})
@@ -104,7 +120,7 @@ def test_plugins_construct_with_dummy_keys():
 
 
 if __name__ == "__main__":
-    for t in (test_defaults_are_openai, test_free_combo_groq_plus_deepgram,
+    for t in (test_defaults_are_openai, test_auto_prefers_stronger_stt, test_free_combo_groq_plus_deepgram,
               test_unknown_provider_rejected, test_plugins_construct_with_dummy_keys):
         t()
         print(f"  ok  {t.__name__}")

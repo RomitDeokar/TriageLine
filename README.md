@@ -54,10 +54,24 @@ Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 
 `run_fdb_v3.sh` stages: venv + pinned deps → credentials → clone the pinned FDB-v3 commit + `gdown` the data → start `cascaded_agent.py` and wait for registration → official `run_tool_benchmark_all_released.py` + `evaluate_tool_calls.py` / `evaluate_pass_rate.py` / `analyze_tool_latency.py` → artefacts in `results/<timestamp>/` + `results/results.md`. The judge is preflighted: if gpt-4o is unreachable, the run falls back to exact match and says so.
 
-### Current numbers (offline text replay, official data + official evaluators, exact match)
-**Strict pass 85/100 (85.0%)**, tool-selection 95.5%, argument accuracy 89.5%. Dev split 83.0% · held-out split 87.2% (`livekit_agent/fdb_split.py`). See `results/results.md`. The live-audio run needs your own LiveKit keys.
+### Current numbers — read this first
+| Mode | Strict pass | Notes |
+|---|---|---|
+| **Text replay** (official transcripts → adapter → official evaluator) | 85/100 | upper bound; isolates agent logic from ASR. Tuned on the public set — see caveat below. |
+| **Audio replay** (official input.wav → faster-whisper base.en → adapter) | 54/100 (pre-fix, external review 2026-09-26) | closer to what the organisers re-run; not yet re-measured after the fixes below. |
+| Live LiveKit run | not run | needs your LiveKit + STT/TTS keys: `./run_fdb_v3.sh --limit 5 --require-judge` |
 
-**Anti-overfitting statement:** lexicons are generic (no benchmark-specific literals). Fixes target failure *classes* (repair markers, clause splitting, schema defaults), never individual items. The split is a fixed SHA-256 hash of the scenario id, and held-out results are reported, not debugged.
+Re-measure honestly: `python3 livekit_agent/fdb_v3_offline_replay.py` (no `--text`) then the official `evaluate_pass_rate.py`.
+
+**Overfitting caveat.** Commits tuned rules on the full public benchmark and the dev/held-out split is cut from the same set, so the text number is optimistic. An independent paraphrased dev set is still to do.
+
+### Robustness fixes (2026-09-26 review)
+- **Commit gate (C2):** finals are merged into one running transcript; commit after `TRIAGELINE_SETTLE_S` (1.6 s), or `TRIAGELINE_MAX_SETTLE_S` (2.5 s) when the turn looks unfinished / a ranked tool lacks required args. Semantic turn detector used when `livekit-plugins-turn-detector` is installed (`turn_handling=`, B16).
+- **Read-only dedup (C3):** identical read-only calls are never issued twice in a session (reset after any state change).
+- **Benchmark policy (C4):** `TRIAGELINE_BENCHMARK_POLICY=1` (default in `cascaded_agent.py`) calls with known args instead of asking.
+- **ASR repair (C1):** spoken-id normaliser (`x, y, z, eight, eight`→XYZ88, `double five`, NATO), context-gated confusions (card→cart, idea→ID, origin→order), STT biased from the tool manifest (Whisper `prompt`, Deepgram `keyterm`), temperature 0; `TRIAGELINE_STT_PROVIDER=auto` prefers Deepgram nova-3 → Groq whisper-large-v3-turbo → OpenAI whisper-1.
+- **Hybrid LLM planner (C6, optional):** `TRIAGELINE_LLM_PLANNER=1` (gpt-4o-mini or Groq Llama, T=0, seed 7, schema-validated JSON) is consulted only when rules can't build a complete call.
+- Bugs B1–B8, B10–B17 fixed; B9: `mock_apis.py`/`latency_injector.py` are now byte-identical to upstream at the pinned commit. Tests: `tests/test_live_robustness.py` (fragments, corrections, ids, fillers, chains, teardown, fuzz).
 
 ## C. Triage Line extension (`livekit_agent/triage_brain.py`, `legacy/core/`)
 

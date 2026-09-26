@@ -138,7 +138,9 @@ def test_r21_live_repeat_request_gets_ack():
             await r.result(r.calls("flight_search")[0], **flights("BOS"))
             n = len(r.spoken("filler_speech"))
             await r.say("Find flights to Boston.")
-            assert len(r.calls("flight_search")) == 2
+            # C3: an identical read-only call is never logged twice in a session (strict scorer);
+            # the repeat still gets an immediate acknowledgement and the cached answer
+            assert len(r.calls("flight_search")) == 1
             assert len(r.spoken("filler_speech")) == n + 1
     run(go())
 

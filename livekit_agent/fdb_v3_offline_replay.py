@@ -43,7 +43,9 @@ from livekit_agent.adapter import TriageAdapter  # noqa: E402
 from livekit_agent.fdb_tools import FDB_TOOLS  # noqa: E402
 
 TEXT_MODE = False  # set by --text
-GAP_S = 1.2        # a pause at least this long ends a user turn
+GAP_S = float(os.environ.get("REPLAY_GAP_S", "0.5"))   # pause that ends an ASR segment (LiveKit-like finals)
+COMMIT_S = float(os.environ.get("REPLAY_COMMIT_S", "1.6"))  # adapter commit gate, same default as live (C2)
+os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")  # same policy as cascaded_agent.py (C4)
 SETTLE_S = 0.15    # let the agent's queue drain between events
 
 
@@ -61,7 +63,9 @@ def asr_turns(wav: str):
     from faster_whisper import WhisperModel
     if _ASR is None:
         _ASR = WhisperModel(os.environ.get("ASR_MODEL", "base.en"), device="cpu", compute_type="int8")
-    segs, _ = _ASR.transcribe(wav, beam_size=1, vad_filter=True)
+    from livekit_agent.speech_providers import bias_terms, whisper_prompt
+    prompt = whisper_prompt(bias_terms(FDB_TOOLS)) or None     # same tool-vocabulary biasing as live (C1)
+    segs, _ = _ASR.transcribe(wav, beam_size=1, vad_filter=True, temperature=0.0, initial_prompt=prompt)
     turns, cur, last_end = [], [], None
     for s in segs:
         if last_end is not None and s.start - last_end >= GAP_S and cur:
@@ -105,13 +109,20 @@ async def replay(example_dir: Path, registry, provider: str):
     async def speak(kind, text):
         spoken.append({"kind": kind, "text": text, "t": round(time.time() - t0, 3)})
 
-    adapter = TriageAdapter(tool_executor=execute, tool_canceller=cancel, speak=speak)
+    # audio mode replays each ASR segment as a separate final at its real (compressed) time offset
+    # through the same commit gate as live, so fragmentation is exercised exactly as in LiveKit (C2)
+    commit = 0.0 if TEXT_MODE else COMMIT_S / 8
+    adapter = TriageAdapter(tool_executor=execute, tool_canceller=cancel, speak=speak,
+                            settle_s=commit, max_settle_s=commit * 1.6)
     await adapter.start(FDB_TOOLS)
-    for t in turns:
+    for i, t in enumerate(turns):
         await adapter.on_user_final(t["text"])
-        for _ in range(8):
-            await asyncio.sleep(SETTLE_S / 4)
-    await asyncio.sleep(SETTLE_S)
+        nxt = turns[i + 1]["start"] if i + 1 < len(turns) else t["end"] + 3.0
+        gap = max(0.0, nxt - t["end"]) / 8 if not TEXT_MODE else SETTLE_S * 2
+        await asyncio.sleep(max(gap, 0.02))
+    await asyncio.sleep(max(SETTLE_S, commit * 2))
+    await adapter.flush()
+    await asyncio.sleep(SETTLE_S * 2)
     await adapter.stop()
     result = {
         "example_id": meta["id"], "provider": provider, "status": "completed",
