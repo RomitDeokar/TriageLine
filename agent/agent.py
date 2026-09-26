@@ -139,6 +139,8 @@ class ParticipantAgent:
         self.presented: List[Dict[str, Any]] = []         # candidates last shown to the user (R12)
         self.last_turn = ""
         self.last_api: Optional[str] = None
+        self.planner_pending: Optional[Dict[str, Any]] = None
+        self._planner_skip = False
         self.answered = False
         self.tasks: set = set()
         self.read_keys: set = set()                       # op keys of read-only calls already issued (C3)
@@ -252,7 +254,28 @@ class ParticipantAgent:
 
     async def on_internal(self, p: Dict[str, Any]):
         kind = p.get("kind")
-        if kind == "asr_done":
+        if kind == "planner_done":
+            pending = self.planner_pending
+            if not pending or pending["token"] != p["token"] or p["version"] != self.version:
+                return self.note("stale_planner_dropped")
+            self.planner_pending = None
+            calls = llm_planner.validate(p["calls"], self.tools)
+            if not calls:
+                self._planner_skip = True
+                try:
+                    await self.on_turn(pending["turn"])
+                finally:
+                    self._planner_skip = False
+                return
+            call = calls[0]
+            api, args = call["name"], call["args"]
+            self.last_api = api
+            self.state["intent"] = api
+            self.state["slots"].update(args)
+            await self.say("filler_speech", self.ack(api, args))
+            await self.call(api, args, deps=dict(args))
+            self.note("llm_planner_used", api)
+        elif kind == "asr_done":
             if p["version"] != self.version:
                 return self.note("stale_asr_dropped")
             await self.on_audio_result(p["results"])
@@ -384,6 +407,7 @@ class ParticipantAgent:
     def invalidate(self, keep_frame: bool = True):
         """One routine for everything a cancelled task owns."""
         self.version += 1
+        self.planner_pending = None
         self.buffer = []
         for t in self.audio_parts:
             t.cancel()
@@ -478,6 +502,8 @@ class ParticipantAgent:
     async def on_turn(self, turn: str, from_audio: bool = False, _clause: bool = False):
         if nlu.filler_only(turn):
             return                                # "um" / "..." / noise: say nothing, keep the floor open (B4)
+        if self.planner_pending:
+            self.invalidate()
         low = turn.lower()
         if not nlu.tokens(re.sub(r"(?i)\b(please|thanks|thank you|ok|okay)\b", " ", turn)) and \
                 (self.inflight or self.answered is False and self.last_api):
@@ -708,7 +734,7 @@ class ParticipantAgent:
         if self.version != self.compound_version and self.compound_version >= 0:
             self.compound = []               # an interruption superseded the rest of the request
             return
-        if self.inflight or self.pending_clarify is not None or self.held is not None:
+        if self.inflight or self.planner_pending or self.pending_clarify is not None or self.held is not None:
             return
         nxt = self.compound.pop(0)
         cm = self._COND.match(nxt)
@@ -1075,27 +1101,27 @@ class ParticipantAgent:
         await self.call(api, args, deps=deps)
 
     async def llm_fallback(self, turn: str, prefer: Optional[str] = None) -> bool:
-        """Hybrid planner (C6): consulted only when the rules cannot build a complete call. Output is
-        schema-validated; the rule parser stays the fast path, validator and fallback."""
-        if not llm_planner.enabled() or not self.tools:
+        """Schedule advisory planning; the serial consumer remains free for interruptions."""
+        if self._planner_skip or not llm_planner.enabled() or not self.tools:
             return False
-        ext_tools = {self.tool_alias.get(k, k): v for k, v in self.tools.items()}
-        ver = self.version
-        calls = await asyncio.to_thread(llm_planner.plan, turn, ext_tools, [self.last_turn] if self.last_turn else [])
-        if ver != self.version or not calls:
-            return False
-        rev = {v: k for k, v in self.tool_alias.items()}
-        issued = False
-        for c in calls:
-            api = rev.get(c["name"], c["name"])
-            if prefer and api != prefer and len(calls) == 1 and not c["args"]:
-                continue
-            self.last_api = api
-            if not issued:
-                await self.say("filler_speech", self.ack(api, c["args"]))
-            issued = bool(await self.call(api, c["args"])) or issued
-        self.note("llm_planner_used", str(len(calls)))
-        return issued
+        self.seq += 1
+        token, ver = self.seq, self.version
+        self.planner_pending = {"token": token, "turn": turn, "prefer": prefer}
+        self.answered = False
+        tools = dict(self.tools)
+        history = [json.dumps({"tool": api, "result": result}) for api, result in self.results[-3:]]
+        await self.say("filler_speech", "Let me check that request.")
+
+        async def work():
+            try:
+                calls = await asyncio.to_thread(llm_planner.plan, turn, tools, history)
+            except Exception as exc:
+                self.note("planner_failed", type(exc).__name__)
+                calls = []
+            await self.post("planner_done", token=token, version=ver, calls=calls)
+
+        self.spawn(work())
+        return True
 
     def device_word(self) -> str:
         return {"QN90": "TV", "S24": "phone", "WF45": "washer", "GENERIC": "device"}.get(
@@ -1167,6 +1193,15 @@ class ParticipantAgent:
         await self.say("final_response", "Okay, I've stopped that and dropped the request. Anything else I can do?")
 
     async def on_interruption(self, text: str):
+        if self.planner_pending:
+            pending = self.planner_pending
+            ranked = nlu.score_tools(text, self.tools)
+            top = ranked[0][1] if ranked and ranked[0][0] >= 1.5 else None
+            if nlu.REPAIR_MARKERS.search(text) and not nlu.RETRACTION.search(text) and \
+                    (top is None or top == pending["prefer"]):
+                text = pending["turn"] + " " + text
+            self.invalidate()
+            return await self.on_turn(text)
         low = text.lower()
         # a barge-in may still be the answer to our clarification question (R19)
         if self.pending_clarify and not (nlu.RETRACTION.search(low) and not self._has_new_values(text)):
