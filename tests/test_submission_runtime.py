@@ -153,7 +153,51 @@ def test_real_livekit_gemini_stt_and_tts():
             engine = speech.GeminiTTS()
             async with engine.synthesize("Done") as stream:
                 frames = [e.frame async for e in stream]
-            assert sum(f.samples_per_channel for f in frames) == 4800
+            # LiveKit appends a synthetic 10 ms final marker frame (240 samples).
+        assert sum(f.samples_per_channel for f in frames) == 4800 + 240
             await recognizer.aclose()
             await engine.aclose()
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("provider,key", [("gemini", "GEMINI_API_KEY"), ("groq", "GROQ_API_KEY"), ("openai", "OPENAI_API_KEY")])
+def test_auto_planner_uses_selected_provider_key(monkeypatch, provider, key):
+    monkeypatch.delenv("TRIAGELINE_OFFLINE", raising=False)
+    monkeypatch.setenv("TRIAGELINE_LLM_PROVIDER", provider)
+    monkeypatch.setenv("TRIAGELINE_LLM_PLANNER", "auto")
+    monkeypatch.setenv(key, "test")
+    assert planner.enabled()
+    monkeypatch.setenv("TRIAGELINE_OFFLINE", "1")
+    monkeypatch.setenv("TRIAGELINE_LLM_PLANNER", "1")
+    assert not planner.enabled()
+
+
+@pytest.mark.parametrize("provider", ["groq", "openai", "deepgram"])
+def test_browser_honors_hosted_stt(tmp_path, monkeypatch, provider):
+    from agent import perception
+    monkeypatch.delenv("TRIAGELINE_OFFLINE", raising=False)
+    monkeypatch.setenv("TRIAGELINE_STT_PROVIDER", provider)
+    monkeypatch.setenv(provider.upper() + "_API_KEY", "test-not-secret")
+    audio = tmp_path / "upload.webm"
+    audio.write_bytes(b"RIFF" + b"\0" * 64)
+    captured = []
+    def request(req, timeout):
+        captured.append(req)
+        result = {"results": {"channels": [{"alternatives": [{"transcript": "Track order X9", "words": []}]}]}} if provider == "deepgram" else {"text": "Track order X9"}
+        return io.BytesIO(json.dumps(result).encode())
+    with patch("urllib.request.urlopen", request), patch.object(perception, "load_asr", side_effect=AssertionError("wrong provider")):
+        result = perception.transcribe(str(audio))
+    assert result["text"] == "Track order X9" and result["source"] == provider
+    if provider != "deepgram":
+        assert b'filename="audio.wav"' in captured[0].data
+        assert b"audio/wav" in captured[0].data
+        assert captured[0].full_url.endswith("/audio/transcriptions")
+
+
+def test_missing_hosted_speech_key_is_explicit(monkeypatch):
+    from agent import perception
+    monkeypatch.delenv("TRIAGELINE_OFFLINE", raising=False)
+    monkeypatch.setenv("TRIAGELINE_STT_PROVIDER", "groq")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with patch("urllib.request.urlopen", side_effect=AssertionError("must not connect")):
+        assert perception.transcribe("missing.wav")["error"] == "speech_not_configured"
