@@ -978,7 +978,10 @@ class ParticipantAgent:
             return True
         self.plan = pc.get("plan") or []
         # the confirmed answer outranks anything re-parsed from the original transcript (R06)
-        await self.start_task(api, base, extra={**(pc.get("args") or {}), **confirmed})
+        followup, _ = nlu.build_args(self.tools.get(api, {}), turn, {})
+        confirmed[field] = value
+        await self.start_task(api, base + " " + turn,
+                              extra={**(pc.get("args") or {}), **followup, **confirmed})
         return True
 
     def capabilities(self) -> str:

@@ -43,7 +43,7 @@ from typing import Any, Optional
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LEGACY_ROOT = os.path.join(_REPO_ROOT, "legacy")
 if _LEGACY_ROOT not in sys.path:
-    sys.path.insert(0, _LEGACY_ROOT)
+    sys.path.append(_LEGACY_ROOT)
 
 from core.commit.state_machine import CommitState, CommitStateMachine  # noqa: E402
 from core.deliberation.engine import (  # noqa: E402
