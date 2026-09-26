@@ -1046,6 +1046,10 @@ class ParticipantAgent:
             await self.call(api, args)
             return
 
+        # Hosted mode must understand complete requests too, not only repair
+        # missing regex slots. The same validation/epoch/ledger gates still apply.
+        if os.environ.get("TRIAGELINE_LLM_MODE", "primary") == "primary" and await self.llm_fallback(turn, prefer=api):
+            return
         ctx = dict(slots)
         ctx.update(extra or {})
         args, missing = nlu.build_args(spec, turn, ctx)
@@ -1528,6 +1532,8 @@ class ParticipantAgent:
             if need:
                 # the backend says exactly which argument it needs: ask for that instead of "rephrase"
                 what = " and ".join(n.replace("_", " ") for n in need[:2])
+                self.pending_clarify = {"field": need[0], "api": api, "args": dict(c["args"]),
+                                        "text": self.last_turn, "plan": list(c["plan"]), "version": self.version}
                 return await self.say("clarification_request",
                                       f"I started that {self.what(api)}, but the system also needs the {what} — "
                                       f"what should I use?")
