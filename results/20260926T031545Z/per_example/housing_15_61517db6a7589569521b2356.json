@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_15",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um, so hmm... uh... i wanted... um, to check the commute from that one listing — actually, let me skip that for now. Could you just search for a 3-bedroom in Atlanta that's pet-friendly? I've got two cats.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Atlanta",
+        "bedrooms": 3,
+        "pets_allowed": true
+      },
+      "timestamp_start": 0.037,
+      "timestamp_end": 0.327
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Atlanta. I started that search apartments, but the system also needs the max price — what should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Atlanta.",
+      "t": 0.037
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the max price — what should I use?",
+      "t": 0.327
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Atlanta",
+        "bedrooms": 3,
+        "pets_allowed": true
+      }
+    }
+  ]
+}

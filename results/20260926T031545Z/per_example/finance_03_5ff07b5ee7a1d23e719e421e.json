@@ -1,0 +1,47 @@
+{
+  "example_id": "finance_03",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh, um, so... um, I want to change my mortgage autopay to pull from, like, my savings account instead of where it's pulling from now.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "mortgage",
+        "source_account": "savings"
+      },
+      "timestamp_start": 0.011,
+      "timestamp_end": 0.011
+    }
+  ],
+  "transcript": "Sure, let me run a modify autopay for mortgage. Here's what I found: autopay enabled True, mortgage, savings.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a modify autopay for mortgage.",
+      "t": 0.011
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: autopay enabled True, mortgage, savings.",
+      "t": 0.012
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "mortgage",
+        "source_account": "savings"
+      }
+    }
+  ]
+}

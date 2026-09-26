@@ -1,0 +1,71 @@
+{
+  "example_id": "ecommerce_19",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so you know... search for a laptop — wait... no,... um...... um, I actually need a tablet, not a laptop. And add 2 of them to the cart. Actually, just add 1 instead, I only have budget for one right now.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "tablet"
+      },
+      "timestamp_start": 0.021,
+      "timestamp_end": 0.021
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "quantity": 1,
+        "product_id": "PROD1"
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.027
+    }
+  ],
+  "transcript": "Sure, let me run a search products for tablet. Here's what I found: ref PROD1, tablet Premium, $99.99. Sure, let me run a add to cart for 1. Here's what I found: ref PROD1, quantity 1, cart total 99.99.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for tablet.",
+      "t": 0.021
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, tablet Premium, $99.99.",
+      "t": 0.027
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for 1.",
+      "t": 0.027
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, quantity 1, cart total 99.99.",
+      "t": 0.028
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "tablet"
+      }
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "$RESULT_0.products[0].product_id",
+        "quantity": 1
+      }
+    }
+  ]
+}

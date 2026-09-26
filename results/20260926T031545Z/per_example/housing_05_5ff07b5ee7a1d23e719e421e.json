@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_05",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... you know... you know... well... i need... um, a pet-friendly apartment in Miami, and my budget is about... let me check... 1500 a month. Is there anything in that range?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Miami",
+        "max_price": 1500,
+        "pets_allowed": true
+      },
+      "timestamp_start": 0.015,
+      "timestamp_end": 0.249
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Miami. I started that search apartments, but the system also needs the bedrooms — what should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Miami.",
+      "t": 0.015
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the bedrooms — what should I use?",
+      "t": 0.25
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Miami",
+        "max_price": 1500,
+        "pets_allowed": true
+      }
+    }
+  ]
+}

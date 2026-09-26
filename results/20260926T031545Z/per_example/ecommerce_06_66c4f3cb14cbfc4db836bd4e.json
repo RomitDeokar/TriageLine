@@ -1,0 +1,47 @@
+{
+  "example_id": "ecommerce_06",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so like... could you add 2 of item K-2 to my cart?... um... I need one for me and one as a gift for my friend.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "K2",
+        "quantity": 2
+      },
+      "timestamp_start": 0.011,
+      "timestamp_end": 0.011
+    }
+  ],
+  "transcript": "Sure, let me run a add to cart for K2. Here's what I found: ref K2, quantity 2, cart total 199.98.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for K2.",
+      "t": 0.011
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref K2, quantity 2, cart total 199.98.",
+      "t": 0.011
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "K2",
+        "quantity": 2
+      }
+    }
+  ]
+}

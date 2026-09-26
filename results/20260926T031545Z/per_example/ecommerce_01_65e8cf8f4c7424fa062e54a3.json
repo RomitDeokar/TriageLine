@@ -1,0 +1,45 @@
+{
+  "example_id": "ecommerce_01",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... uh, you know... well, i ordered something last week and... um, I haven't received it yet. Could you track it for me? The order ID is A-B-C-1-2-3.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "ABC123"
+      },
+      "timestamp_start": 0.012,
+      "timestamp_end": 0.012
+    }
+  ],
+  "transcript": "Sure, let me run a track order for ABC123. Here's what I found: ref ABC123, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for ABC123.",
+      "t": 0.011
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref ABC123, Out for delivery.",
+      "t": 0.012
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "ABC123"
+      }
+    }
+  ]
+}

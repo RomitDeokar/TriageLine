@@ -1,0 +1,84 @@
+{
+  "example_id": "housing_24",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um, so hmm... like... you know... okay... so first... um, I want to... update my max price to 1500 because I'm on a tighter budget. Then... uh... search for apartments in Dallas that fit that budget. And then... check the walking time from whatever you find to the grocery store, because I want to be close to one.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 1500
+      },
+      "timestamp_start": 0.031,
+      "timestamp_end": 0.136
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Dallas"
+      },
+      "timestamp_start": 0.144,
+      "timestamp_end": 0.618
+    }
+  ],
+  "transcript": "Sure, let me run a update search filter for max_price. Here's what I found: max_price, new value 1500. Sure, let me run a search apartments for Dallas. I started that search apartments, but the system also needs the bedrooms and max price — what should I use? Sure — what origin address should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for max_price.",
+      "t": 0.031
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: max_price, new value 1500.",
+      "t": 0.144
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Dallas.",
+      "t": 0.144
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the bedrooms and max price — what should I use?",
+      "t": 0.629
+    },
+    {
+      "kind": "clarification_request",
+      "text": "Sure — what origin address should I use?",
+      "t": 0.629
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 1500
+      }
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Dallas"
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_1.apartments[0].address",
+        "destination_address": "the grocery store",
+        "mode": "walking"
+      }
+    }
+  ]
+}

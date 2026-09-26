@@ -1,0 +1,77 @@
+{
+  "example_id": "housing_18",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... like... um... so first... search for a 1-bedroom in Portland that's under 1800 per month. Then once you find the cheapest option, check how long it would take to bike from there to the coffee shop on 5th Street where... um, I work.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Portland",
+        "bedrooms": 1,
+        "max_price": 1800
+      },
+      "timestamp_start": 0.028,
+      "timestamp_end": 0.622
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "destination_address": "the coffee shop on 5th Street",
+        "mode": "biking",
+        "origin_address": "APT1"
+      },
+      "timestamp_start": 0.635,
+      "timestamp_end": 0.839
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Portland. Here's what I found for Portland: Portland, ref APT1, $1700, beds 1. Sure, let me run a calculate commute for the coffee shop on 5th Street. Here's what I found for Portland: duration mins 25, biking.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Portland.",
+      "t": 0.028
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Portland: Portland, ref APT1, $1700, beds 1.",
+      "t": 0.635
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a calculate commute for the coffee shop on 5th Street.",
+      "t": 0.635
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Portland: duration mins 25, biking.",
+      "t": 0.84
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Portland",
+        "bedrooms": 1,
+        "max_price": 1800
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_0.cheapest_apartment_address",
+        "destination_address": "coffee shop on 5th",
+        "mode": "biking"
+      }
+    }
+  ]
+}

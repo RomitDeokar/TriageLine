@@ -1,4 +1,6 @@
-# livekit_agent — unmodified FDB-v3 cascaded template
+# livekit_agent — TriageLine custom LiveKit agent for FDB-v3
+
+> Current setup: see README §B and docs/FREE_API_KEYS.md. The notes below are historical (the agent is no longer the unmodified template; it uses ParticipantAgent, no LLM).
 
 Status: **template copied and verified to import/start its CLI; NOT yet run against a LiveKit room**
 (no LiveKit/OpenAI credentials and no outbound access to LiveKit Cloud/OpenAI were available in the
@@ -8,11 +10,11 @@ authoring sandbox). Steps below are the exact ones to finish that check.
 Files copied byte-for-byte from `github.com/DanielLin94144/Full-Duplex-Bench` (`v3/`), no edits:
 `cascaded_agent.py` (agent), `mock_apis.py` + `latency_injector.py` (imported by the agent),
 `livekit_inference.py` (FDB's headless test client that streams a WAV into a room).
-Pipeline: Silero VAD -> OpenAI Whisper STT -> gpt-4o (12 mock tools) -> OpenAI tts-1.
+Pipeline: Silero VAD -> hosted STT -> rule-based ParticipantAgent (no LLM, 12 mock tools) -> hosted TTS.
 
 ## Accounts / keys
 1. LiveKit Cloud account + project (free tier OK): https://cloud.livekit.io
-2. OpenAI API key with access to whisper-1, gpt-4o, tts-1.
+2. Speech keys (Groq/Deepgram free, or OpenAI); OpenAI gpt-4o only for the official judge.
 
 ## Environment variables (names only; see `.env.example`)
 | Var | Used by |

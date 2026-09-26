@@ -1,0 +1,51 @@
+{
+  "example_id": "housing_14",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like, you know... um... so um... I'm looking for, like, a 1-bedroom apartment in Portland, and I'd want to keep the rent under 1800. Oh, and it needs to be, uh, pet-friendly because... um, I have a dog.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Portland",
+        "bedrooms": 1,
+        "max_price": 1800,
+        "pets_allowed": true
+      },
+      "timestamp_start": 0.025,
+      "timestamp_end": 0.284
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Portland. Here's what I found for Portland: Portland, ref APT1, $1700, beds 1.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Portland.",
+      "t": 0.025
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Portland: Portland, ref APT1, $1700, beds 1.",
+      "t": 0.284
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Portland",
+        "bedrooms": 1,
+        "max_price": 1800,
+        "pets_allowed": true
+      }
+    }
+  ]
+}

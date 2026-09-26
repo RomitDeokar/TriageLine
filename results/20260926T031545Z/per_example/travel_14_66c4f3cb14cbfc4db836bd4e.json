@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_14",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so i want to look at flights to Seoul, and the date... um, I was thinking of is... let me think... I'm pretty sure it's March 22nd. Yeah, could you search for that?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Seoul",
+        "date": "March 22"
+      },
+      "timestamp_start": 0.021,
+      "timestamp_end": 0.464
+    }
+  ],
+  "transcript": "Sure, checking flights to Seoul for March 22. I found a flight to Seoul: FL123 departing March 22 for $450.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, checking flights to Seoul for March 22.",
+      "t": 0.021
+    },
+    {
+      "kind": "final_response",
+      "text": "I found a flight to Seoul: FL123 departing March 22 for $450.",
+      "t": 0.465
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Seoul",
+        "date": "March 22"
+      }
+    }
+  ]
+}

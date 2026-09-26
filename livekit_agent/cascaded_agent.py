@@ -7,16 +7,15 @@ MODEL / PROVIDER DECLARATION (guide: "clear declaration of the model provider or
 This is a CUSTOM LiveKit agent. There is NO large language model in the default configuration.
 
   User audio -> Silero VAD (local)            [livekit-plugins-silero]
-             -> OpenAI Whisper STT (hosted)   [whisper-1, or any OpenAI-compatible STT via env]
+             -> hosted STT                    [OpenAI whisper-1 | Groq whisper-large-v3-turbo |
+                                               Deepgram nova-3 — TRIAGELINE_STT_PROVIDER]
              -> TriageAdapter  (livekit_agent/adapter.py: non-blocking tool tasks, utterance
                                 settling, barge-in)
                 -> ParticipantAgent (agent/agent.py + agent/nlu.py: rule-based, schema-driven
                    tool selection + argument extraction, epoch-guarded interruption handling,
                    cancellation, duplicate-action ledger)
-                   [optional] agent/llm_extract.py: a DECLARED small hosted LLM that only
-                   extracts arguments when TRIAGELINE_LLM_MODEL is set (off by default)
              -> FDB-v3 mock tools (official mock_apis.py, unmodified)
-             -> OpenAI TTS (hosted)           [tts-1 / voice "nova"]
+             -> hosted TTS                    [OpenAI tts-1/nova | Deepgram aura-2 — TRIAGELINE_TTS_PROVIDER]
 
 The upstream FDB-v3 template (v3/cascaded_agent.py) uses gpt-4o for tool calling. That LLM
 step is replaced here by ParticipantAgent on purpose: every state-changing tool call goes through
@@ -32,10 +31,11 @@ Usage:
     python cascaded_agent.py start --latency normal
 
 Environment (.env.local next to this file, or exported):
-    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, OPENAI_API_KEY
-    optional: TRIAGELINE_SETTLE_S (default 0.9), TRIAGELINE_BACKCHANNEL (default 1),
-              TRIAGELINE_STT_MODEL (default whisper-1), TRIAGELINE_TTS_MODEL (default tts-1),
-              TRIAGELINE_LLM_MODEL / TRIAGELINE_LLM_BASE_URL / TRIAGELINE_LLM_API_KEY
+    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+    + the key of the chosen speech provider(s): OPENAI_API_KEY | GROQ_API_KEY | DEEPGRAM_API_KEY
+    optional: TRIAGELINE_STT_PROVIDER / TRIAGELINE_TTS_PROVIDER (default openai),
+              TRIAGELINE_STT_MODEL / TRIAGELINE_TTS_MODEL / TRIAGELINE_TTS_VOICE,
+              TRIAGELINE_SETTLE_S (default 0.9), TRIAGELINE_BACKCHANNEL (default 1)
 """
 
 from __future__ import annotations
@@ -148,19 +148,16 @@ class CascadedVoiceAgent(Agent):
 
 
 def build_cascaded_pipeline(vad=None):
-    """VAD + STT + TTS. Language understanding is ParticipantAgent (no LLM here)."""
-    from livekit.plugins import openai, silero
-
-    vad = vad or silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
-    stt = openai.STT(model=os.environ.get("TRIAGELINE_STT_MODEL", "whisper-1"), language="en")
-    tts = openai.TTS(model=os.environ.get("TRIAGELINE_TTS_MODEL", "tts-1"), voice="nova")
+    """VAD + STT + TTS (provider chosen by env, see speech_providers.py). No LLM here."""
+    from livekit_agent.speech_providers import build_pipeline
+    vad, stt, tts, _cfg = build_pipeline(vad)
     return vad, stt, tts
 
 
 def prewarm(proc: JobProcess):
     """Load Silero once per worker process, not once per room (audit B-11)."""
-    from livekit.plugins import silero
-    proc.userdata["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
+    from livekit_agent.speech_providers import load_vad
+    proc.userdata["vad"] = load_vad()
 
 
 server = AgentServer(setup_fnc=prewarm)
@@ -260,7 +257,8 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.add_shutdown_callback(_teardown)
 
     await session.start(room=ctx.room, agent=CascadedVoiceAgent())
-    print("!!! TRIAGELINE CASCADED AGENT STARTED (Silero VAD + Whisper STT + ParticipantAgent + OpenAI TTS) !!!")
+    from livekit_agent.speech_providers import describe
+    print(f"!!! TRIAGELINE CASCADED AGENT STARTED: {describe()} !!!")
 
 
 if __name__ == "__main__":

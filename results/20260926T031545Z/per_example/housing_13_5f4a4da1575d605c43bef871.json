@@ -1,0 +1,73 @@
+{
+  "example_id": "housing_13",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... you know... like... you know... let's raise the max price to 3000 per month... and also bump up the minimum bedrooms to 3.... um, I think I need more space than I originally thought.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 3000
+      },
+      "timestamp_start": 0.021,
+      "timestamp_end": 0.113
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "min_bedrooms",
+        "value": 3
+      },
+      "timestamp_start": 0.121,
+      "timestamp_end": 0.18
+    }
+  ],
+  "transcript": "Sure, let me run a update search filter for max_price. Here's what I found: max_price, new value 3000. Sure, let me run a update search filter for min_bedrooms. Here's what I found: min_bedrooms, new value 3.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for max_price.",
+      "t": 0.021
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: max_price, new value 3000.",
+      "t": 0.121
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for min_bedrooms.",
+      "t": 0.121
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: min_bedrooms, new value 3.",
+      "t": 0.181
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 3000
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "min_bedrooms",
+        "value": 3
+      }
+    }
+  ]
+}

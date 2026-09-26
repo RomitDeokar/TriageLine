@@ -1,0 +1,45 @@
+{
+  "example_id": "finance_17",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... i wanted to pay my credit card bill right now, but — actually, never mind that,... um, I can do it online later. For now, could you just check what benefits come with the gold card? I'm thinking about upgrading.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "gold"
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.026
+    }
+  ],
+  "transcript": "Sure, let me run a get card benefits for gold. Here's what I found: gold, 2% Cashback, No Foreign Transaction Fee.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get card benefits for gold.",
+      "t": 0.025
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: gold, 2% Cashback, No Foreign Transaction Fee.",
+      "t": 0.026
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "gold"
+      }
+    }
+  ]
+}

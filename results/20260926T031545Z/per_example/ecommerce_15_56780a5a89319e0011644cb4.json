@@ -1,0 +1,45 @@
+{
+  "example_id": "ecommerce_15",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... um, so well... can you, uh, track order B-O-B-1-2 for me?... um, I ordered it a few days ago and it should be arriving... soon, but I just want to make sure.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "BOB12"
+      },
+      "timestamp_start": 0.007,
+      "timestamp_end": 0.007
+    }
+  ],
+  "transcript": "Sure, let me run a track order for BOB12. Here's what I found: ref BOB12, Out for delivery.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for BOB12.",
+      "t": 0.007
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref BOB12, Out for delivery.",
+      "t": 0.008
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "BOB12"
+      }
+    }
+  ]
+}

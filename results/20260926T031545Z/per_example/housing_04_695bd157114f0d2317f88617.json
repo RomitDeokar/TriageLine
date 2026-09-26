@@ -1,0 +1,47 @@
+{
+  "example_id": "housing_04",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... hmm... uh, you know... i'm looking for an apartment in Denver that has... 1 bedroom. I'm living alone so... um, I don't need anything too big.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Denver",
+        "bedrooms": 1
+      },
+      "timestamp_start": 0.02,
+      "timestamp_end": 0.657
+    }
+  ],
+  "transcript": "Sure, let me run a search apartments for Denver. I started that search apartments, but the system also needs the max price — what should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for Denver.",
+      "t": 0.02
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the max price — what should I use?",
+      "t": 0.658
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Denver",
+        "bedrooms": 1
+      }
+    }
+  ]
+}

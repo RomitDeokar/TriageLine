@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_06",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... um... so hmm... i was wondering how long it would take to walk from Oak Street to the Gym. I'm trying to figure out if... um, I can walk there in the mornings.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "Oak Street",
+        "destination_address": "Gym",
+        "mode": "walking"
+      },
+      "timestamp_start": 0.019,
+      "timestamp_end": 0.356
+    }
+  ],
+  "transcript": "Sure, let me run a calculate commute for Oak Street. Here's what I found: duration mins 25, walking.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a calculate commute for Oak Street.",
+      "t": 0.019
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, walking.",
+      "t": 0.357
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "Oak Street",
+        "destination_address": "Gym",
+        "mode": "walking"
+      }
+    }
+  ]
+}

@@ -16,7 +16,7 @@ flowchart TD
     ADAPTER["Tool Adapter\nlivekit_agent/adapter.py, triage_brain.py"]
 
     LK --> VOICE --> PATH --> EPOCH --> INT --> ADAPTER
-    ADAPTER --> FDB["FDB-v3\ncascaded_agent.py + mock_apis.py\n(gpt-4o tool calling, 12 mocked APIs)"]
+    ADAPTER --> FDB["FDB-v3\ncascaded_agent.py + mock_apis.py\n(rule-based ParticipantAgent, no LLM, 12 official mocked APIs)"]
     ADAPTER --> TRIAGE["Triage Line Extension\ntriage_brain.py"]
     TRIAGE --> DELIB["Deliberation\nlegacy/core/deliberation\n(intent match + self-critique constraints)"]
     DELIB --> COMMIT["Commit State Machine\nlegacy/core/commit\nPROPOSED → PENDING_CONFIRMATION → FINALIZED/ABORTED"]
@@ -42,7 +42,7 @@ flowchart TD
   (`TriageBrainLLM`, the Triage Line path) are two separate adapters
   behind the same LiveKit shell — this is the fork point the diagram
   shows as "Tool Adapter ↙↘".
-- **FDB-v3 branch**: `cascaded_agent.py` + `mock_apis.py`, gpt-4o doing
+- **FDB-v3 branch**: `cascaded_agent.py` + `mock_apis.py`, the rule-based ParticipantAgent (no LLM) doing
   its own tool calling against 12 mocked travel/finance/housing/e-commerce
   APIs. No deliberation/commit layer here — that machinery is Triage
   Line-only.
@@ -58,9 +58,9 @@ flowchart TD
 
 - **LiveKit**: `livekit-agents` SDK (`AgentServer`/`AgentSession`), version
   pin attempted `~=1.3`, resolved to `1.8.3` when previously installed
-  per `livekit_agent/SETUP.md`; not installed in this sandbox (no PyPI egress).
+  per `livekit_agent/SETUP.md`; pinned in requirements-fdb.txt.
 - **FDB-v3**: Full-Duplex-Bench, `v3` directory — github.com/DanielLin94144/Full-Duplex-Bench.
-- **Model/provider**: Silero VAD; OpenAI `whisper-1` (STT), `gpt-4o` (LLM,
+- **Model/provider**: Silero VAD; OpenAI `whisper-1` (STT), NO LLM (rule-based ParticipantAgent; gpt-4o is only the official evaluation judge,
   FDB-v3 path only), `tts-1` (TTS). The internal harness (A) and the
   Triage Line brain (C) use no LLM — rule-based NLU / regex extraction.
 - **Reproduction command (B)**: `./run_fdb_v3.sh`.

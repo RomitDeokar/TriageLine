@@ -1,0 +1,73 @@
+{
+  "example_id": "travel_23",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so I need to, like, update my passport number to P-1-1-2-2 because I just renewed it. And then, uh, I also got a new driver license, so could you change that one to D-L-9-0-9-0 as well?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P1122"
+      },
+      "timestamp_start": 0.017,
+      "timestamp_end": 0.017
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL9090"
+      },
+      "timestamp_start": 0.024,
+      "timestamp_end": 0.024
+    }
+  ],
+  "transcript": "Sure, let me run a update identity doc for passport. Here's what I found: passport, 1122. Sure, let me run a update identity doc for driver_license. Here's what I found: driver_license, 9090.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update identity doc for passport.",
+      "t": 0.017
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: passport, 1122.",
+      "t": 0.024
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update identity doc for driver_license.",
+      "t": 0.024
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: driver_license, 9090.",
+      "t": 0.024
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P1122"
+      }
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL9090"
+      }
+    }
+  ]
+}

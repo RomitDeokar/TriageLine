@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_16",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... okay so... um, I need to know how much... let me see... 500 yen would be in US dollars. I'm trying to figure out if this online purchase is worth it.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 500,
+        "from_currency": "JPY",
+        "to_currency": "USD"
+      },
+      "timestamp_start": 0.02,
+      "timestamp_end": 0.021
+    }
+  ],
+  "transcript": "Sure, let me run a get exchange rate for 500. Here's what I found: converted amount 450.0, rate 0.9.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 500.",
+      "t": 0.02
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 450.0, rate 0.9.",
+      "t": 0.021
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 500,
+        "from_currency": "JPY",
+        "to_currency": "USD"
+      }
+    }
+  ]
+}

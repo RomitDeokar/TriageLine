@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_17",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like, like... um... so calculate the transit time to the office from there — wait, no, actually... um, I just remembered I'd be driving. So make it driving time to the office from my house instead.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "my house",
+        "destination_address": "the office",
+        "mode": "driving"
+      },
+      "timestamp_start": 0.022,
+      "timestamp_end": 0.255
+    }
+  ],
+  "transcript": "Sure, let me run a calculate commute for my house. Here's what I found: duration mins 25, driving.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a calculate commute for my house.",
+      "t": 0.022
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, driving.",
+      "t": 0.256
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "my house",
+        "destination_address": "the office",
+        "mode": "driving"
+      }
+    }
+  ]
+}

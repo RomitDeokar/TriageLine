@@ -1,0 +1,33 @@
+{
+  "example_id": "housing_11",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... well... i was thinking a 1-bedroom under 1200... but actually, no wait — my partner is moving in with me, so we need a 2-bedroom, and we can go up... um, to 1600 a month.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [],
+  "transcript": "Sure — which city?",
+  "agent_actions": [
+    {
+      "kind": "clarification_request",
+      "text": "Sure — which city?",
+      "t": 0.012
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "bedrooms": 2,
+        "max_price": 1600
+      }
+    }
+  ]
+}

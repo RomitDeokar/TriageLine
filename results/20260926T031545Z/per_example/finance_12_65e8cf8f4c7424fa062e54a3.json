@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_12",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well, i want to calculate how much 100 euros would be in US dollars — oh wait, I was looking at the wrong invoice. It's actually 150 euros, not 100. So 150 euros to US dollars.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 150,
+        "from_currency": "EUR",
+        "to_currency": "USD"
+      },
+      "timestamp_start": 0.039,
+      "timestamp_end": 0.039
+    }
+  ],
+  "transcript": "Sure, let me run a get exchange rate for 150. Here's what I found: converted amount 165.0, rate 1.1.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 150.",
+      "t": 0.039
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 165.0, rate 1.1.",
+      "t": 0.04
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 150,
+        "from_currency": "EUR",
+        "to_currency": "USD"
+      }
+    }
+  ]
+}

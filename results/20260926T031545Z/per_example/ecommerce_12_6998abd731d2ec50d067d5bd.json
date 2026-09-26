@@ -1,0 +1,32 @@
+{
+  "example_id": "ecommerce_12",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... you know... uh... i'm thinking something in the... let me think... electronics section would be great. He's really into gadgets and tech stuff.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [],
+  "transcript": "Happy to help! I can search for available flights to a destination, book a flight ticket, update simulated user identity document details (passport, driver license), get benefits for a credit card, fetch the current foreign exchange rate, process billing details / modify Autopay, search for available rental apartments, calculate commute duration, instantly update the user's search filter in the backend system, track physical package status, search for products in the catalog, or add an item to the shopping cart. What would you like to do?",
+  "agent_actions": [
+    {
+      "kind": "final_response",
+      "text": "Happy to help! I can search for available flights to a destination, book a flight ticket, update simulated user identity document details (passport, driver license), get benefits for a credit card, fetch the current foreign exchange rate, process billing details / modify Autopay, search for available rental apartments, calculate commute duration, instantly update the user's search filter in the backend system, track physical package status, search for products in the catalog, or add an item to the shopping cart. What would you like to do?",
+      "t": 0.01
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "gift",
+        "category": "electronics"
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "example_id": "travel_21",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... okay so,... um... I need to find flights to... Vegas, I was thinking around August 8th. And then, um, once you find something, book it under the name Quinn Davis. Oh and while you're at it, could you also update my visa number to V-7-7?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Las Vegas",
+        "date": "August 8"
+      },
+      "timestamp_start": 0.034,
+      "timestamp_end": 0.388
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "flight_id": "FL123",
+        "passenger_name": "Quinn Davis"
+      },
+      "timestamp_start": 0.389,
+      "timestamp_end": 0.389
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "visa",
+        "doc_number": "V77"
+      },
+      "timestamp_start": 0.393,
+      "timestamp_end": 0.393
+    }
+  ],
+  "transcript": "On it — finding flights to Las Vegas for August 8 first. Found FL123 at August 8 for $450 — booking it for Quinn Davis now. Done — you're booked on FL123 to Las Vegas for Quinn Davis. Booking reference B789. Here's what I found for Las Vegas: visa, V77.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "On it — finding flights to Las Vegas for August 8 first.",
+      "t": 0.034
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Found FL123 at August 8 for $450 — booking it for Quinn Davis now.",
+      "t": 0.389
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — you're booked on FL123 to Las Vegas for Quinn Davis. Booking reference B789.",
+      "t": 0.393
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found for Las Vegas: visa, V77.",
+      "t": 0.393
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Las Vegas",
+        "date": "August 8"
+      }
+    },
+    {
+      "function": "book_flight",
+      "args": {
+        "passenger_name": "Quinn Davis"
+      }
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "visa",
+        "doc_number": "V77"
+      }
+    }
+  ]
+}

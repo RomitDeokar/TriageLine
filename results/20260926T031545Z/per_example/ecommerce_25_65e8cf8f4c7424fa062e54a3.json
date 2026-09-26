@@ -1,0 +1,90 @@
+{
+  "example_id": "ecommerce_25",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... well... can... um, I return my — never mind, forget the return. Let me focus on what I actually need. Track order C-A-T for me. Then search for cat food because I'm running low. And add 3 of whatever you find to my cart.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "CAT"
+      },
+      "timestamp_start": 0.034,
+      "timestamp_end": 0.034
+    },
+    {
+      "function": "search_products",
+      "args": {
+        "query": "cat food"
+      },
+      "timestamp_start": 0.041,
+      "timestamp_end": 0.041
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "quantity": 3,
+        "product_id": "PROD1"
+      },
+      "timestamp_start": 0.045,
+      "timestamp_end": 0.045
+    }
+  ],
+  "transcript": "Sure, let me run a track order for CAT. Here's what I found: ref CAT, Out for delivery. Sure, let me run a search products for cat food. Here's what I found: ref PROD1, cat food Premium, $99.99. Here's what I found: ref PROD1, quantity 3, cart total 299.96999999999997.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for CAT.",
+      "t": 0.034
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref CAT, Out for delivery.",
+      "t": 0.041
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for cat food.",
+      "t": 0.041
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, cat food Premium, $99.99.",
+      "t": 0.045
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, quantity 3, cart total 299.96999999999997.",
+      "t": 0.045
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "CAT"
+      }
+    },
+    {
+      "function": "search_products",
+      "args": {
+        "query": "cat food"
+      }
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "$RESULT_1.products[0].product_id",
+        "quantity": 3
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "example_id": "housing_08",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like, you know... you know... i want to check the listings in — actually... before... um...... um, I do that, could you just update my search filter so that it only shows me places that allow pets? I have a cat.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      },
+      "timestamp_start": 0.024,
+      "timestamp_end": 0.088
+    }
+  ],
+  "transcript": "Sure, let me run a update search filter for pets_allowed. Here's what I found: pets_allowed, new value True.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for pets_allowed.",
+      "t": 0.024
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: pets_allowed, new value True.",
+      "t": 0.089
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      }
+    }
+  ]
+}

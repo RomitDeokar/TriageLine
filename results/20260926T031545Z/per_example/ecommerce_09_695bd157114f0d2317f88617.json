@@ -1,0 +1,45 @@
+{
+  "example_id": "ecommerce_09",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... well... hmm... could you search for running shoes — actually no...... um, I just remembered I already have running shoes. Search for hiking boots instead, that's what I actually need.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "hiking boots"
+      },
+      "timestamp_start": 0.027,
+      "timestamp_end": 0.027
+    }
+  ],
+  "transcript": "Sure, let me run a search products for hiking boots. Here's what I found: ref PROD1, hiking boots Premium, $99.99.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search products for hiking boots.",
+      "t": 0.026
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, hiking boots Premium, $99.99.",
+      "t": 0.027
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_products",
+      "args": {
+        "query": "hiking boots"
+      }
+    }
+  ]
+}

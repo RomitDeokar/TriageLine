@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_08",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "I was going to ask about hotel options but — never mind that for now. Could you just find me flights to Seattle on November 1st instead?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Seattle",
+        "date": "November 1"
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.446
+    }
+  ],
+  "transcript": "Sure, checking flights to Seattle for November 1. I found a flight to Seattle: FL123 departing November 1 for $450.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, checking flights to Seattle for November 1.",
+      "t": 0.026
+    },
+    {
+      "kind": "final_response",
+      "text": "I found a flight to Seattle: FL123 departing November 1 for $450.",
+      "t": 0.447
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Seattle",
+        "date": "November 1"
+      }
+    }
+  ]
+}

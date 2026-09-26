@@ -1,0 +1,52 @@
+{
+  "example_id": "travel_02",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh, yeah, so my new passport number is P-8-8-9-9-0-0-1-1. Could you update that in the system... um, for me please?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P88990011"
+      },
+      "timestamp_start": 0.012,
+      "timestamp_end": 0.012
+    }
+  ],
+  "transcript": "Sure, let me run a update identity doc for passport. Here's what I found: passport, 0011. Sure — what filter name should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update identity doc for passport.",
+      "t": 0.011
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: passport, 0011.",
+      "t": 0.015
+    },
+    {
+      "kind": "clarification_request",
+      "text": "Sure — what filter name should I use?",
+      "t": 0.015
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P9-9-9-90011"
+      }
+    }
+  ]
+}

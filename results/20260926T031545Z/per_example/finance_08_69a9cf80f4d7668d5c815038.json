@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_08",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "I'm trying to figure out how much money I'd have if... um... I converted... let me think... about 200 euros into US dollars. What would that come out to?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 200,
+        "from_currency": "EUR",
+        "to_currency": "USD"
+      },
+      "timestamp_start": 0.017,
+      "timestamp_end": 0.017
+    }
+  ],
+  "transcript": "Sure, let me run a get exchange rate for 200. Here's what I found: converted amount 220.00000000000003, rate 1.1.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 200.",
+      "t": 0.016
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 220.00000000000003, rate 1.1.",
+      "t": 0.017
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 200,
+        "from_currency": "EUR",
+        "to_currency": "USD"
+      }
+    }
+  ]
+}

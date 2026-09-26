@@ -7,8 +7,8 @@ keeps them separate on purpose.
 | # | Piece | What it is | Where |
 |---|---|---|---|
 | A | **Internal practice/replay harness** | This kit's own scenario runner + scorer (`run_local.py`, `harness/`) driving `agent.agent:ParticipantAgent`, a rule-based dual-process agent. **Not FDB-v3.** No LLM in the loop. | repo root: `agent/`, `harness/`, `scenarios/` |
-| B | **Official FDB-v3 benchmark integration** | Reproduction plumbing for the real [Full-Duplex-Bench v3](https://github.com/DanielLin94144/Full-Duplex-Bench) (`v3/` directory) against a **LiveKit** voice agent (Silero VAD, OpenAI Whisper STT, gpt-4o, OpenAI TTS — unmodified FDB-v3 template). | `livekit_agent/`, `run_fdb_v3.sh` |
-| C | **Triage Line extension** | A roadside/incident-triage call flow that reuses the SAME LiveKit shell as B, but replaces gpt-4o tool-calling with the legacy dialogue → deliberation → commit-state-machine stack (`legacy/core/`). | `livekit_agent/triage_brain.py`, `livekit_agent/triage_livekit_agent.py`, `legacy/core/` |
+| B | **Official FDB-v3 benchmark integration** | Reproduction plumbing for the real [Full-Duplex-Bench v3](https://github.com/DanielLin94144/Full-Duplex-Bench) (`v3/` directory) against a **custom LiveKit voice agent** (Silero VAD → hosted STT → rule-based `ParticipantAgent`, **no LLM** → hosted TTS). | `livekit_agent/`, `run_fdb_v3.sh` |
+| C | **Triage Line extension** | A roadside/incident-triage call flow that reuses the SAME LiveKit shell as B, but uses the legacy dialogue → deliberation → commit-state-machine stack (`legacy/core/`). | `livekit_agent/triage_brain.py`, `livekit_agent/triage_livekit_agent.py`, `legacy/core/` |
 
 ## A. Internal practice/replay harness (`run_local.py`, `agent/`)
 
@@ -32,25 +32,32 @@ Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 
 ## B. Official FDB-v3 benchmark integration (`livekit_agent/`, `run_fdb_v3.sh`)
 
-Reproduction entrypoint for the actual FDB-v3 benchmark:
-
 ```bash
-./run_fdb_v3.sh
+./run_fdb_v3.sh --offline-text      # no keys: official data + official evaluators (text replay)
+./run_fdb_v3.sh --limit 5           # live LiveKit smoke run
+./run_fdb_v3.sh                     # full scored run (LLM judge on)
 ```
 
-- **Benchmark:** Full-Duplex-Bench, `v3` directory — github.com/DanielLin94144/Full-Duplex-Bench
-- **Transport:** LiveKit (`livekit-agents` SDK, `AgentServer`/`AgentSession`)
-- **Model/provider (this template):** Silero VAD, OpenAI Whisper (`whisper-1`) STT, OpenAI `gpt-4o` LLM, OpenAI `tts-1` TTS
-- **Files:** `livekit_agent/cascaded_agent.py` (agent, copied byte-for-byte from FDB-v3's `v3/`, per `livekit_agent/SETUP.md`), `mock_apis.py`, `latency_injector.py`, `livekit_inference.py` (FDB's own headless test client)
+### Model / provider declaration (custom agent)
+| Stage | Component | Where it runs |
+|---|---|---|
+| VAD | Silero (`livekit-plugins-silero`) | local |
+| STT | `TRIAGELINE_STT_PROVIDER`: OpenAI `whisper-1` (default) · Groq `whisper-large-v3-turbo` · Deepgram `nova-3` | hosted |
+| Understanding + tool calls | `ParticipantAgent` (`agent/agent.py`, `agent/nlu.py`): rule-based, schema-driven, epoch-guarded. **No LLM.** | local |
+| Tools | official FDB-v3 `mock_apis.py` (pinned commit, unmodified) | local |
+| TTS | `TRIAGELINE_TTS_PROVIDER`: OpenAI `tts-1`/nova (default) · Deepgram `aura-2-andromeda-en` | hosted |
+| Judge (evaluation only) | official evaluators, OpenAI `gpt-4o` | hosted |
 
-`run_fdb_v3.sh` is a 6-stage script (install deps → check credentials →
-fetch FDB-v3 data → launch agent → run official eval → save results) that
-fails fast and logs the exact blocker instead of fabricating output. In
-this sandbox it **stops at Stage 1** (`pip install livekit-agents` — no
-PyPI egress). Stages 2–6 (LiveKit Cloud/OpenAI credentials, the FDB-v3
-Google-Drive data release, a live eval run, and real benchmark
-outputs/logs/results) have **not been executed here** — see
-`results/raw/environment_check.log` and the readiness report.
+- **Provider name:** `triageline` → `result_triageline.json` (offline mode: `triageline_text`)
+- **Pinned:** FDB-v3 commit `3e799c45`, `requirements-fdb.txt` (livekit-agents 1.8.3), Python 3.10–3.12, CLIP HF revision. The agent is deterministic (no sampling).
+- **Free keys:** step-by-step guide in [`docs/FREE_API_KEYS.md`](docs/FREE_API_KEYS.md) (LiveKit Build plan + Groq + Deepgram).
+
+`run_fdb_v3.sh` stages: venv + pinned deps → credentials → clone the pinned FDB-v3 commit + `gdown` the data → start `cascaded_agent.py` and wait for registration → official `run_tool_benchmark_all_released.py` + `evaluate_tool_calls.py` / `evaluate_pass_rate.py` / `analyze_tool_latency.py` → artefacts in `results/<timestamp>/` + `results/results.md`. The judge is preflighted: if gpt-4o is unreachable, the run falls back to exact match and says so.
+
+### Current numbers (offline text replay, official data + official evaluators, exact match)
+**Strict pass 85/100 (85.0%)**, tool-selection 95.5%, argument accuracy 89.5%. Dev split 83.0% · held-out split 87.2% (`livekit_agent/fdb_split.py`). See `results/results.md`. The live-audio run needs your own LiveKit keys.
+
+**Anti-overfitting statement:** lexicons are generic (no benchmark-specific literals). Fixes target failure *classes* (repair markers, clause splitting, schema defaults), never individual items. The split is a fixed SHA-256 hash of the scenario id, and held-out results are reported, not debugged.
 
 ## C. Triage Line extension (`livekit_agent/triage_brain.py`, `legacy/core/`)
 
@@ -66,18 +73,17 @@ Actually re-run this session: **PASS** — breakdown report → propose →
 pending confirmation; caller correction mid-prompt aborts the stale action
 and re-deliberates against the new location; nothing auto-finalizes without
 an explicit "yes"; `force_resolve_pending()` now wired to teardown so no
-action is left non-terminal. Full legacy suite: **191/191 passed**.
+action is left non-terminal. Full legacy suite: **209 passed**. Confirmation-safety probes E-01..E-07: `adapter_tests/test_8`.
 Details and a full transcript: `legacy/docs/EXTENSION_DEMO_TRANSCRIPT.md`.
 
-**Not verified:** `triage_livekit_agent.py` (the real LiveKit entrypoint)
-against a live room — same credential/network blockers as B.
+Live: `python livekit_agent/triage_livekit_agent.py console` (or `dev` + LiveKit Agents Playground) with the keys from `docs/FREE_API_KEYS.md`.
 
 ## Known simplifications / mocked components (all of A/B/C)
 
 - Triage Line dispatch is an in-memory log, not a real CAD/tow/emergency API.
 - Location/distance/vehicle extraction is regex/keyword based, not real NLU or geocoding.
 - FDB-v3's 12 tools (`mock_apis.py`) are mocked, not real travel/finance/e-commerce backends.
-- The internal harness's agent (A) uses no LLM at all — rule-based NLU + local ASR/CLIP.
+- No component uses an LLM at runtime; the agent is rule-based NLU (+ local ASR/CLIP for harness A).
 - TTS sub-utterance progress in the LiveKit bridge is a 0/1 placeholder, not real timing.
 
 ## Layout

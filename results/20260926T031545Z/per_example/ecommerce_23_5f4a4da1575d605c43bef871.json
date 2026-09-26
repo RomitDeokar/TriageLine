@@ -1,0 +1,71 @@
+{
+  "example_id": "ecommerce_23",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so you know... like... first... could you track order G-G-5? Then I'd like to process a refund for it if possible. And also, while we're at it, add item X-1 to my cart so... um, I can order a replacement.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "GG5"
+      },
+      "timestamp_start": 0.021,
+      "timestamp_end": 0.021
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "X1",
+        "quantity": 1
+      },
+      "timestamp_start": 0.028,
+      "timestamp_end": 0.028
+    }
+  ],
+  "transcript": "Sure, let me run a track order for GG5. Here's what I found: ref GG5, Out for delivery. Sure, let me run a add to cart for X1. Here's what I found: ref X1, quantity 1, cart total 99.99.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a track order for GG5.",
+      "t": 0.021
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref GG5, Out for delivery.",
+      "t": 0.028
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a add to cart for X1.",
+      "t": 0.028
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref X1, quantity 1, cart total 99.99.",
+      "t": 0.028
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "GG5"
+      }
+    },
+    {
+      "function": "add_to_cart",
+      "args": {
+        "product_id": "X1",
+        "quantity": 1
+      }
+    }
+  ]
+}

@@ -1,18 +1,38 @@
-# FDB-v3 v3 evaluation — results
+# FDB-v3 results — TriageLine
 
-Generated: 2026-09-24T21:16:02.957829+00:00
-Benchmark: FDB-v3 (Full-Duplex-Bench, v3 directory) (github.com/DanielLin94144/Full-Duplex-Bench)
-Agent: livekit_agent/cascaded_agent.py (Silero VAD -> OpenAI Whisper STT (whisper-1) -> OpenAI gpt-4o (12 FDB-v3 tools) -> OpenAI tts-1)
-Model/provider: gpt-4o / OpenAI
+Generated: 2026-09-26T03:16:56+00:00
 
-## Status: NOT RUN
+Run directory: `results/20260926T031545Z`  
+Mode: **offline_text_replay**  (official data + official evaluators; no LiveKit transport, no audio latency)
+Provider name: `triageline_text` · LLM judge: **off (exact match = lower bound)** · examples: 100  
+FDB-v3 commit: `3e799c45a045256f47d5f1c9cda90157e2d2ec9e` · TriageLine commit: `e019ea97b94c17d9be320bf6f46a86635b8b6044` · Python 3.13.14  
+Agent: custom LiveKit agent (Silero VAD → hosted STT → rule-based ParticipantAgent, no LLM → hosted TTS) · STT=openai TTS=openai
 
-Stopped at stage: **3/6 (fetch official FDB-v3 benchmark material)**
+## Headline (official evaluators)
 
-No official FDB-v3 metrics were produced. The table below is intentionally empty rather than estimated or fabricated.
+| strict pass rate | tool-selection acc | argument acc | response quality | turn-take rate |
+|---|---|---|---|---|
+| **85.0%** (85/100) | 95.5% | 89.5% | not produced | 100.0% |
 
-| tool-selection F1 | argument accuracy | strict pass rate | latency |
-|---|---|---|---|
-| N/A | N/A | N/A | N/A |
+### Anti-overfitting: dev vs held-out (hash split, `livekit_agent/fdb_split.py`)
 
-See `results/raw/environment_check.log` for exactly what blocked the run, and `results/config.json` for the full attempted configuration.
+| split | passed | rate |
+|---|---|---|
+| dev | 44/53 | 83.0% |
+| heldout | 41/47 | 87.2% |
+
+**By domain:** ecommerce_support 79.3% · housing_location 69.2% · finance_billing 100.0% · travel_identity 95.0%
+
+**By disfluency:** SELF_CORRECTION 82.4% · FILLER 82.8% · PAUSE 72.2% · HESITATION 90.0% · FALSE_START 100.0%
+
+**By difficulty:** medium 88.2% · hard 73.3% · easy 91.7%
+
+**By number of tools:** 1 89.4% · 2 83.3% · 3 68.8%
+
+**Failures:** wrong_tools=9, wrong_arguments=6
+
+## Latency
+
+Not measured in offline mode (no audio). Run the full `./run_fdb_v3.sh` for latency.
+
+Files: agent_heartbeat.log, pip_freeze.txt, run.log, run_config.json, triageline_text_evaluation_report.json, triageline_text_pass_rate_report.json

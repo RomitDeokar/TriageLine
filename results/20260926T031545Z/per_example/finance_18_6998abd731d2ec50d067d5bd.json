@@ -1,0 +1,94 @@
+{
+  "example_id": "finance_18",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so alright, so first,... um, I need to know how much 1000 US dollars would be in euros. Then I want to change my credit card autopay so it pulls from savings instead. And finally, can you tell me what kind of benefits the premium card has?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      },
+      "timestamp_start": 0.018,
+      "timestamp_end": 0.018
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.026
+    },
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "premium"
+      },
+      "timestamp_start": 0.03,
+      "timestamp_end": 0.03
+    }
+  ],
+  "transcript": "Sure, let me run a get exchange rate for 1000. Here's what I found: converted amount 900.0, rate 0.9. Sure, let me run a modify autopay for credit_card. Here's what I found: autopay enabled True, credit_card, savings. Here's what I found: premium, 2% Cashback, No Foreign Transaction Fee.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a get exchange rate for 1000.",
+      "t": 0.018
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 900.0, rate 0.9.",
+      "t": 0.026
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a modify autopay for credit_card.",
+      "t": 0.026
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: autopay enabled True, credit_card, savings.",
+      "t": 0.03
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: premium, 2% Cashback, No Foreign Transaction Fee.",
+      "t": 0.03
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      }
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      }
+    },
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "premium"
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "example_id": "housing_25",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... you know... alright... first set the filter so pets are allowed... and set the max price to 3000. Then search for places in San Francisco — wait, actually, change the max price to 3500 instead. San Francisco is expensive so... um, I need more room in the budget.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.224
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "San Francisco",
+        "max_price": 3500
+      },
+      "timestamp_start": 0.238,
+      "timestamp_end": 0.93
+    }
+  ],
+  "transcript": "Sure, let me run a update search filter for pets_allowed. Here's what I found: pets_allowed, new value True. Sure, let me run a search apartments for San Francisco. I started that search apartments, but the system also needs the bedrooms — what should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a update search filter for pets_allowed.",
+      "t": 0.026
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: pets_allowed, new value True.",
+      "t": 0.238
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Sure, let me run a search apartments for San Francisco.",
+      "t": 0.238
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the bedrooms — what should I use?",
+      "t": 0.931
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 3500
+      }
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "San Francisco"
+      }
+    }
+  ]
+}

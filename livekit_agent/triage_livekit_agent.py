@@ -4,30 +4,28 @@ Triage Line voice agent -- roadside/incident-triage, running on the SAME
 LiveKit agent shell as the FDB-v3 cascaded_agent.py (this is a second call
 flow inside the shared shell, not a second LiveKit agent process).
 
-Pipeline:
-  Caller Audio -> Silero VAD -> OpenAI Whisper STT
+Pipeline (no LLM anywhere):
+  Caller Audio -> Silero VAD -> hosted STT (TRIAGELINE_STT_PROVIDER: openai | groq | deepgram)
       -> TriageCallSession (legacy dialogue -> deliberation -> commit state
          machine, via livekit_agent/triage_brain.py)
-      -> OpenAI TTS -> Agent Audio
+      -> hosted TTS (TRIAGELINE_TTS_PROVIDER: openai | deepgram) -> Agent Audio
 
-Status: same as SETUP.md discloses for cascaded_agent.py -- written against
-the livekit-agents 1.8.3 API used elsewhere in this package (AgentServer,
-`@server.rtc_session()`, `session.on("user_input_transcribed")`,
-`session.on("agent_state_changed")`), imports cleanly, but NOT yet run
-against a live LiveKit room in this sandbox (no network egress, no
-LIVEKIT_*/OPENAI_API_KEY credentials available here). The barge-in wiring
-below inherits the same caveat livekit_agent/adapter.py's
-attach_livekit_session already documents: the exact event name for
-mid-agent-speech VAD onset has moved across livekit-agents versions, so a
-final-transcript-during-agent-speech is treated as the barge-in signal of
-record, with the live VAD event as a (best-effort, unverified) fast path.
+STT: this agent passes stt=None to TriageCallSession on purpose -- LiveKit's AgentSession owns STT and
+delivers transcripts through `user_input_transcribed` (audit §5 item 3).
 
-Usage:
-    python triage_livekit_agent.py dev      # connect to a real LiveKit room
-    python triage_livekit_agent.py console  # local mic/speaker smoke test
+Status: built against livekit-agents 1.8.3 (AgentServer, `@server.rtc_session()`,
+`user_input_transcribed`, `agent_state_changed`) and imports cleanly; the confirmation-safety logic it
+drives is covered offline by adapter_tests/test_4 and test_8. A run in a live LiveKit room needs your own
+LiveKit Cloud project (free Build plan) -- see docs/FREE_API_KEYS.md. Barge-in: a partial transcript that
+arrives while the agent is speaking is treated as caller speech onset (fast path); the final transcript
+is the signal of record.
 
-Environment (.env.local, same file cascaded_agent.py reads):
-    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, OPENAI_API_KEY
+Usage (run ONE of the two agents at a time: both register without an agent_name and are auto-dispatched):
+    python livekit_agent/triage_livekit_agent.py dev      # connect to your LiveKit project
+    python livekit_agent/triage_livekit_agent.py console  # local mic/speaker smoke test
+
+Environment (livekit_agent/.env.local, same file cascaded_agent.py reads):
+    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET + the chosen speech provider key(s)
 """
 
 from __future__ import annotations
@@ -36,14 +34,16 @@ import asyncio
 import logging
 import os
 import sys
-import time
 
 from dotenv import load_dotenv
 
 from livekit import agents
 from livekit.agents import Agent, AgentServer, AgentSession
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.dirname(_HERE), _HERE):   # repo root (livekit_agent.*) + this dir (triage_brain)
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 from triage_brain import TriageCallSession  # noqa: E402
 
 env_path = os.path.join(os.path.dirname(__file__), ".env.local")
@@ -141,16 +141,10 @@ class LiveKitAudioIOAdapter(AudioIO):
 
 
 def build_triage_pipeline():
-    """Same VAD/STT/TTS construction as cascaded_agent.py's
-    build_cascaded_pipeline() -- deliberately identical choices (Silero VAD,
-    OpenAI Whisper STT, OpenAI TTS) so this is recognizably the same shell,
-    just without an LLM in the loop (the legacy brain replaces it).
-    """
-    from livekit.plugins import openai, silero
-
-    vad = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
-    stt = openai.STT(model="whisper-1", language="en")
-    tts = openai.TTS(model="tts-1", voice="nova")
+    """Same VAD/STT/TTS construction as cascaded_agent.py (shared speech_providers module), so this is
+    recognizably the same shell, just with the triage brain instead of the FDB tool agent. No LLM."""
+    from livekit_agent.speech_providers import build_pipeline
+    vad, stt, tts, _cfg = build_pipeline()
     return vad, stt, tts
 
 
@@ -216,7 +210,8 @@ async def entrypoint(ctx: agents.JobContext):
     ctx.add_shutdown_callback(_teardown)
 
     await session.start(room=ctx.room, agent=TriageVoiceAgent())
-    print("!!! TRIAGE LINE AGENT STARTED (Silero VAD + OpenAI Whisper STT + legacy deliberation/commit brain + OpenAI TTS) !!!")
+    from livekit_agent.speech_providers import describe
+    print(f"!!! TRIAGE LINE AGENT STARTED: {describe().replace('rule-based agent', 'triage brain')} !!!")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_01",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... i'm trying to go to Tokyo, and I was thinking about leaving around July 15th. Could you look up what flights are available for that day?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Tokyo",
+        "date": "July 15"
+      },
+      "timestamp_start": 0.019,
+      "timestamp_end": 0.235
+    }
+  ],
+  "transcript": "Sure, checking flights to Tokyo for July 15. I found a flight to Tokyo: FL123 departing July 15 for $450.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Sure, checking flights to Tokyo for July 15.",
+      "t": 0.019
+    },
+    {
+      "kind": "final_response",
+      "text": "I found a flight to Tokyo: FL123 departing July 15 for $450.",
+      "t": 0.237
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Tokyo",
+        "date": "July 15"
+      }
+    }
+  ]
+}

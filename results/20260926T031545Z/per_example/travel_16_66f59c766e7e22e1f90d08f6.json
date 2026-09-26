@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_16",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... like... I've been thinking about it and... um, I need to book flights to, um, Vegas. I'm looking at going around, uh, August 8th if there's anything available.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Las Vegas",
+        "date": "August 8"
+      },
+      "timestamp_start": 0.02,
+      "timestamp_end": 0.463
+    }
+  ],
+  "transcript": "On it — finding flights to Las Vegas for August 8 first. I found a flight to Las Vegas: FL123 departing August 8 for $450. Whose name should I book it under?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "On it — finding flights to Las Vegas for August 8 first.",
+      "t": 0.02
+    },
+    {
+      "kind": "final_response",
+      "text": "I found a flight to Las Vegas: FL123 departing August 8 for $450. Whose name should I book it under?",
+      "t": 0.463
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_flights",
+      "args": {
+        "destination": "Las Vegas",
+        "date": "August 8"
+      }
+    }
+  ]
+}
