@@ -170,7 +170,8 @@ async def entrypoint(ctx: agents.JobContext):
     # VAD; what it does NOT own is deciding what to say -- that is
     # delegated to TriageCallSession via LiveKitTTSAdapter.say(), driven by
     # STT transcripts below, not by session.generate_reply()/an LLM.
-    session = AgentSession(vad=vad, stt=stt, tts=tts, min_endpointing_delay=0.5, max_endpointing_delay=5.0)
+    session = AgentSession(vad=vad, stt=stt, tts=tts,
+                           turn_handling={"endpointing": {"min_delay": 0.5, "max_delay": 5.0}})
 
     audio_io = LiveKitAudioIOAdapter()
     tts_adapter = LiveKitTTSAdapter(session)
@@ -190,15 +191,29 @@ async def entrypoint(ctx: agents.JobContext):
                 # while the agent is mid-utterance is caller speech onset.
                 asyncio.create_task(triage.check_for_barge_in())
 
+    @session.on("user_state_changed")
+    def _on_user_state(ev):
+        speaking = ev.new_state == "speaking"
+        audio_io.set_caller_speaking(speaking)
+        if speaking and audio_io.is_agent_playing():
+            asyncio.create_task(triage.check_for_barge_in())
+
     @session.on("agent_state_changed")
     def _on_agent_state(ev: agents.voice.AgentStateChangedEvent):
         audio_io.set_agent_playing(ev.new_state == "speaking")
+        tts_adapter._speaking = ev.new_state == "speaking"
 
     # --- fix for the disconnect issue named in the extension brief ---
     # No action may be left non-terminal after the call ends. This must run
     # on every teardown path (explicit disconnect or job shutdown), not just
     # a clean hangup, so it is registered against both.
+    torn_down = False
+
     async def _teardown(*_args, **_kwargs) -> None:
+        nonlocal torn_down
+        if torn_down:
+            return
+        torn_down = True
         resolved = await triage.teardown(reason="caller_disconnected")
         if resolved:
             log.info(

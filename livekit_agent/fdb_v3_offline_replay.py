@@ -140,8 +140,54 @@ async def replay(example_dir: Path, registry, provider: str):
     return result
 
 
+async def console(turns=None):
+    """Key-free text console using the same adapter and actual bundled mock tools.
+
+    Interactive input does not await tools, so typing a correction interrupts work.
+    --say is sequential and drains each request for scriptable smoke tests.
+    """
+    registry = load_registry()
+
+    async def execute(cid, api, args):
+        print(f"TOOL {api} {json.dumps(args)}", flush=True)
+        result = await asyncio.to_thread(registry.call, api, **args)
+        status = "error" if result.get("status") == "error" else "success"
+        await adapter.on_tool_completed(cid, result, status=status)
+
+    async def speak(kind, text):
+        print(f"AGENT [{kind}] {text}", flush=True)
+
+    async def cancel(cid):
+        print(f"CANCEL {cid}", flush=True)
+
+    adapter = TriageAdapter(tool_executor=execute, tool_canceller=cancel, speak=speak)
+    await adapter.start(FDB_TOOLS)
+    print("Offline text mode; local mock tools only. No speech APIs or real transactions.")
+    try:
+        if turns:
+            for text in turns:
+                print(f"USER {text}", flush=True)
+                await adapter.on_user_final(text)
+                await adapter.wait_idle()
+        else:
+            print("Type requests or corrections at any time; /quit exits.")
+            while True:
+                try:
+                    text = await asyncio.to_thread(input, "> ")
+                except EOFError:
+                    break
+                if text.strip() == "/quit":
+                    break
+                await adapter.on_user_final(text)
+            await adapter.wait_idle()
+    finally:
+        await adapter.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--interactive", action="store_true", help="key-free text console, no dataset needed")
+    ap.add_argument("--say", action="append", help="run a text request with bundled tools; repeat for follow-ups")
     ap.add_argument("--data", default=str(ROOT / "livekit_agent" / "fdb_v3_data_released"))
     ap.add_argument("--provider", default="triageline")
     ap.add_argument("--limit", type=int, default=0)
@@ -155,6 +201,9 @@ def main():
         a.provider = "triageline_text"
     # Explicit offline means no hosted planner even if keys are exported in the shell.
     os.environ["TRIAGELINE_LLM_PLANNER"] = "0"
+    if a.interactive or a.say:
+        asyncio.run(console(a.say))
+        return
     if not Path(a.data).is_dir():
         ap.error(f"data directory not found: {a.data}; run ./run_fdb_v3.sh --offline-text first")
     dirs = sorted(p for p in Path(a.data).iterdir() if (p / "metadata.json").exists())

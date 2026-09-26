@@ -163,6 +163,12 @@ class TriageAdapter:
         stop its queued/playing speech immediately so the user can barge in; the
         actual interruption semantics (revise / retract / switch) are decided when
         the final transcript arrives."""
+        if self._closed:
+            return
+        # A new speech segment owns the floor; do not commit the preceding fragment
+        # while the caller is still speaking. The next final restarts settling.
+        if self._settle_task and not self._settle_task.done():
+            self._settle_task.cancel()
         if self._interrupt_speech is not None:
             try:
                 await self._interrupt_speech()
@@ -207,6 +213,9 @@ class TriageAdapter:
         deadline = loop.time() + timeout
         quiet = 0
         while quiet < 2:
+            for task in (self._run_task, self._pump_task):
+                if task and task.done():
+                    raise RuntimeError("agent event loop stopped before completion")
             active = (not self.in_q.empty() or not self.out_q.empty() or self._tool_tasks
                       or self.agent.tasks or self.agent.inflight or self.agent.planner_pending
                       or self._pending_final)
@@ -256,6 +265,8 @@ class TriageAdapter:
         on_interruption()'s epoch-bump path. Otherwise it is an ordinary new turn.
         The classification of the interruption (revise / retract / switch) is
         entirely ParticipantAgent.on_interruption."""
+        if self._closed:
+            return
         if self.busy():
             await self.on_barge_in(text)
             return
@@ -268,6 +279,8 @@ class TriageAdapter:
         .invalidate() (switch) or .revise() (slot change) and cancels any
         in-flight call the change actually affects (agent/agent.py:595-680).
         """
+        if self._closed:
+            return
         await self.in_q.put({"event_type": "interruption", "payload": {"text": text}})
 
     async def on_tool_completed(self, call_id: str, result: Dict[str, Any], status: str = "ok"):
@@ -299,8 +312,13 @@ class TriageAdapter:
                 msg = await self.out_q.get()
                 action = msg.get("action")
                 payload = msg.get("payload") or {}
+                if self._closed:
+                    continue
                 if action in ("filler_speech", "final_response", "clarification_request"):
-                    await self._speak(action, payload.get("text", ""))
+                    try:
+                        await self._speak(action, payload.get("text", ""))
+                    except Exception as exc:
+                        log.warning("speech delivery failed (%s); keeping tool pump alive", type(exc).__name__)
                 elif action == "tool_call":
                     cid, api, args = payload["call_id"], payload["api_name"], payload["args"]
                     self._issued[cid] = api

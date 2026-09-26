@@ -37,6 +37,16 @@ from harness.scorer import score_scenario  # noqa: E402
 from run_local import load_agent_factory  # noqa: E402
 import live  # noqa: E402
 
+# The browser server and LiveKit workers share the same key file.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(ROOT, "livekit_agent", ".env.local"))
+except ImportError:
+    pass  # key-free text mode has no dotenv dependency
+if "--offline" in sys.argv:
+    os.environ["TRIAGELINE_LLM_PLANNER"] = "0"
+    os.environ.setdefault("PRELOAD", "0")
+
 AGENTS = {"triageline": "agent.agent:ParticipantAgent", "baseline": "agent.agent:BaselineAgent"}
 OFFICIAL_TAIL_MS = 6000.0          # identical to run_local.py / runner default
 _RUN_SEM = threading.BoundedSemaphore(1)   # one scored run at a time: keeps virtual timing honest

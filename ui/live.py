@@ -170,7 +170,8 @@ class LiveSession:
         self.loop.call_soon_threadsafe(self.in_q.put_nowait, ev)
 
     def busy(self) -> bool:
-        return bool(self.agent.inflight) or bool(self.agent.waiting_vision) or bool(self.pending)
+        return (bool(self.agent.inflight) or bool(self.agent.waiting_vision)
+                or bool(self.agent.planner_pending) or bool(self.pending))
 
     def user_text(self, text: str, speaking: bool) -> str:
         text = re.sub(r"\s+", " ", text or "").strip()[:MAX_TEXT]
