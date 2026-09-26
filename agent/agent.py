@@ -469,6 +469,10 @@ class ParticipantAgent:
         if not text:
             reason = next((r.get("error") for r in results if r.get("error")), "empty")
             self.note("asr_no_text", reason)
+            if reason != "empty":
+                await self.say("clarification_request", "Speech recognition is unavailable. Please type your request; "
+                               "check the selected speech API key, quota, or cached local Whisper model.")
+                return
             pc = self.pending_clarify
             field = (pc or {}).get("field") or ""
             if pc and any(k in field for k in ("city", "destination")) or (not pc and self.last_api in FLIGHT_FAMILY):

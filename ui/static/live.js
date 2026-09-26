@@ -20,13 +20,14 @@
     sid: null, es: null, lastId: 0, seen: new Set(), starting: null, reconnectTimer: null, backoff: 1000,
     speaking: false, listening: false, rec: null, mediaRec: null, recTimer: null, speechQ: [],
     tasks: {}, log: [], slots: {}, wasSpeakingAtStart: false, pendingSendAt: 0,
+    audio: { provider: "local", offline: true, configured: false },
     metrics: { firstMs: [], tools: 0, barge: 0, cancel: 0 }, camStream: null, pttTimer: null, ptt: false,
   };
 
   const opt = {
     tts: () => HAS_TTS && $("#m-tts").checked,
     hands: () => $("#m-hands").checked,
-    serverAsr: () => $("#m-server-asr").checked || !SR,
+    serverAsr: () => state.audio.offline || state.audio.provider !== "local" || $("#m-server-asr").checked || !SR,
     haptics: () => $("#m-haptics").checked,
   };
 
@@ -115,6 +116,7 @@
         try {
           const j = await post("/api/live/start");
           state.sid = j.sid;
+          state.audio = j.audio || state.audio;
           $("#mode").textContent = (j.mode || "").includes("MOCK") ? "MOCK TOOLS" : j.mode;
           $("#mode").title = j.mode || "";
           $("#sid-label").textContent = "Session " + j.sid.slice(0, 8);
@@ -310,6 +312,11 @@
     setWaveform(true);
     const u = new SpeechSynthesisUtterance(item.text);
     u.rate = 1.05; u.lang = "en-US";
+    if (state.audio.offline) {
+      const localVoice = speechSynthesis.getVoices().find((v) => v.localService && v.lang.startsWith("en"));
+      if (!localVoice) { state.speaking = false; micBtn.classList.remove("speaking"); setWaveform(state.listening); state.speechQ = []; return; }
+      u.voice = localVoice;
+    }
     item.el.classList.add("speaking");
     let finished = false;
     const done = () => { if (finished) return; finished = true; clearTimeout(guard); item.el.classList.remove("speaking"); if (state.speaking) nextSpeech(); };
@@ -321,10 +328,10 @@
 
   function stopSpeech() {
     state.speechQ = [];
+    const was = state.speaking;
+    state.speaking = false; // onend/onerror may fire synchronously during cancel
     if (HAS_TTS) speechSynthesis.cancel();
     $$(".msg.speaking").forEach((e) => e.classList.remove("speaking"));
-    const was = state.speaking;
-    state.speaking = false;
     micBtn.classList.remove("speaking");
     setWaveform(state.listening);
     return was;
@@ -405,6 +412,10 @@
 
   async function startListening() {
     if (state.listening) return;
+    if (!state.sid) await start();
+    if (opt.serverAsr() && !state.audio.configured) {
+      toast("Server speech is not configured. Check API keys or use text input.", "neg"); return;
+    }
     state.wasSpeakingAtStart = stopSpeech() || busy();
     buzz(12);
     if (opt.serverAsr()) return recordForServer();
@@ -622,7 +633,7 @@
     box.innerHTML = "<div class='muted'>Checking device, models &amp; assets…</div>";
     const row = (k, ok, note = "") => `<div><span>${esc(k)}</span><span class="${ok ? "y" : "n"}">${ok ? "✓" : "✕"}${note ? " " + esc(note) : ""}</span></div>`;
     const out = [
-      row("Speech recognition", !!SR, SR ? "on-device" : "server fallback"),
+      row("Speech recognition", !!SR, opt.serverAsr() ? "server STT selected" : "browser service (may require internet)"),
       row("Speech synthesis", HAS_TTS),
       row("Secure context", window.isSecureContext),
       row("Camera API", !!navigator.mediaDevices?.getUserMedia),
@@ -636,7 +647,7 @@
       const r = await (await fetch("/api/ready")).json();
       out.push(row("Tool planner", r.planner?.configured, r.planner?.provider || "local rules"),
         row("Available tools", !!r.tools?.length, String(r.tools?.length || 0)),
-        row("Server speech", true, r.speech || "local Whisper"),
+        row("Server speech configuration", !!r.audio?.configured, r.speech || "local Whisper"),
         row("Local-only mode", !!r.offline, r.offline ? "no hosted API calls" : "hosted APIs allowed"));
       out.push(row("Whisper ASR model", r.asr_loaded, r.asr_loaded ? "" : "lazy-loads on first clip"),
         row("CLIP vision model", r.clip_loaded, r.clip_loaded ? "" : "lazy-loads on first frame"),
@@ -658,6 +669,13 @@
 
   renderMetrics();
   // open the long-lived stream only after load so it never holds the page's load event
-  if (document.readyState === "complete") resume();
-  else window.addEventListener("load", resume, { once: true });
+  async function boot() {
+    try {
+      const r = await fetch("/api/ready");
+      if (r.ok) state.audio = (await r.json()).audio || state.audio;
+    } catch (_) { /* fail closed: keep browser cloud speech disabled */ }
+    resume();
+  }
+  if (document.readyState === "complete") boot();
+  else window.addEventListener("load", boot, { once: true });
 })();

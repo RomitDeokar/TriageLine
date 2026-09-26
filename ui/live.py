@@ -348,8 +348,8 @@ def readiness() -> Dict[str, Any]:
         "mode": MODE,
         "offline": os.environ.get("TRIAGELINE_OFFLINE") == "1",
         "planner": _planner_status(),
-        "speech": "local cached Whisper" if os.environ.get("TRIAGELINE_OFFLINE") == "1" else
-                  "Gemini (server audio)" if __import__("agent.llm_planner", fromlist=["gemini_key"]).gemini_key() else "local Whisper",
+        "audio": P.speech_config(),
+        "speech": P.speech_config()["provider"] + ":" + P.speech_config()["model"] + " (server STT; browser TTS)",
         "tools": sorted(set(MockEnvironment("readiness").registry) | (set(FDB_TOOLS) - {"search_flights"})),
         "packages": {m: bool(u.find_spec(m)) for m in ("faster_whisper", "onnxruntime", "huggingface_hub", "tokenizers", "PIL", "numpy")},
         "tesseract": bool(shutil.which("tesseract")),
