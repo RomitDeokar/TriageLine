@@ -45,6 +45,8 @@ except ImportError:
     pass  # key-free text mode has no dotenv dependency
 if "--offline" in sys.argv:
     os.environ["TRIAGELINE_LLM_PLANNER"] = "0"
+    os.environ["TRIAGELINE_OFFLINE"] = "1"
+    os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ.setdefault("PRELOAD", "0")
 
 AGENTS = {"triageline": "agent.agent:ParticipantAgent", "baseline": "agent.agent:BaselineAgent"}
@@ -300,7 +302,7 @@ class H(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
-    if os.environ.get("PRELOAD", "1") == "1":
+    if os.environ.get("PRELOAD", "0") == "1":
         threading.Thread(target=lambda: (live.P.load_asr(), live.P.load_clip()), daemon=True).start()
     live.SESSIONS.start_reaper()
     print(f"TriageLine on http://0.0.0.0:{port}   (console /  ·  live assistant /live.html)")

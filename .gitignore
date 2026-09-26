@@ -17,3 +17,8 @@ livekit_agent/.env
 livekit_agent/fdb_v3_data_released
 livekit_agent/.fdb_v3_repo/
 .cache/
+
+.venv-fdb/
+.env
+.env.local
+.env.*.local
