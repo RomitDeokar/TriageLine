@@ -91,13 +91,14 @@ def _warm():
 def transcribe(ref: Optional[str], vocab_prompt: str = "") -> Dict[str, Any]:
     """Returns {text, confidence, words:[(word, prob)], ok}. Blocking — call via to_thread."""
     path = resolve(ref)
-    if path and os.environ.get("TRIAGELINE_OFFLINE") != "1":
-        from .llm_planner import gemini_key
-        provider = os.environ.get("TRIAGELINE_STT_PROVIDER", "auto").strip().lower()
-        if provider == "gemini" or (provider == "auto" and gemini_key()):
-            return _gemini_transcribe(path, vocab_prompt)
+    cfg = speech_config()
+    if cfg["provider"] != "local":
+        if not cfg["configured"]:
+            return {"text": "", "confidence": 0.0, "words": [], "ok": False, "error": "speech_not_configured"}
+        if path:
+            return _gemini_transcribe(path, vocab_prompt) if cfg["provider"] == "gemini" else _hosted_transcribe(path, vocab_prompt, cfg)
     if not path or not load_asr():
-        return {"text": "", "confidence": 0.0, "words": [], "ok": False}
+        return {"text": "", "confidence": 0.0, "words": [], "ok": False, "error": "local_asr_unavailable"}
     try:
         with _ASR_LOCK:  # the segment generator is lazy: decode fully inside the lock
             segs, _info = _ASR.transcribe(
@@ -137,9 +138,9 @@ def load_clip() -> bool:
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
         from tokenizers import Tokenizer
-        v = hf_hub_download(CLIP_REPO, "onnx/vision_model_quantized.onnx", revision=CLIP_REVISION)
-        t = hf_hub_download(CLIP_REPO, "onnx/text_model_quantized.onnx", revision=CLIP_REVISION)
-        tk = hf_hub_download(CLIP_REPO, "tokenizer.json", revision=CLIP_REVISION)
+        v = hf_hub_download(CLIP_REPO, "onnx/vision_model_quantized.onnx", revision=CLIP_REVISION, local_files_only=os.environ.get("TRIAGELINE_OFFLINE") == "1")
+        t = hf_hub_download(CLIP_REPO, "onnx/text_model_quantized.onnx", revision=CLIP_REVISION, local_files_only=os.environ.get("TRIAGELINE_OFFLINE") == "1")
+        tk = hf_hub_download(CLIP_REPO, "tokenizer.json", revision=CLIP_REVISION, local_files_only=os.environ.get("TRIAGELINE_OFFLINE") == "1")
         so = ort.SessionOptions()
         so.intra_op_num_threads = 2
         _CLIP = (ort.InferenceSession(v, so, providers=["CPUExecutionProvider"]),
@@ -291,3 +292,66 @@ def _gemini_transcribe(path: str, prompt: str) -> Dict[str, Any]:
         return {**empty, "text": text, "ok": bool(text), "source": "gemini", "confidence_available": False}
     except Exception as exc:
         return {**empty, "error": "gemini_" + type(exc).__name__}
+
+
+def speech_config() -> Dict[str, Any]:
+    """Browser upload STT: honor explicit providers; no keys means local ASR."""
+    from .llm_planner import gemini_key
+    offline = os.environ.get("TRIAGELINE_OFFLINE") == "1"
+    provider = os.environ.get("TRIAGELINE_STT_PROVIDER", "auto").strip().lower()
+    keys = {"gemini": gemini_key(), "deepgram": os.getenv("DEEPGRAM_API_KEY"),
+            "groq": os.getenv("GROQ_API_KEY"), "openai": os.getenv("OPENAI_API_KEY")}
+    if offline:
+        provider = "local"
+    elif provider == "auto":
+        provider = next((p for p, key in keys.items() if key), "local")
+    from livekit_agent.speech_providers import STT_DEFAULTS
+    return {"provider": provider,
+            "model": (ASR_MODEL_NAME or "base.en") if provider == "local" else
+                     os.getenv("TRIAGELINE_STT_MODEL") or STT_DEFAULTS.get(provider, ""),
+            "configured": True if provider == "local" else bool(keys.get(provider)),
+            "offline": offline}
+
+
+def _hosted_transcribe(path: str, prompt: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Bounded upload STT for Groq/OpenAI/Deepgram, without a LiveKit dependency."""
+    import json
+    import secrets
+    import urllib.request
+    import urllib.error
+    from urllib.parse import urlencode
+    empty = {"text": "", "confidence": 0.0, "words": [], "ok": False,
+             "source": cfg["provider"], "confidence_available": False}
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(6 * 1024 * 1024 + 1)
+        if len(raw) > 6 * 1024 * 1024:
+            return {**empty, "error": "audio_too_large"}
+        ext, mime = ("wav", "audio/wav") if raw.startswith(b"RIFF") else ("ogg", "audio/ogg") if raw.startswith(b"OggS") else ("mp4", "audio/mp4") if raw[4:8] == b"ftyp" else ("webm", "audio/webm")
+        if cfg["provider"] == "deepgram":
+            url = "https://api.deepgram.com/v1/listen?" + urlencode({"model": cfg["model"], "smart_format": "true"})
+            data, headers = raw, {"Content-Type": mime, "Authorization": "Token " + os.environ["DEEPGRAM_API_KEY"]}
+        else:
+            boundary = "triageline" + secrets.token_hex(16)
+            fields = {"model": cfg["model"], "response_format": "json", "temperature": "0", "prompt": prompt}
+            data = b"".join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode() for key, value in fields.items())
+            data += (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.{ext}"\r\nContent-Type: {mime}\r\n\r\n').encode() + raw + f"\r\n--{boundary}--\r\n".encode()
+            base = "https://api.groq.com/openai/v1" if cfg["provider"] == "groq" else os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            url = base.rstrip("/") + "/audio/transcriptions"
+            headers = {"Content-Type": "multipart/form-data; boundary=" + boundary,
+                       "Authorization": "Bearer " + os.environ[cfg["provider"].upper() + "_API_KEY"]}
+        req = urllib.request.Request(url, data=data, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.load(response)
+        if cfg["provider"] == "deepgram":
+            alt = result["results"]["channels"][0]["alternatives"][0]
+            text = alt.get("transcript", "").strip()
+            words = [(w["word"], float(w["confidence"])) for w in alt.get("words", []) if "confidence" in w]
+            return {**empty, "text": text, "ok": bool(text), "words": words,
+                    "confidence": float(alt.get("confidence", 0)), "confidence_available": bool(words)}
+        text = result.get("text", "").strip()
+        return {**empty, "text": text, "ok": bool(text)}
+    except urllib.error.HTTPError as exc:
+        return {**empty, "error": "speech_http_" + str(exc.code)}
+    except Exception as exc:
+        return {**empty, "error": "speech_" + type(exc).__name__}

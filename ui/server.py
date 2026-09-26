@@ -245,7 +245,7 @@ class H(SimpleHTTPRequestHandler):
         parts = self.path.split("?")[0].strip("/").split("/")   # api/live/<sid>/<op>
         if parts[2:] == ["start"]:
             s = live.SESSIONS.start()
-            return self._json({"sid": s.sid, "mode": live.MODE})
+            return self._json({"sid": s.sid, "mode": live.MODE, "audio": live.P.speech_config()})
         if len(parts) != 4:
             return self._json({"error": "not found"}, 404)
         sid, op = parts[2], parts[3]

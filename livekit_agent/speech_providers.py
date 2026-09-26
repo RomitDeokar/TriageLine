@@ -143,8 +143,18 @@ def preflight(command: str) -> None:
     """Fail once in the CLI, before spawning workers that would fail per room."""
     if command not in ("start", "dev", "console"):
         return
-    cfg = selected()
+    try:
+        cfg = selected()
+        from agent import llm_planner
+        planner_cfg = llm_planner.config()
+    except (ProviderConfigError, ValueError) as exc:
+        raise SystemExit("Configuration error: " + str(exc)) from None
     missing = list(cfg["missing_keys"])
+    if llm_planner.enabled():
+        provider = planner_cfg["provider"]
+        key = llm_planner.gemini_key() if provider == "gemini" else os.getenv(provider.upper() + "_API_KEY")
+        if not key:
+            missing.append(provider.upper() + "_API_KEY (planner)")
     if command in ("start", "dev"):
         missing += [key for key in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
                     if not os.environ.get(key) or "<" in os.environ.get(key, "")]

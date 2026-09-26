@@ -32,16 +32,23 @@ def gemini_key() -> str:
 
 
 def enabled() -> bool:
+    if os.environ.get("TRIAGELINE_OFFLINE") == "1":
+        return False
     setting = os.environ.get("TRIAGELINE_LLM_PLANNER", "auto").strip().lower()
-    return setting == "1" or (setting == "auto" and bool(gemini_key()))
+    provider = os.environ.get("TRIAGELINE_LLM_PROVIDER", "gemini").strip().lower()
+    key = gemini_key() if provider == "gemini" else os.environ.get(provider.upper() + "_API_KEY")
+    return setting == "1" or (setting == "auto" and bool(key))
 
 
 def config() -> Dict[str, Any]:
     prov = os.environ.get("TRIAGELINE_LLM_PROVIDER", "gemini").strip().lower()
     if prov not in DEFAULT_MODELS:
         raise ValueError("TRIAGELINE_LLM_PROVIDER must be gemini, groq, or openai")
+    timeout = float(os.environ.get("TRIAGELINE_LLM_TIMEOUT_S", "8"))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("TRIAGELINE_LLM_TIMEOUT_S must be finite and positive")
     return {"provider": prov, "model": os.environ.get("TRIAGELINE_LLM_MODEL") or DEFAULT_MODELS[prov],
-            "timeout": max(0.1, float(os.environ.get("TRIAGELINE_LLM_TIMEOUT_S", "8")))}
+            "timeout": timeout}
 
 
 def _client(cfg):
