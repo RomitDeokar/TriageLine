@@ -19,7 +19,9 @@ Live assistant (persistent session, streamed output):
 from __future__ import annotations
 
 import glob
+import hmac
 import json
+import logging
 import os
 import queue
 import re
@@ -36,6 +38,7 @@ from harness.runner import run_scenario  # noqa: E402
 from harness.scorer import score_scenario  # noqa: E402
 from run_local import load_agent_factory  # noqa: E402
 import live  # noqa: E402
+import mobile  # noqa: E402
 
 # The browser server and LiveKit workers share the same key file.
 try:
@@ -133,16 +136,41 @@ class H(SimpleHTTPRequestHandler):
         if self.path.endswith((".js", ".html", ".css", ".json", "/")) or self.path.startswith("/api"):
             self.send_header("Cache-Control", "no-store")
         if self.path.startswith("/api"):
-            # mobile / native / cross-origin clients (React Native, Flutter, Capacitor webviews)
-            self.send_header("Access-Control-Allow-Origin", os.environ.get("CORS_ORIGIN", "*"))
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            origin = self.headers.get("Origin", "")
+            allowed = [v.strip() for v in os.environ.get("CORS_ORIGIN", "").split(",") if v.strip()]
+            if origin and origin in allowed:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         super().end_headers()
 
     def do_OPTIONS(self):
-        self.send_response(204)
+        origin = self.headers.get("Origin", "")
+        allowed = [v.strip() for v in os.environ.get("CORS_ORIGIN", "").split(",") if v.strip()]
+        self.send_response(204 if origin in allowed else 403)
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def _authorized(self):
+        key = os.environ.get("TRIAGELINE_API_KEY", "")
+        provided = self.headers.get("Authorization", "")
+        if key and hmac.compare_digest(provided, "Bearer " + key):
+            return True
+        self._json({"error": "unauthorized", "code": "unauthorized"}, 401)
+        return False
+
+    def _api_access(self, path):
+        # Demo console uses same-origin cookies-less requests in development.
+        # Production exposes only the backend-to-backend mobile credential route.
+        if path == "/api/health":
+            return True
+        if os.environ.get("TRIAGELINE_PRODUCTION") == "1" and path != "/api/mobile/token":
+            self._json({"error": "not found", "code": "not_found"}, 404)
+            return False
+        if path == "/api/mobile/token" or os.environ.get("TRIAGELINE_API_KEY"):
+            return self._authorized()
+        return True
 
     def _json(self, obj, code=200):
         b = json.dumps(obj).encode()
@@ -171,6 +199,9 @@ class H(SimpleHTTPRequestHandler):
 
     # ------------------------------------------------------------------ GET
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/") and not self._api_access(path):
+            return
         if self.path.startswith("/api/scenarios"):
             return self._json(list_scenarios())
         if self.path.startswith("/api/ready"):
@@ -229,6 +260,11 @@ class H(SimpleHTTPRequestHandler):
     # ------------------------------------------------------------------ POST
     def do_POST(self):
         try:
+            path = self.path.split("?", 1)[0]
+            if path.startswith("/api/") and not self._api_access(path):
+                return
+            if path == "/api/mobile/token":
+                return self._json(mobile.issue_token(), 201)
             if self.path.startswith("/api/run"):
                 return self._run(self._body())
             if self.path.startswith("/api/live/"):
@@ -238,8 +274,11 @@ class H(SimpleHTTPRequestHandler):
             return self._json({"error": str(e), "code": "bad_request"}, 400)
         except OverflowError as e:
             return self._json({"error": str(e), "code": "busy"}, 429)
-        except Exception as e:
-            return self._json({"error": f"{type(e).__name__}: {e}", "code": "server_error"}, 500)
+        except RuntimeError:
+            return self._json({"error": "LiveKit is not configured", "code": "unavailable"}, 503)
+        except Exception:
+            logging.exception("API request failed")
+            return self._json({"error": "internal server error", "code": "server_error"}, 500)
 
     def _live(self, req):
         parts = self.path.split("?")[0].strip("/").split("/")   # api/live/<sid>/<op>
@@ -301,9 +340,15 @@ class H(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if os.environ.get("TRIAGELINE_PRODUCTION") == "1":
+        if len(os.environ.get("TRIAGELINE_API_KEY", "")) < 32:
+            raise SystemExit("production requires TRIAGELINE_API_KEY of at least 32 characters")
+        if not all(os.environ.get(v) for v in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")):
+            raise SystemExit("production requires LiveKit credentials")
     port = int(os.environ.get("PORT", "8080"))
     if os.environ.get("PRELOAD", "0") == "1":
         threading.Thread(target=lambda: (live.P.load_asr(), live.P.load_clip()), daemon=True).start()
     live.SESSIONS.start_reaper()
-    print(f"TriageLine on http://0.0.0.0:{port}   (console /  ·  live assistant /live.html)")
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    host = os.environ.get("HOST", "127.0.0.1")
+    print(f"TriageLine on http://{host}:{port}   (console /  ·  live assistant /live.html)")
+    ThreadingHTTPServer((host, port), H).serve_forever()

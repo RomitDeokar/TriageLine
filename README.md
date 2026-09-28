@@ -21,6 +21,59 @@ uses local Whisper if `faster-whisper` is installed, and falls back to the brows
 `console` mode needs the system PortAudio library (`apt install libportaudio2`); use `dev` + the LiveKit
 Agents Playground otherwise. The sections below that say "no LLM" describe the default key-free configuration.
 
+## Native mobile voice integration (LiveKit, not the demo PWA)
+
+The existing `/live.html` app uses HTTP clips/text + SSE and **mock tools**; it is not a
+low-latency mobile voice SDK. Native clients should use LiveKit WebRTC to connect to the
+**same** `livekit_agent/cascaded_agent.py` worker. No Groq account is needed: obtain a
+Google AI Studio `GEMINI_API_KEY`, set `TRIAGELINE_STT_PROVIDER=gemini`,
+`TRIAGELINE_TTS_PROVIDER=gemini`, `TRIAGELINE_LLM_PROVIDER=gemini` and
+`TRIAGELINE_LLM_PLANNER=auto`. The planner is a schema-validated fallback **only when
+rules cannot build a complete call**. Gemini free-tier quotas, availability and model
+names depend on your account; plan for quota errors and a paid tier before real traffic.
+
+1. Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `GEMINI_API_KEY` in
+   `livekit_agent/.env.local`. Start the LiveKit worker:
+   `.venv/bin/python livekit_agent/cascaded_agent.py dev` (use `start` in deployment).
+2. Deploy `ui/server.py` behind **HTTPS** with `TRIAGELINE_PRODUCTION=1` and a random
+   `TRIAGELINE_API_KEY` of at least 32 characters. Set `HOST=0.0.0.0` only behind a
+   trusted TLS proxy. The worker and API need the same LiveKit credentials. Do not put
+   the API key, Gemini key, or LiveKit secret in a mobile app.
+3. Your own authenticated backend calls `POST /api/mobile/token` with
+   `Authorization: Bearer <TRIAGELINE_API_KEY>` and `{}` as the JSON body. Example:
+
+   ```bash
+   curl -X POST https://YOUR-BACKEND/api/mobile/token \
+     -H "Authorization: Bearer $TRIAGELINE_API_KEY" -H 'Content-Type: application/json' -d '{}'
+   ```
+
+   Response: `{ "url": "wss://…", "token": "<short-lived JWT>",
+   "room": "triageline-…", "identity": "participant-…", "expires_at": 1234567890,
+   "mode": "LIVE AUDIO + MOCK TOOLS" }`. The backend must authenticate/authorize its
+   own user before forwarding **only** that user's token; this endpoint uses a shared
+   backend secret, **not end-user authentication**. A unique room and identity are
+   minted for every request; the join token expires after 10 minutes (a joined room
+   does not automatically end when the token expires). Do not log the token.
+4. In a Flutter (`livekit_client`), React Native (`@livekit/react-native`), iOS or
+   Android LiveKit SDK, request microphone permission, create a room, connect with
+   `url` and `token`, and publish the microphone track. Subscribe to the agent's
+   audio track and enable speaker playback; on exit disconnect and discard the token.
+   No STT/TTS API keys belong in the client. The worker is auto-dispatched to rooms;
+   do **not** mix it with the triage worker on one auto-dispatch project unless you
+   configure explicit agent dispatch/routing.
+
+Production mode exposes only `/api/mobile/token` (authenticated) and `/api/health`;
+scenario runs, demo sessions, logs and readiness are disabled. `CORS_ORIGIN` can be
+set to a comma-separated exact origin allowlist for browser backends; default is no
+cross-origin access. This small Python HTTP server has no distributed rate limiter,
+account identity integration or persistence. Put it behind a TLS gateway with
+per-user authorization, request limits, metrics and abuse prevention; rotate secrets
+and enforce quotas. **All actions are still simulated**: before real booking, dispatch
+or payment, replace `mock_apis.py` / `ToolAdapter` with your provider and add explicit
+confirmation, idempotency keys and reconciliation. Do not deploy it as an emergency
+service. This implementation has not been verified against a live LiveKit room without
+user-supplied credentials.
+
 TriageLine has **three distinct pieces**. They are easy to conflate because
 they share vocabulary (interruption, epoch, deliberation) — this README
 keeps them separate on purpose.
@@ -63,10 +116,10 @@ Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 | Stage | Component | Where it runs |
 |---|---|---|
 | VAD | Silero (`livekit-plugins-silero`) | local |
-| STT | `TRIAGELINE_STT_PROVIDER`: OpenAI `whisper-1` (default) · Groq `whisper-large-v3-turbo` · Deepgram `nova-3` | hosted |
-| Understanding + tool calls | `ParticipantAgent` (`agent/agent.py`, `agent/nlu.py`): rule-based, schema-driven, epoch-guarded. **No LLM.** | local |
+| STT | `TRIAGELINE_STT_PROVIDER=auto`: Gemini `gemini-2.5-flash` if keyed, then Deepgram, Groq, OpenAI | hosted |
+| Understanding + tool calls | `ParticipantAgent`: local rules first; optional Gemini schema-validated planner if rules cannot complete a call | local + optional hosted |
 | Tools | official FDB-v3 `mock_apis.py` (pinned commit, unmodified) | local |
-| TTS | `TRIAGELINE_TTS_PROVIDER`: OpenAI `tts-1`/nova (default) · Deepgram `aura-2-andromeda-en` | hosted |
+| TTS | `TRIAGELINE_TTS_PROVIDER=auto`: Gemini `gemini-2.5-flash-preview-tts` if keyed, then Deepgram, OpenAI | hosted |
 | Judge (evaluation only) | official evaluators, OpenAI `gpt-4o` | hosted |
 
 - **Provider name:** `triageline` → `result_triageline.json` (offline mode: `triageline_text`)
@@ -118,7 +171,7 @@ Live: `python livekit_agent/triage_livekit_agent.py console` (or `dev` + LiveKit
 - Triage Line dispatch is an in-memory log, not a real CAD/tow/emergency API.
 - Location/distance/vehicle extraction is regex/keyword based, not real NLU or geocoding.
 - FDB-v3's 12 tools (`mock_apis.py`) are mocked, not real travel/finance/e-commerce backends.
-- No component uses an LLM at runtime; the agent is rule-based NLU (+ local ASR/CLIP for harness A).
+- The harness is rule-based; the LiveKit worker can use an optional Gemini planner for incomplete calls (rules first).
 - TTS sub-utterance progress in the LiveKit bridge is a 0/1 placeholder, not real timing.
 
 ## Layout
