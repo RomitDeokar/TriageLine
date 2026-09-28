@@ -400,11 +400,15 @@ def readiness() -> Dict[str, Any]:
 
 
 def _planner_status():
+    """Secret-free LLM status: effective chain, per-provider health, and whether planning is on."""
     from agent import llm_planner
-    if not llm_planner.enabled():
-        return {"provider": "local rules", "configured": True}
+    st = llm_planner.status()
+    if not st["enabled"]:
+        return {"provider": "local rules", "configured": True, "chain": st["chain"], "offline": st["offline"],
+                "error": st["error"]}
     try:
         cfg = llm_planner.config()
-        return {"provider": cfg["provider"], "model": cfg["model"], "configured": bool(llm_planner.gemini_key()) if cfg["provider"] == "gemini" else bool(os.getenv(cfg["provider"].upper() + "_API_KEY"))}
-    except ValueError:
-        return {"provider": "invalid configuration", "configured": False}
+    except ValueError as exc:
+        return {"provider": "invalid configuration", "configured": False, "error": str(exc)}
+    return {"provider": cfg["provider"], "model": cfg["model"], "configured": st["configured"],
+            "chain": st["chain"], "error": st["error"]}

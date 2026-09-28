@@ -25,8 +25,10 @@ import os
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-STT_DEFAULTS = {"gemini": "gemini-2.5-flash", "openai": "whisper-1", "groq": "whisper-large-v3-turbo", "deepgram": "nova-3"}
-TTS_DEFAULTS = {"gemini": ("gemini-2.5-flash-preview-tts", "Kore"), "openai": ("tts-1", "nova"), "deepgram": ("aura-2-andromeda-en", None)}
+# Gemini defaults follow Google's 2026-09 guidance for new projects (3.5 Flash-Lite / 3.8 TTS);
+# override with TRIAGELINE_STT_MODEL / TRIAGELINE_TTS_MODEL (e.g. gemini-2.5-flash on older projects).
+STT_DEFAULTS = {"gemini": "gemini-3.5-flash-lite", "openai": "whisper-1", "groq": "whisper-large-v3-turbo", "deepgram": "nova-3"}
+TTS_DEFAULTS = {"gemini": ("gemini-3.8-flash-lite-tts", "Kore"), "openai": ("tts-1", "nova"), "deepgram": ("aura-2-andromeda-en", None)}
 
 
 class ProviderConfigError(RuntimeError):
@@ -68,7 +70,9 @@ def describe(cfg: dict | None = None) -> str:
         from agent import llm_planner
         if llm_planner.enabled():
             lc = llm_planner.config()
-            brain = f"hybrid agent (rules + {lc['provider']}:{lc['model']} planner, T=0, schema validated)"
+            chain = "->".join(lc["chain"])
+            brain = (f"hybrid agent (rules + {lc['provider']}:{lc['model']} planner, failover chain {chain}, "
+                     f"T=0, schema validated)")
     except Exception:  # noqa: BLE001
         pass
     return (f"Silero VAD (local) -> {c['stt_provider']}:{c['stt_model']} STT -> {brain} "
@@ -151,14 +155,13 @@ def preflight(command: str) -> None:
         raise SystemExit("Configuration error: " + str(exc)) from None
     missing = list(cfg["missing_keys"])
     if llm_planner.enabled():
-        provider = planner_cfg["provider"]
-        key = llm_planner.gemini_key() if provider == "gemini" else os.getenv(provider.upper() + "_API_KEY")
-        if not key:
-            missing.append(provider.upper() + "_API_KEY (planner)")
+        from agent import providers
+        if not any(providers.configured(n) for n in planner_cfg["chain"]):
+            missing.append("an API key for one of the planner providers " + ",".join(planner_cfg["chain"]))
     if command in ("start", "dev"):
         missing += [key for key in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
                     if not os.environ.get(key) or "<" in os.environ.get(key, "")]
     if missing:
         raise SystemExit("Configuration error: set " + ", ".join(missing) +
-                         " in livekit_agent/.env.local. For key-free mode use: python ui/server.py --offline")
+                         " in livekit_agent/.env.local. For key-free mode use: TRIAGELINE_OFFLINE=1 python -m ui")
     print(describe(cfg), flush=True)

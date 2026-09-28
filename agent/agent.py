@@ -140,7 +140,8 @@ class ParticipantAgent:
         self.last_turn = ""
         self.last_api: Optional[str] = None
         self.planner_pending: Optional[Dict[str, Any]] = None
-        self.chat_history: list[str] = []
+        self.chat_history: list[str] = []                 # bounded user/assistant dialogue memory
+        self.pending_confirm: Optional[Dict[str, Any]] = None  # LLM-proposed side effect awaiting "yes"
         self._planner_skip = False
         self.answered = False
         self.tasks: set = set()
@@ -272,7 +273,7 @@ class ParticipantAgent:
             self.planner_pending = None
             calls = llm_planner.validate(p["calls"], self.tools)
             if not calls and p.get("reply"):
-                self.chat_history = (self.chat_history + [pending["turn"], p["reply"]])[-6:]
+                self._remember(pending["turn"], p["reply"])
                 await self.say("final_response", p["reply"])
                 return
             if not calls:
@@ -284,6 +285,13 @@ class ParticipantAgent:
                 return
             call = calls[0]
             api, args = call["name"], call["args"]
+            if self.needs_confirmation(api):
+                # Interactive policy: an LLM-proposed real-effect action is never executed on the
+                # model's word alone. Read the complete, validated arguments back and wait for "yes".
+                self.pending_confirm = {"api": api, "args": args, "version": self.version}
+                self.state["intent"] = api
+                self._remember(pending["turn"], None)
+                return await self.say("clarification_request", self.confirm_prompt(api, args))
             self.last_api = api
             self.state["intent"] = api
             self.state["slots"].update(args)
@@ -339,6 +347,53 @@ class ParticipantAgent:
         if kind == "final_response":
             self.answered = True
         await self.out_q.put({"action": kind, "payload": {"text": text}, "state_snapshot": self.snapshot()})
+
+    # ------------------------------------------------------------------ interactive confirmation
+    def needs_confirmation(self, api: str) -> bool:
+        """Interactive (non-benchmark) sessions confirm every LLM-proposed state-modifying call.
+
+        The FDB-v3 benchmark template never asks for confirmation, so the gate is off under
+        TRIAGELINE_BENCHMARK_POLICY=1 and can be disabled with TRIAGELINE_CONFIRM_ACTIONS=0.
+        """
+        if BENCHMARK_POLICY or os.environ.get("TRIAGELINE_CONFIRM_ACTIONS", "1") == "0":
+            return False
+        return self.tools.get(api, {}).get("kind") == "state_modifying"
+
+    def confirm_prompt(self, api: str, args: Dict[str, Any]) -> str:
+        what = nlu.norm(api.replace("_", " "))
+        detail = ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in args.items()
+                           if not isinstance(v, (dict, list)))[:200]
+        return f"Just to confirm — {what}" + (f" with {detail}" if detail else "") + "? Say yes to go ahead, or no."
+
+    async def resume_confirmation(self, turn: str) -> bool:
+        pc = self.pending_confirm
+        if not pc:
+            return False
+        self.pending_confirm = None
+        if pc["version"] != self.version:
+            return False
+        if nlu.YES_RE.search(turn) and not nlu.RETRACTION.search(turn.lower()):
+            api, args = pc["api"], pc["args"]
+            self.last_api = api
+            self.state["slots"].update(args)
+            await self.say("filler_speech", self.ack(api, args))
+            if api == "book_flight":
+                await self.issue_booking(args, dict(args))
+            else:
+                await self.call(api, args, deps=dict(args))
+            self.note("llm_planner_used", api, confirmed=True)
+            return True
+        if re.match(r"^\W*(no|nope|nah|don'?t|do not|cancel|stop|never ?mind)\b", turn, re.I):
+            self.state["intent"] = "chitchat"
+            await self.say("final_response", "Okay — I won't do that. What would you like instead?")
+            return True
+        return False                                    # a new request: handle it normally
+
+    def _remember(self, user: Optional[str], assistant: Optional[str]) -> None:
+        """Bounded dialogue memory handed to the planner/conversation model (last 12 entries)."""
+        items = [x for x in (f"user: {user}" if user else None,
+                             f"assistant: {assistant}" if assistant else None) if x]
+        self.chat_history = (self.chat_history + [i[:500] for i in items])[-12:]
 
     def op_key(self, api: str, args: Dict[str, Any]) -> str:
         return api + "|" + json.dumps(_canon(args), sort_keys=True, separators=(",", ":"))
@@ -536,6 +591,9 @@ class ParticipantAgent:
                 (self.inflight or self.answered is False and self.last_api):
             return                                # a trailing "please." is not a new request
 
+        # an LLM-proposed action waiting for "yes" / "no"
+        if self.pending_confirm and await self.resume_confirmation(turn):
+            return
         # answers to a pending side-effect decision are handled before anything else
         if await self.resume_side_effect_decision(turn):
             return
@@ -1160,7 +1218,7 @@ class ParticipantAgent:
         async def work():
             answer = None
             try:
-                calls = await asyncio.to_thread(llm_planner.plan, turn, tools, history)
+                calls = await asyncio.to_thread(llm_planner.plan, turn, tools, chat_history[-6:] + history)
                 if not calls and conversation and ver == self.version:
                     answer = await asyncio.to_thread(llm_planner.reply, turn, chat_history + history)
             except Exception as exc:
@@ -1251,6 +1309,9 @@ class ParticipantAgent:
             self.invalidate()
             return await self.on_turn(text)
         low = text.lower()
+        # a barge-in may be the yes/no to an LLM-proposed action we just read back
+        if self.pending_confirm and await self.resume_confirmation(text):
+            return
         # a barge-in may still be the answer to our clarification question (R19)
         if self.pending_clarify and not (nlu.RETRACTION.search(low) and not self._has_new_values(text)):
             if await self.resume_clarification(text):

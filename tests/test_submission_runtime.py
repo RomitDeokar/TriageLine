@@ -150,7 +150,7 @@ def test_real_livekit_gemini_stt_and_tts():
             event = await recognizer.recognize(frame)
             assert event.type == stt.SpeechEventType.FINAL_TRANSCRIPT
             assert event.alternatives[0].text == "Track order ABC123"
-            engine = speech.GeminiTTS()
+            engine = speech.GeminiTTS(model="gemini-2.5-flash-preview-tts")  # unary generateContent path
             async with engine.synthesize("Done") as stream:
                 frames = [e.frame async for e in stream]
             # LiveKit appends a synthetic 10 ms final marker frame (240 samples).
@@ -224,3 +224,46 @@ def test_new_request_supersedes_unrelated_clarification():
         assert "Chicago" not in final and "ABC123" in final
     finally:
         live.SESSIONS.end(sess.sid)
+
+
+def test_gemini_38_tts_streams_interactions_sse(monkeypatch):
+    """Gemini 3.8 TTS: SSE audio deltas are pushed as they arrive; odd-byte chunks are carried over."""
+    from aiohttp import web
+    from livekit_agent import gemini_speech as speech
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-not-a-secret")
+    seen = {}
+
+    async def check():
+        async def handler(request):
+            seen["body"] = await request.json()
+            seen["key"] = request.headers.get("x-goog-api-key")
+            resp = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            await resp.prepare(request)
+            pcm = b"\1\0" * 4800
+            for piece in (pcm[:4801], pcm[4801:]):        # split mid-sample on purpose
+                ev = {"event_type": "step.delta", "delta": {"type": "audio", "data": base64.b64encode(piece).decode()}}
+                await resp.write(f"event: step.delta\ndata: {json.dumps(ev)}\n\n".encode())
+            await resp.write(b'event: interaction.completed\ndata: {"event_type": "interaction.completed"}\n\n')
+            return resp
+
+        app = web.Application()
+        app.router.add_post("/v1beta/interactions", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(speech, "GEMINI_BASE_URL", f"http://127.0.0.1:{port}/v1beta")
+        try:
+            engine = speech.GeminiTTS()
+            assert engine.model == "gemini-3.8-flash-lite-tts"
+            async with engine.synthesize("Done") as stream:
+                frames = [e.frame async for e in stream]
+            assert sum(f.samples_per_channel for f in frames) == 4800 + 240
+            await engine.aclose()
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(check())
+    assert seen["key"] == "fake-not-a-secret" and seen["body"]["stream"] is True
+    assert seen["body"]["model"] == "gemini-3.8-flash-lite-tts"
