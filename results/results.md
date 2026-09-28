@@ -1,12 +1,16 @@
 # FDB-v3 results — TriageLine
 
-Generated: 2026-09-26T03:16:56+00:00
+Generated: 2026-09-28T18:55:18+00:00
 
 Run directory: `results/20260926T031545Z`  
 Mode: **offline_text_replay**  (official data + official evaluators; no LiveKit transport, no audio latency)
 Provider name: `triageline_text` · LLM judge: **off (exact match = lower bound)** · examples: 100  
 FDB-v3 commit: `3e799c45a045256f47d5f1c9cda90157e2d2ec9e` · TriageLine commit: `e019ea97b94c17d9be320bf6f46a86635b8b6044` · Python 3.13.14  
-Agent: custom LiveKit agent (Silero VAD → hosted STT → rule-based ParticipantAgent, no LLM → hosted TTS) · STT=openai TTS=openai
+Agent: custom LiveKit agent (Silero VAD → STT → ParticipantAgent: rules only (LLM planner off) → TTS) · STT=openai TTS=openai
+
+> **Stale evidence:** this run was produced at `e019ea97b9`, not the current checkout `b2f0821162`. Re-run `./run_fdb_v3.sh` on the submission commit.
+
+> **Diagnostic only.** Offline text replay feeds the official transcripts to the agent without LiveKit, STT or TTS. It is **not** the scored live FDB-v3 run and must not be reported as one.
 
 ## Headline (official evaluators)
 
@@ -14,7 +18,9 @@ Agent: custom LiveKit agent (Silero VAD → hosted STT → rule-based Participan
 |---|---|---|---|---|
 | **85.0%** (85/100) | 95.5% | 89.5% | not produced | 100.0% |
 
-### Anti-overfitting: dev vs held-out (hash split, `livekit_agent/fdb_split.py`)
+### Dev vs hash split of the public set (`livekit_agent/fdb_split.py`)
+
+Both halves come from the same public benchmark that rules were developed against, so this is **not** an independent held-out set. See `scenarios_heldout/` for the independent paraphrase set.
 
 | split | passed | rate |
 |---|---|---|
@@ -35,4 +41,4 @@ Agent: custom LiveKit agent (Silero VAD → hosted STT → rule-based Participan
 
 Not measured in offline mode (no audio). Run the full `./run_fdb_v3.sh` for latency.
 
-Files: agent_heartbeat.log, pip_freeze.txt, run.log, run_config.json, triageline_text_evaluation_report.json, triageline_text_pass_rate_report.json
+Files: pip_freeze.txt, run_config.json, triageline_text_evaluation_report.json, triageline_text_pass_rate_report.json

@@ -1,5 +1,7 @@
 # TriageLine — Theme 05: Interruptible Real-Time Agents
 
+> **Submission status and remaining steps: [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).** Run the app with `python -m ui` (or `docker compose up`). Scores in this README predating 2026-09-28 are diagnostics, not the live judged FDB-v3 score.
+
 ## Quick start (verified 2026-09-26)
 
 ```bash

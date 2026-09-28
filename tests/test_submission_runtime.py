@@ -205,9 +205,7 @@ def test_missing_hosted_speech_key_is_explicit(monkeypatch):
 
 def test_new_request_supersedes_unrelated_clarification():
     """'what amount?' followed by 'track my order ABC123' must track, not convert 123 USD."""
-    import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "ui"))
-    import live
+    from ui import live
 
     sess = live.SESSIONS.start()
     try:

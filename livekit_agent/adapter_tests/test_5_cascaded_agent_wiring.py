@@ -95,9 +95,10 @@ def _install_fake_livekit():
             self._entrypoint = None
             self.setup_fnc = kwargs.get("setup_fnc")
 
-        def rtc_session(self):
+        def rtc_session(self, agent_name=""):
             def deco(fn):
                 self._entrypoint = fn
+                self.agent_name = agent_name
                 return fn
             return deco
 

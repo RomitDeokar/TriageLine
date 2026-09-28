@@ -1,8 +1,17 @@
-"""ASGI mobile gateway. Run ONE worker: python -m uvicorn ui.api:app.
+"""TriageLine gateway — the ONE application server (ASGI).
 
-An invite-code gate provides pilot access, not customer identity/SSO. Random,
-signed owner credentials isolate conversations. Native clients use Bearer;
-browsers use HttpOnly cookies. All business action tools remain simulated.
+    python -m uvicorn ui.api:app --host 0.0.0.0 --port 8080 --proxy-headers
+
+Run a single worker/replica (sessions live in process memory). Routes:
+  /api/health, /api/ready            liveness / readiness (details require auth in production)
+  /api/auth/{config,login,me,logout} pilot access-code sign-in (Bearer for apps, HttpOnly cookie for browsers)
+  /api/live/*                        text/camera/voice-clip session + SSE stream (PWA /live.html)
+  /api/rtc/token                     LiveKit participant token for a signed-in user (/rtc.html, native apps)
+  /api/mobile/token                  backend-to-backend LiveKit token (Bearer TRIAGELINE_API_KEY)
+  /api/scenarios, /api/run           evaluation console (development only; / console at /console)
+
+An invite-code gate provides pilot access, not customer identity/SSO. Random, signed owner
+credentials isolate conversations. All business action tools remain SIMULATED.
 """
 from __future__ import annotations
 
@@ -16,7 +25,6 @@ import secrets
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -31,11 +39,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / "livekit_agent/.env.local")
-from ui import live  # noqa: E402
+load_dotenv(ROOT / ".env")
+from ui import live, mobile  # noqa: E402
 
 log = logging.getLogger("triageline.api")
 MAX_BODY = 8 * 1024 * 1024
 TOKEN_TTL = 8 * 3600
+STREAM_LIMIT = 90   # SSE (re)connects per owner per minute
 
 
 class Body(BaseModel):
@@ -90,8 +100,13 @@ def create_app() -> FastAPI:
         raise RuntimeError("CORS_ORIGINS must list explicit origins, not *")
     if production and (len(access_code) < 16 or len(os.getenv("TRIAGELINE_SESSION_SECRET", "")) < 32 or not hosts or "*" in hosts):
         raise RuntimeError("Production requires ACCESS_CODE (16+), SESSION_SECRET (32+) and explicit ALLOWED_HOSTS")
+    api_key = os.getenv("TRIAGELINE_API_KEY", "")
+    if production and api_key and len(api_key) < 32:
+        raise RuntimeError("TRIAGELINE_API_KEY must be at least 32 characters in production")
+    console = not production and os.getenv("TRIAGELINE_CONSOLE", "1") == "1"
     limiter = RateLimit()
     manager = live.Sessions()
+    rtc_probe = {"at": 0.0, "ok": None, "error": None}
     starts: OrderedDict = OrderedDict()
     operations = asyncio.Lock()
 
@@ -101,9 +116,18 @@ def create_app() -> FastAPI:
             with manager.lock:
                 manager.reap()
 
+    def preload():
+        try:
+            live.P.load_asr()
+            live.P.load_clip()
+        except Exception as exc:  # noqa: BLE001 - optional local models
+            log.warning("model preload failed: %s", type(exc).__name__)
+
     @asynccontextmanager
     async def lifespan(_app):
         reaper = asyncio.create_task(reap())
+        if os.getenv("PRELOAD", "0") == "1":
+            asyncio.get_running_loop().run_in_executor(None, preload)
         try:
             yield
         finally:
@@ -115,7 +139,7 @@ def create_app() -> FastAPI:
                 if s:
                     await asyncio.to_thread(s.thread.join, 3)
 
-    app = FastAPI(title="TriageLine Mobile API", version="1.0.0", lifespan=lifespan,
+    app = FastAPI(title="TriageLine API", version="2.0.0", lifespan=lifespan,
                   docs_url=None if production else "/docs", redoc_url=None,
                   openapi_url=None if production else "/openapi.json")
     app.state.sessions = manager
@@ -130,8 +154,11 @@ def create_app() -> FastAPI:
         try:
             if request.url.path.startswith("/api/"):
                 origin = request.headers.get("origin")
-                same_origin = f"{request.url.scheme}://{request.url.netloc}"
-                if origin and origin != same_origin and origin not in origins:
+                # Behind a TLS-terminating proxy the app sees http:// while the browser sends https://,
+                # so same-origin compares host[:port] (Host / X-Forwarded-Host), never the scheme.
+                host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").lower()
+                origin_host = urlsplit(origin).netloc.lower() if origin else ""
+                if origin and origin_host != host and origin.rstrip("/") not in origins:
                     raise HTTPException(403, "Origin not allowed")
                 if request.method == "POST":
                     try:
@@ -204,9 +231,41 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "Session expired or unavailable")
         return s
 
+    def client_ip(request: Request) -> str:
+        # uvicorn --proxy-headers --forwarded-allow-ips=<proxy> rewrites request.client from X-Forwarded-For.
+        return request.client.host if request.client else "unknown"
+
+    async def backend(request: Request):
+        """Server-to-server auth for /api/mobile/token."""
+        provided = request.headers.get("authorization", "")
+        if not api_key or not hmac.compare_digest(provided.encode(), ("Bearer " + api_key).encode()):
+            raise HTTPException(401, "unauthorized")
+
+    async def probe_livekit() -> dict:
+        """Cached (30 s) reachability + credential check against the LiveKit server API."""
+        if not mobile.configured():
+            return {"configured": False, "reachable": None}
+        now = time.monotonic()
+        if now - rtc_probe["at"] > 30:
+            rtc_probe["at"] = now
+            try:
+                from livekit import api as lkapi
+                url, key, sec = mobile.livekit_config()
+                http = url.replace("wss://", "https://").replace("ws://", "http://")
+                lk = lkapi.LiveKitAPI(http, key, sec)
+                try:
+                    await asyncio.wait_for(lk.room.list_rooms(lkapi.ListRoomsRequest()), 3)
+                finally:
+                    await lk.aclose()
+                rtc_probe.update(ok=True, error=None)
+            except Exception as exc:  # noqa: BLE001
+                rtc_probe.update(ok=False, error=type(exc).__name__)
+        return {"configured": True, "reachable": rtc_probe["ok"], "error": rtc_probe["error"],
+                "agent_name": mobile.agent_name() or None}
+
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "service": "triageline"}
+        return {"ok": True, "service": "triageline", "sessions": len(manager.by_id)}
 
     @app.get("/api/auth/config")
     async def auth_config():
@@ -214,7 +273,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/auth/login")
     async def login(body: Login, request: Request):
-        limiter.check(("login", request.client.host if request.client else "unknown"), 10)
+        limiter.check(("login", client_ip(request)), 10)
         if access_code and not hmac.compare_digest(body.access_code.encode(), access_code.encode()):
             raise HTTPException(401, "Invalid access code")
         token = issue(secrets.token_hex(16))
@@ -224,19 +283,37 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/api/auth/me")
-    async def me(owner=Depends(authenticate)):
-        return {"authenticated": True}
+    async def me(request: Request, owner=Depends(authenticate)):
+        return {"authenticated": True, "expires_at": request.state.auth_expiry}
+
+    @app.post("/api/auth/logout")
+    async def logout(request: Request):
+        # Ends this owner's sessions (if the credential is still valid) and clears the browser cookie.
+        try:
+            owner = await authenticate(request)
+            for sid, s in list(manager.by_id.items()):
+                if getattr(s, "owner", None) == owner:
+                    manager.end(sid)
+        except HTTPException:
+            pass
+        response = JSONResponse({"ok": True})
+        response.delete_cookie("tl_auth")
+        return response
 
     @app.get("/api/ready")
-    async def ready():
+    async def ready(request: Request):
+        if production:
+            try:
+                await authenticate(request)
+            except HTTPException:
+                # public probe in production: no package/asset/session details
+                return {"ok": True, "planner": live._planner_status().get("configured"),
+                        "rtc": mobile.configured()}
         status = live.readiness()
         status["sessions"] = len(manager.by_id)
-        status["rtc"] = {"configured": all(os.getenv(k) and "<" not in os.getenv(k, "") for k in
-                                         ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")),
-                         "worker_verified": False}
-        status["production_ready"] = False
-        status["limitations"] = ["Business tools are simulated", "Session memory is process-local",
-                                 "Provider configuration does not prove connectivity or quota"]
+        status["rtc"] = await probe_livekit()
+        status["limitations"] = ["Business tools are simulated", "Session memory is process-local (run one replica)",
+                                 "LiveKit reachability does not prove a voice worker is registered"]
         return status
 
     @app.post("/api/live/start")
@@ -253,6 +330,9 @@ def create_app() -> FastAPI:
                     s = await asyncio.to_thread(manager.start)
                 except OverflowError:
                     raise HTTPException(429, "Session capacity reached")
+                except RuntimeError:
+                    raise HTTPException(503, "Session could not start (models still loading?) — retry shortly",
+                                        headers={"Retry-After": "5"})
                 s.owner = owner
                 s.requests = {}
                 s.command_lock = asyncio.Lock()
@@ -271,41 +351,56 @@ def create_app() -> FastAPI:
         required = {"say": "text", "audio": "audio", "frame": "image"}.get(op)
         if required and not getattr(body, required):
             raise HTTPException(422, f"{required} is required")
+        # Barge-in and hang-up must never queue behind a slow upload: no lock, no idempotency store.
+        try:
+            if op == "interrupt":
+                s.interrupt()
+                return {"ok": True}
+            if op == "end":
+                manager.end(sid)
+                return {"ok": True}
+            if op == "log":
+                s.touched = time.time()
+                return {"log": s.events_after(0), "mode": live.MODE, "audio": live.P.speech_config()}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        signature = hashlib.sha256((op + body.model_dump_json()).encode()).hexdigest()
+        # The lock covers only idempotency bookkeeping; decoding/validation runs outside it.
         async with s.command_lock:
-            signature = hashlib.sha256((op + body.model_dump_json()).encode()).hexdigest()
             if body.request_id and body.request_id in s.requests:
                 previous, result = s.requests[body.request_id]
                 if previous != signature:
                     raise HTTPException(409, "request_id was already used with different input")
-                return result
-            if len(s.requests) >= 500 and op not in {"end", "log", "interrupt"}:
+                if result is not None:
+                    return result
+                raise HTTPException(409, "request_id is still being processed")
+            if len(s.requests) >= 500:
                 raise HTTPException(429, "Session request limit reached; start a new session")
-            try:
-                if op == "say":
-                    result = {"ok": True, "as": s.user_text(body.text, body.speaking)}
-                elif op == "audio":
-                    result = {"ok": True, "ref": await asyncio.to_thread(s.user_audio, body.audio, body.speaking)}
-                elif op == "frame":
-                    result = {"ok": True, "ref": await asyncio.to_thread(s.user_frame, body.image)}
-                elif op == "interrupt":
-                    s.interrupt()
-                    result = {"ok": True}
-                elif op == "end":
-                    manager.end(sid)
-                    result = {"ok": True}
-                else:
-                    s.touched = time.time()
-                    result = {"log": s.events_after(0), "mode": live.MODE, "audio": live.P.speech_config()}
-            except ValueError as exc:
-                raise HTTPException(400, str(exc))
-            if body.request_id and op not in {"log", "end", "interrupt"}:
-                s.requests[body.request_id] = (signature, result)
-            return result
+            if body.request_id:
+                s.requests[body.request_id] = (signature, None)   # reserve: duplicates can't double-submit
+        try:
+            if op == "say":
+                result = {"ok": True, "as": s.user_text(body.text, body.speaking)}
+            elif op == "audio":
+                result = {"ok": True, "ref": await asyncio.to_thread(s.user_audio, body.audio, body.speaking)}
+            else:
+                result = {"ok": True, "ref": await asyncio.to_thread(s.user_frame, body.image)}
+        except ValueError as exc:
+            if body.request_id:
+                s.requests.pop(body.request_id, None)
+            raise HTTPException(400, str(exc))
+        except BaseException:
+            if body.request_id:
+                s.requests.pop(body.request_id, None)
+            raise
+        if body.request_id:
+            s.requests[body.request_id] = (signature, result)
+        return result
 
     @app.get("/api/live/{sid}/stream")
     async def stream(sid: str, request: Request, last: int = 0, owner=Depends(authenticate)):
         s = owned(sid, owner)
-        limiter.check(("stream", owner), 30)
+        limiter.check(("stream", owner), STREAM_LIMIT)
         try:
             cursor = max(0, int(request.headers.get("last-event-id", last)))
         except ValueError:
@@ -318,50 +413,60 @@ def create_app() -> FastAPI:
 
         async def events():
             nonlocal cursor
-            yield "retry: 1500\n\n"
-            heartbeat = time.monotonic()
-            while generation == s.stream_gen and time.time() < expiry:
-                if await request.is_disconnected():
-                    break
-                batch = s.events_after(cursor)
-                if batch and batch[0]["id"] > cursor + 1:
-                    yield 'event: gap\ndata: {"message":"Older events have expired; showing available history"}\n\n'
-                for ev in batch:
-                    cursor = ev["id"]
-                    yield f"id: {cursor}\ndata: {json.dumps({**ev, 'replay': cursor <= initial_seq})}\n\n"
-                if s.closed:
-                    break
-                if time.monotonic() - heartbeat > 10:
-                    yield ": ping\n\n"
-                    heartbeat = time.monotonic()
-                # Heartbeats do not extend idle lifetime: a forgotten tab must expire.
-                await asyncio.sleep(0.1)
+            wake = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            s.subscribe(loop, wake)
+            try:
+                yield "retry: 1500\n\n"
+                heartbeat = time.monotonic()
+                while generation == s.stream_gen and time.time() < expiry:
+                    if await request.is_disconnected():
+                        break
+                    wake.clear()
+                    batch = s.events_after(cursor)
+                    if batch and batch[0]["id"] > cursor + 1:
+                        yield 'event: gap\ndata: {"message":"Older events have expired; showing available history"}\n\n'
+                    for ev in batch:
+                        cursor = ev["id"]
+                        yield f"id: {cursor}\ndata: {json.dumps({**ev, 'replay': cursor <= initial_seq})}\n\n"
+                    if s.closed:
+                        break
+                    if time.monotonic() - heartbeat > 10:
+                        yield ": ping\n\n"
+                        heartbeat = time.monotonic()
+                    # Event-driven: emit() wakes us; the 1 s timeout re-checks disconnect/expiry.
+                    # Heartbeats do not extend idle lifetime: a forgotten tab must expire.
+                    try:
+                        await asyncio.wait_for(wake.wait(), 1.0)
+                    except asyncio.TimeoutError:
+                        pass
+            finally:
+                s.unsubscribe(loop, wake)
 
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
 
     @app.post("/api/rtc/token")
     async def rtc_token(body: Start, owner=Depends(authenticate)):
-        limiter.check(("rtc", owner), 6)
-        url, key, api_secret = (os.getenv(k, "") for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"))
+        limiter.check(("rtc", owner), 10)
         try:
-            parsed = urlsplit(url)
-            valid = (parsed.scheme == "wss" and parsed.hostname and not parsed.username
-                     and not parsed.password and not parsed.query and not parsed.fragment)
-            parsed.port  # Validate malformed/non-numeric ports too.
-        except ValueError:
-            valid = False
-        if not valid or not key or not api_secret or any("<" in v for v in (url, key, api_secret)):
-            raise HTTPException(503, "Configure LiveKit URL, API key and secret, then start the voice worker")
-        from livekit import api
-        # Client cannot choose room/identity or gain admin grants. One room per owner.
-        room = "triageline-" + owner
-        grants = api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True,
-                                 can_publish_data=True, can_publish_sources=["microphone"])
-        token = (api.AccessToken(key, api_secret).with_identity("user-" + owner)
-                 .with_ttl(timedelta(minutes=5)).with_grants(grants).to_jwt())
-        return {"url": url, "token": token, "room": room, "identity": "user-" + owner,
-                "expires_in": 300, "expires_at": int(time.time()) + 300, "tools": "simulated"}
+            # Client cannot choose room/identity or gain admin grants. Fresh room per call (A1).
+            return mobile.issue_token(owner)
+        except mobile.NotConfigured:
+            raise HTTPException(503, "Voice calls are not configured on this server (LiveKit credentials missing)")
+
+    @app.post("/api/mobile/token", status_code=201, dependencies=[Depends(backend)])
+    async def mobile_token(request: Request):
+        """Trusted backend-to-backend issuance: your app server authenticates its user, then calls this."""
+        limiter.check(("mobile", client_ip(request)), 120)
+        try:
+            return mobile.issue_token()
+        except mobile.NotConfigured:
+            return JSONResponse({"error": "LiveKit is not configured", "code": "unavailable"}, 503)
+
+    if console:
+        from ui import console as console_routes
+        console_routes.register(app, limiter)
 
     @app.get("/")
     @app.get("/app")
@@ -369,7 +474,10 @@ def create_app() -> FastAPI:
     async def home():
         return FileResponse(ROOT / "ui/static/live.html")
 
-    # No evaluation/diagnostic execution endpoint is exposed by the mobile gateway.
+    @app.get("/voice")
+    async def voice():
+        return FileResponse(ROOT / "ui/static/rtc.html")
+
     app.mount("/", StaticFiles(directory=ROOT / "ui/static", html=True), name="static")
     return app
 

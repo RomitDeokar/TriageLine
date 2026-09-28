@@ -16,7 +16,13 @@
 #   6  copy reports, result_$PROVIDER.json files, agent log, pip freeze and SHAs to results/<timestamp>/,
 #      then regenerate results/results.md
 #
-# Model/provider declaration: CUSTOM LiveKit agent (no LLM in the loop). See README "Models used".
+# Model/provider declaration: custom LiveKit agent (rules + optional schema-validated LLM planner via the
+# provider chain in agent/providers.py). The effective STT/TTS/LLM settings are resolved by the same Python
+# code the worker uses and written to results/<timestamp>/run_config.json. See README "Models used".
+#
+# Failure policy: the run FAILS (non-zero exit) when the official runner fails, when any expected example is
+# missing or errored, or when --require-judge is set and the judge is not used. Result files from earlier
+# runs are removed before inference so an old result can never be scored as a fresh one.
 set -euo pipefail
 
 # ------------------------------------------------------------------------------------------ config
@@ -87,7 +93,7 @@ stage_1_install() {
         log "--skip-install: using $PY ($("$PY" -V 2>&1))"
     else
         local base=""
-        for c in python3.12 python3.11 python3.10; do command -v "$c" >/dev/null && { base="$c"; break; }; done
+        for c in ${PYTHON:-} python3.12 python3.11 python3.10; do command -v "$c" >/dev/null && { base="$c"; break; }; done
         [ -n "$base" ] || fail "need Python 3.10-3.12 (FDB-v3 targets 3.10; livekit-agents 1.8.3 supports <=3.14 but NeMo is tested on <=3.12). Install python3.12, or pass --skip-install to use the current interpreter."
         if [ ! -x "$VENV/bin/python" ]; then
             log "creating venv $VENV with $base"
@@ -246,18 +252,50 @@ stage_5_evaluate() {
     local data; data="$(limit_dir)"
     local judge=(); [ "$USE_LLM" = 1 ] && judge=(--use-llm)
     local force=(); [ "$FORCE" = 1 ] && force=(--force)
+    [ "$OFFLINE_TEXT" = 0 ] || [ "$PROVIDER" != triageline ] || PROVIDER="triageline_text"   # never mix with live results
+    local expected; expected=$(find "$data" -mindepth 1 -maxdepth 1 -type d | wc -l)
+    [ "$expected" -gt 0 ] || fail "no examples found in $data"
+    if [ "$FORCE" = 1 ] || [ "${KEEP_OLD_RESULTS:-0}" != 1 ]; then
+        # isolate this run: stale result files from an earlier (possibly interrupted) run must never be scored
+        find "$data" -name "result_${PROVIDER}.json" -delete
+        find "$data" -name "result_${PROVIDER}*.wav" -delete 2>/dev/null || true
+        force=(--force)
+    fi
+    local marker="$OUT_DIR/.inference_started"; : > "$marker"
+    local rc=0
     if [ "$OFFLINE_TEXT" = 1 ]; then
-        [ "$PROVIDER" != triageline ] || PROVIDER="triageline_text"   # never mix with live-run results
         log "offline text replay (no LiveKit transport, no audio latency) -> result_${PROVIDER}.json"
         ( cd "$ROOT_DIR" && "$PY" livekit_agent/fdb_v3_offline_replay.py --data "$data" --text --provider "$PROVIDER" ) \
-            >>"$LOG" 2>&1 || fail "offline replay failed"
+            >>"$LOG" 2>&1 || rc=$?
     else
+        # pipefail: the runner's exit status survives tee; grep only filters the console view
         ( cd "$V3" && "$PY" run_tool_benchmark_all_released.py --provider "$PROVIDER" --root_dir "$data" "${force[@]}" ) \
-            2>&1 | tee -a "$LOG" | grep -E "Processing|Saved|failed|error" || true
+            > >(tee -a "$LOG" | grep --line-buffered -E "Processing|Saved|failed|error" || true) 2>&1 || rc=$?
+        kill -0 "$AGENT_PID" 2>/dev/null || fail "the TriageLine agent died during inference, see $AGENT_LOG"
     fi
-    local n; n=$(find "$data" -name "result_${PROVIDER}.json" | wc -l)
-    [ "$n" -gt 0 ] || fail "no result_${PROVIDER}.json produced"
-    log "$n result files; running evaluators ${judge[*]:-(exact match)}"
+    [ "$rc" = 0 ] || fail "inference exited with status $rc (see $LOG); refusing to score a partial run"
+    local n bad
+    n=$(find "$data" -name "result_${PROVIDER}.json" -newer "$marker" | wc -l)
+    bad=$("$PY" - "$data" "$PROVIDER" <<'PYCHK'
+import json, pathlib, sys
+root, prov = pathlib.Path(sys.argv[1]), sys.argv[2]
+bad = []
+for d in sorted(p for p in root.iterdir() if p.is_dir()):
+    f = d / f"result_{prov}.json"
+    try:
+        data = json.loads(f.read_text())
+        if not isinstance(data, (dict, list)) or (isinstance(data, dict) and (
+                data.get("error") or str(data.get("status", "ok")).lower() in ("error", "failed", "timeout", "crash"))):
+            bad.append(d.name)
+    except Exception:
+        bad.append(d.name)
+print(" ".join(bad))
+PYCHK
+)
+    [ -z "$bad" ] || fail "missing/errored results for: $bad"
+    [ "$n" -eq "$expected" ] || fail "expected $expected fresh result files, found $n"
+    if [ "$REQUIRE_JUDGE" = 1 ] && [ "$USE_LLM" != 1 ]; then fail "--require-judge given but the judge is disabled"; fi
+    log "$n/$expected fresh result files; running evaluators ${judge[*]:-(exact match)}"
     ( cd "$V3" && "$PY" evaluate_tool_calls.py --benchmark benchmark_data_v2.json --results-dir "$data" \
         --provider "$PROVIDER" --output "$OUT_DIR/${PROVIDER}_evaluation_report.json" "${judge[@]}" ) >>"$LOG" 2>&1 \
         || fail "evaluate_tool_calls.py failed"
@@ -285,27 +323,37 @@ stage_6_save() {
     "$PY" -m pip freeze > "$OUT_DIR/pip_freeze.txt" 2>/dev/null || true
     cp /tmp/agent_heartbeat.log "$OUT_DIR/agent_heartbeat.log" 2>/dev/null || true
     cp /tmp/agent_tool_calls.log "$OUT_DIR/agent_tool_calls.log" 2>/dev/null || true
-    cat > "$OUT_DIR/run_config.json" <<EOF
-{
-  "timestamp_utc": "$STAMP",
-  "provider": "$PROVIDER",
-  "mode": "$([ "$OFFLINE_TEXT" = 1 ] && echo offline_text_replay || echo livekit_live)",
-  "limit": $LIMIT,
-  "llm_judge": $([ "$USE_LLM" = 1 ] && echo true || echo false),
-  "latency_profile": "$LATENCY",
-  "fdb_commit": "$(git -C "$FDB_CLONE" rev-parse HEAD 2>/dev/null)",
-  "triageline_commit": "$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)",
-  "python": "$("$PY" -V 2>&1)",
-  "stt_provider": "${TRIAGELINE_STT_PROVIDER:-auto}",
-  "stt_temperature": 0,
-  "stt_bias": "${TRIAGELINE_STT_BIAS:-1}",
-  "settle_s": "${TRIAGELINE_SETTLE_S:-1.6}", "max_settle_s": "${TRIAGELINE_MAX_SETTLE_S:-2.5}",
-  "benchmark_policy": "${TRIAGELINE_BENCHMARK_POLICY:-1}",
-  "llm_planner": "${TRIAGELINE_LLM_PLANNER:-0}", "llm_model": "${TRIAGELINE_LLM_MODEL:-gpt-4o-mini}", "llm_seed": 7,
-  "tts_provider": "${TRIAGELINE_TTS_PROVIDER:-openai}",
-  "seeds": {"mock_latency_profile": "$LATENCY", "stt_temperature": 0, "llm_temperature": 0, "llm_seed": 7}
-}
-EOF
+    # effective settings resolved by the same code the worker runs (not shell defaults)
+    ( cd "$ROOT_DIR" && STAMP="$STAMP" PROVIDER="$PROVIDER" LIMIT="$LIMIT" LATENCY="$LATENCY" \
+      MODE="$([ "$OFFLINE_TEXT" = 1 ] && echo offline_text_replay || echo livekit_live)" \
+      JUDGE="$USE_LLM" FDB_SHA="$(git -C "$FDB_CLONE" rev-parse HEAD 2>/dev/null)" \
+      TL_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)" \
+      TL_DIRTY="$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null | grep -v '^??' | wc -l)" \
+      "$PY" - > "$OUT_DIR/run_config.json" <<'PYCFG'
+import json, os, sys
+sys.path.insert(0, ".")
+os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")
+from agent import llm_planner
+try:
+    from livekit_agent.speech_providers import selected
+    sp = selected()
+except Exception as exc:  # offline text mode may not need speech providers
+    sp = {"error": type(exc).__name__}
+e = os.environ
+print(json.dumps({
+    "timestamp_utc": e["STAMP"], "provider": e["PROVIDER"], "mode": e["MODE"], "limit": int(e["LIMIT"]),
+    "llm_judge": e["JUDGE"] == "1", "latency_profile": e["LATENCY"],
+    "fdb_commit": e["FDB_SHA"], "triageline_commit": e["TL_SHA"], "triageline_dirty_files": int(e["TL_DIRTY"]),
+    "python": sys.version.split()[0],
+    "speech": {k: sp.get(k) for k in ("stt_provider", "stt_model", "tts_provider", "tts_model", "tts_voice", "error") if k in sp},
+    "stt_bias": e.get("TRIAGELINE_STT_BIAS", "1"),
+    "settle_s": e.get("TRIAGELINE_SETTLE_S", "1.6"), "max_settle_s": e.get("TRIAGELINE_MAX_SETTLE_S", "2.5"),
+    "benchmark_policy": e.get("TRIAGELINE_BENCHMARK_POLICY"),
+    "llm_planner": {"enabled": llm_planner.enabled(), **{k: v for k, v in llm_planner.status().items() if k != "enabled"}},
+    "seeds": {"mock_latency_profile": e["LATENCY"], "stt_temperature": 0, "llm_temperature": 0, "llm_seed": 7},
+}, indent=2, default=str))
+PYCFG
+    ) || log "WARNING: could not resolve effective config"
     "$PY" "$ROOT_DIR/results/summarize_fdb_v3.py" "$OUT_DIR" | tee -a "$LOG"
     log "done. Artefacts: $OUT_DIR   Summary: results/results.md"
 }

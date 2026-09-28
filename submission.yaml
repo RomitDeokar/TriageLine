@@ -1,19 +1,28 @@
 team: "TriageLine"
-entry_point: "livekit_agent/cascaded_agent.py"      # official FDB-v3 agent (custom LiveKit agent, no LLM)
-reproduce: "./run_fdb_v3.sh"
+entry_point: "livekit_agent/cascaded_agent.py"   # official FDB-v3 agent: VAD -> STT -> ParticipantAgent (rules + optional schema-validated LLM chain) -> TTS
+reproduce: "./run_fdb_v3.sh --require-judge"      # fails on runner error, missing/errored/stale results
 provider_name: "triageline"
-python: "3.12"
+python: "3.12"                                     # 3.10-3.12 supported by the script; pass PYTHON=python3.12
 requirements: "requirements-fdb.txt"
 fdb_commit: "3e799c45a045256f47d5f1c9cda90157e2d2ec9e"
-practice_harness_entry_point: "agent.agent:ParticipantAgent"   # old kit (run_local.py), not scored
+worker_mode: "TRIAGELINE_MODE=benchmark (default; assistant for phone users)"
 
-# 2026-09-26: hybrid planner is optional and off by default
 llm_planner:
-  enabled_by: TRIAGELINE_LLM_PLANNER=1
-  default_model: gpt-4o-mini   # or groq llama-3.3-70b-versatile
+  enabled_by: "TRIAGELINE_LLM_PLANNER=auto (on when any chain key is set; 0 = rules only)"
+  chain: "gemini -> cerebras -> openrouter -> mistral (agent/providers.py; bounded retry + failover)"
+  default_models: { gemini: "gemini-3.5-flash-lite" }
   temperature: 0
   seed: 7
+speech_defaults: { stt: "gemini-3.5-flash-lite (or deepgram nova-3, streaming)", tts: "gemini-3.8-flash-lite-tts (or deepgram aura-2)" }
+
+extension: "Mobile voice assistant: /rtc.html LiveKit WebRTC client + authenticated gateway (ui/api.py); SIMULATED tools"
+
+# Every number states its mode. Only the live judged run is the scored benchmark result.
 reported_scores:
-  text_replay_strict: "85/100 (upper bound, public-set tuned)"
-  audio_replay_strict: "54/100 pre-fix; re-measure with fdb_v3_offline_replay.py (no --text)"
-  live_livekit: "not run"
+  live_livekit_judged: "NOT YET RUN - required before submission: ./run_fdb_v3.sh --limit 5 --require-judge, then full run"
+  offline_text_replay_diagnostic: "85/100 exact-match, judge off, commit e019ea9 (stale; diagnostic only, not a live score)"
+  audio_replay_diagnostic: "not re-measured on this commit"
+  independent_heldout_rules_only: "26/30 (86.7%) scenarios_heldout/heldout_v1.json via scripts/heldout_eval.py"
+integrity:
+  audit: "python3 scripts/integrity_audit.py -> PASS (0 unreviewed benchmark overlaps in decision code)"
+  note: "Rules were developed against the public set; the hash split in fdb_split.py is NOT an independent holdout."

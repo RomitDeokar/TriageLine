@@ -20,7 +20,8 @@ LiveKit Cloud project (free Build plan) -- see docs/FREE_API_KEYS.md. Barge-in: 
 arrives while the agent is speaking is treated as caller speech onset (fast path); the final transcript
 is the signal of record.
 
-Usage (run ONE of the two agents at a time: both register without an agent_name and are auto-dispatched):
+Usage (without TRIAGELINE_AGENT_NAME both workers are auto-dispatched, so run ONE at a time; with
+distinct names, both can share a LiveKit project and the gateway token decides which one joins):
     python livekit_agent/triage_livekit_agent.py dev      # connect to your LiveKit project
     python livekit_agent/triage_livekit_agent.py console  # local mic/speaker smoke test
 
@@ -157,9 +158,12 @@ class TriageVoiceAgent(Agent):
 
 
 server = AgentServer()
+# Explicit dispatch: set TRIAGELINE_AGENT_NAME (e.g. triageline-triage) and the same value on the
+# gateway so its tokens route calls here; empty keeps automatic dispatch (demo only, run one worker).
+AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
 
 
-@server.rtc_session()
+@server.rtc_session(agent_name=AGENT_NAME)
 async def entrypoint(ctx: agents.JobContext):
     call_id = ctx.room.name
     print(f"!!! TRIAGE LINE AGENT JOINING ROOM: {call_id} !!!")

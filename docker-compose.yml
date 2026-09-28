@@ -1,0 +1,19 @@
+# Local/pilot deployment: gateway + assistant voice worker on one LiveKit project.
+#   cp .env.example .env   # fill in LiveKit + one LLM/speech key
+#   docker compose up --build
+# Put a TLS reverse proxy (Caddy/nginx/Cloud load balancer) in front of :8080 for phones.
+services:
+  api:
+    build: { context: ., target: api }
+    env_file: .env
+    environment:
+      TRIAGELINE_AGENT_NAME: ${TRIAGELINE_AGENT_NAME:-triageline-assistant}
+    ports: ["8080:8080"]
+    restart: unless-stopped
+  worker:
+    build: { context: ., target: worker }
+    env_file: .env
+    environment:
+      TRIAGELINE_MODE: assistant
+      TRIAGELINE_AGENT_NAME: ${TRIAGELINE_AGENT_NAME:-triageline-assistant}
+    restart: unless-stopped

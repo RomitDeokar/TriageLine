@@ -12,7 +12,7 @@ export function createVoiceClient({ Room, RoomEvent, Track, ParticipantKind }, v
   async function leave(message = 'Call ended. Microphone released.') {
     generation++;
     const previous = room;
-    room = null; joining = false; connected = false; muted = true;
+    room = null; joining = false; connected = false; muted = true; pausedByApp = false;
     view.clearAudio(); view.autoplay(false); view.status(message); controls();
     await dispose(previous);
   }
@@ -24,10 +24,14 @@ export function createVoiceClient({ Room, RoomEvent, Track, ParticipantKind }, v
     room = r; joining = true; controls(); view.status('Signing in and connecting…');
     // Called inside the click gesture, before authentication awaits, for mobile autoplay.
     r.startAudio().catch(() => { if (current(r, g)) view.autoplay(true); });
-    const agentPresent = () => [...r.remoteParticipants.values()].some(p => p.kind === ParticipantKind.AGENT);
+    // Agent detection: ParticipantKind.AGENT when the SDK/server populate it; otherwise any remote
+    // participant that is publishing audio or whose identity marks it as an agent worker.
+    const isAgent = p => (ParticipantKind && p.kind === ParticipantKind.AGENT) || /^agent[-_]/i.test(p.identity || '')
+      || [...(p.trackPublications?.values?.() || [])].some(t => t.kind === Track.Kind.Audio);
+    const agentPresent = () => [...r.remoteParticipants.values()].some(isAgent);
     const updateStatus = () => view.status(agentPresent() ? 'Voice connected — speak naturally; interrupt at any time.' : 'Room connected — waiting for the voice worker. Start cascaded_agent.py dev.');
     r.on(RoomEvent.TrackSubscribed, (track) => {
-      if (current(r, g) && track.kind === Track.Kind.Audio) view.audio(track);
+      if (current(r, g) && track.kind === Track.Kind.Audio) { view.audio(track); updateStatus(); }
     });
     r.on(RoomEvent.TrackUnsubscribed, track => view.removeAudio(track));
     r.on(RoomEvent.AudioPlaybackStatusChanged, () => { if (current(r, g)) view.autoplay(!r.canPlaybackAudio); });
@@ -64,6 +68,29 @@ export function createVoiceClient({ Room, RoomEvent, Track, ParticipantKind }, v
       muted = !enable; controls();
     } catch (_) { if (current(r, g)) view.status('Microphone unavailable. Check browser permissions.'); }
   }
+  // Backgrounding (screen lock, notification shade, app switch) pauses the microphone instead of
+  // hanging up; the caller decides when a long absence should end the call.
+  let pausedByApp = false;
+  async function pause() {
+    const r = room, g = generation;
+    if (!connected || !r || muted) return;
+    try {
+      await r.localParticipant.setMicrophoneEnabled(false);
+      if (!current(r, g)) return;
+      muted = true; pausedByApp = true; controls();
+      view.status('Paused while the app is in the background — microphone off.');
+    } catch (_) { /* leave state unchanged */ }
+  }
+  async function resume() {
+    const r = room, g = generation;
+    if (!connected || !r || !pausedByApp) return;
+    pausedByApp = false;
+    try {
+      await r.localParticipant.setMicrophoneEnabled(true);
+      if (!current(r, g)) return;
+      muted = false; controls(); view.status('Voice connected — speak naturally; interrupt at any time.');
+    } catch (_) { if (current(r, g)) view.status('Microphone unavailable. Check browser permissions.'); }
+  }
   async function resumeAudio() {
     const r = room, g = generation;
     if (!r) return;
@@ -71,5 +98,6 @@ export function createVoiceClient({ Room, RoomEvent, Track, ParticipantKind }, v
     catch (_) { if (current(r, g)) view.status('Audio playback blocked. Check device audio settings.'); }
   }
   controls();
-  return { join, leave, toggleMic, resumeAudio };
+  const state = () => ({ joining, connected, muted, pausedByApp });
+  return { join, leave, toggleMic, resumeAudio, pause, resume, state };
 }

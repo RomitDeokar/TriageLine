@@ -127,7 +127,7 @@ def test_rtc_least_privilege_and_validation(client, monkeypatch):
     assert claims['sub'] == data['identity'] and claims['video']['room'] == data['room']
     assert claims['video']['canPublishSources'] == ['microphone']
     assert not claims['video'].get('roomAdmin') and not claims['video'].get('roomCreate')
-    assert data['expires_in'] == 300 and data['tools'] == 'simulated'
+    assert data['expires_in'] == 600 and data['tools'] == 'simulated'
     assert client.post('/api/rtc/token', json={'room': 'someone-elses-room'}).status_code == 422
     monkeypatch.setenv('LIVEKIT_URL', 'wss://username:password@voice.example')
     assert client.post('/api/rtc/token', json={}).status_code == 503

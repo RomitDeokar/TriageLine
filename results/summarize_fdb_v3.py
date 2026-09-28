@@ -34,6 +34,43 @@ def _pct(x):
     return "not produced" if x is None else f"{100 * x:.1f}%"
 
 
+def _agent_line(cfg: dict) -> str:
+    sp = cfg.get("speech") or {}
+    stt = sp.get("stt_provider") or cfg.get("stt_provider", "?")
+    tts = sp.get("tts_provider") or cfg.get("tts_provider", "?")
+    stt_m, tts_m = sp.get("stt_model"), sp.get("tts_model")
+    llm = cfg.get("llm_planner")
+    if isinstance(llm, dict):
+        planner = (f"schema-validated LLM planner ({', '.join(llm.get('chain') or []) or 'no provider'})"
+                   if llm.get("enabled") else "rules only (LLM planner off)")
+    else:
+        planner = "rules only (LLM planner off)" if str(llm or "0") == "0" else f"LLM planner={llm}"
+    return (f"Agent: custom LiveKit agent (Silero VAD → STT → ParticipantAgent: {planner} → TTS)"
+            f" · STT={stt}{':' + stt_m if stt_m else ''} TTS={tts}{':' + tts_m if tts_m else ''}")
+
+
+def _q(v: list, q: float) -> float:
+    return v[min(len(v) - 1, int(q * (len(v) - 1) + 0.5))]
+
+
+def turn_latency(path: Path) -> dict:
+    out: dict = {}
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        if line.startswith("TURN_LATENCY_JSON: "):
+            try:
+                r = json.loads(line.split(": ", 1)[1])
+            except ValueError:
+                continue
+            val = r.get("response_s") if r.get("type") == "turn" else r.get("stop_s")
+            if isinstance(val, (int, float)):
+                out.setdefault(r.get("type"), []).append(float(val))
+    return out
+
+
 def newest_run() -> Path | None:
     runs = sorted(p for p in RESULTS.iterdir() if p.is_dir() and p.name[:2] == "20")
     return runs[-1] if runs else None
@@ -49,7 +86,7 @@ def split_rates(pass_report: dict) -> dict:
 
 
 def main():
-    run = Path(sys.argv[1]) if len(sys.argv) > 1 else newest_run()
+    run = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else newest_run()
     lines = ["# FDB-v3 results — TriageLine", "",
              f"Generated: {datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}", ""]
     if run is None or not run.exists():
@@ -71,9 +108,22 @@ def main():
         f"Provider name: `{prov}` · LLM judge: **{'on (gpt-4o)' if cfg.get('llm_judge') else 'off (exact match = lower bound)'}**"
         f" · examples: {pr.get('total_scenarios') if pr else '?'}{' (limited)' if cfg.get('limit') else ''}  ",
         f"FDB-v3 commit: `{cfg.get('fdb_commit', '?')}` · TriageLine commit: `{cfg.get('triageline_commit', '?')}` · {cfg.get('python', '')}  ",
-        "Agent: custom LiveKit agent (Silero VAD → hosted STT → rule-based ParticipantAgent, no LLM → hosted TTS)"
-        f" · STT={cfg.get('stt_provider', '?')} TTS={cfg.get('tts_provider', '?')}", "",
+        _agent_line(cfg), "",
     ]
+    try:
+        import subprocess
+        head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=5).stdout.strip()
+    except Exception:  # noqa: BLE001 - git optional
+        head = ""
+    if head and cfg.get("triageline_commit") and cfg["triageline_commit"] != head:
+        lines += [f"> **Stale evidence:** this run was produced at `{cfg['triageline_commit'][:10]}`, not the current "
+                  f"checkout `{head[:10]}`. Re-run `./run_fdb_v3.sh` on the submission commit.", ""]
+    if mode == "offline_text_replay":
+        lines += ["> **Diagnostic only.** Offline text replay feeds the official transcripts to the agent without LiveKit, "
+                  "STT or TTS. It is **not** the scored live FDB-v3 run and must not be reported as one.", ""]
+    elif not cfg.get("llm_judge"):
+        lines += ["> LLM judge was **off**: exact-match scores are a lower bound, not the official judged score.", ""]
     if pr is None:
         lines += ["## Status: INCOMPLETE", "", "The pass-rate report was not produced; see `run.log` in the run directory.", ""]
     else:
@@ -86,7 +136,9 @@ def main():
                   f"| {_pct((ev or {}).get('turn_taking', {}).get('turn_take_rate'))} |", ""]
         sp = split_rates(pr)
         if sp:
-            lines += ["### Anti-overfitting: dev vs held-out (hash split, `livekit_agent/fdb_split.py`)", "",
+            lines += ["### Dev vs hash split of the public set (`livekit_agent/fdb_split.py`)", "",
+                      "Both halves come from the same public benchmark that rules were developed against, so this is "
+                      "**not** an independent held-out set. See `scenarios_heldout/` for the independent paraphrase set.", "",
                       "| split | passed | rate |", "|---|---|---|"]
             for s, (k, n) in sp.items():
                 lines.append(f"| {s} | {k}/{n} | {100 * k / n:.1f}% |")
@@ -108,6 +160,15 @@ def main():
         lines += ["## Latency", "", "Not measured in offline mode (no audio). Run the full `./run_fdb_v3.sh` for latency.", ""]
     if lat:
         lines += ["Fine-grained latency report: `" + f"{prov}_latency_report.json`", ""]
+    turns = turn_latency(run / "agent_heartbeat.log")
+    if turns:
+        lines += ["## Per-turn timing (TriageLine worker telemetry, not an official metric)", "",
+                  "| event | n | median | p90 | max |", "|---|---|---|---|---|"]
+        for k, label in (("turn", "final transcript → agent audio"), ("barge_in", "user onset → agent audio stopped")):
+            v = sorted(turns.get(k, []))
+            if v:
+                lines.append(f"| {label} | {len(v)} | {_q(v, .5):.2f}s | {_q(v, .9):.2f}s | {v[-1]:.2f}s |")
+        lines.append("")
     lines += ["Files: " + ", ".join(sorted(p.name for p in run.iterdir() if p.is_file())), ""]
     text = "\n".join(lines)
     (RESULTS / "results.md").write_text(text)

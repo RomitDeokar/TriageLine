@@ -31,12 +31,13 @@ from livekit_agent.fdb_tools import FDB_TOOLS
 from livekit_agent.fdb_v3_offline_replay import load_registry
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UPLOADS = os.path.join(ROOT, "live_uploads")
-MAX_SESSIONS = 8
-SESSION_IDLE_S = 15 * 60
+UPLOADS = os.environ.get("TRIAGELINE_UPLOAD_DIR") or os.path.join(ROOT, "live_uploads")
+MAX_SESSIONS = int(os.environ.get("TRIAGELINE_MAX_SESSIONS", "8"))
+SESSION_IDLE_S = int(os.environ.get("TRIAGELINE_SESSION_IDLE_S", str(15 * 60)))
+INIT_TIMEOUT_S = float(os.environ.get("TRIAGELINE_SESSION_INIT_S", "20"))
 MAX_UPLOAD = 6 * 1024 * 1024
 MAX_TEXT = 500
-MODE = "LIVE INPUT + MOCK TOOLS"
+MODE = "LIVE INPUT + SIMULATED TOOLS"
 
 
 class ToolAdapter:
@@ -73,6 +74,8 @@ class LiveSession:
         self.seq = 0                      # monotonically increasing SSE event id (replay on reconnect)
         self.stream_gen = 0               # newest SSE consumer wins; stale streams exit
         self.lock = threading.Lock()
+        self.cancelled: set = set()          # call ids cancelled by the agent: late results are dropped
+        self._waiters: list = []             # (loop, asyncio.Event) of SSE consumers to wake on emit
         self.loop = asyncio.new_event_loop()
         self.ready = threading.Event()
         self.closed = False
@@ -81,7 +84,7 @@ class LiveSession:
         os.makedirs(self.dir, exist_ok=True)
         self.thread = threading.Thread(target=self._main, daemon=True)
         self.thread.start()
-        if not self.ready.wait(5) or self.init_error:
+        if not self.ready.wait(INIT_TIMEOUT_S) or self.init_error:
             self.close()
             raise RuntimeError("session initialization failed")
 
@@ -126,6 +129,12 @@ class LiveSession:
             ev = {"id": self.seq, "kind": kind, "t_ms": self.ms(), **data}
             self.log.append(ev)
             del self.log[:-400]
+            waiters = list(self._waiters)
+        for loop, event in waiters:          # wake SSE consumers immediately (no busy polling)
+            try:
+                loop.call_soon_threadsafe(event.set)
+            except RuntimeError:
+                pass
         try:
             self.out.put_nowait(ev)
         except queue.Full:                # slow/absent consumer: drop oldest, keep newest
@@ -139,6 +148,17 @@ class LiveSession:
         """Events a reconnecting client missed (bounded by the 400-event log)."""
         with self.lock:
             return [e for e in self.log if e["id"] > last_id]
+
+    def subscribe(self, loop, event) -> None:
+        with self.lock:
+            self._waiters.append((loop, event))
+
+    def unsubscribe(self, loop, event) -> None:
+        with self.lock:
+            try:
+                self._waiters.remove((loop, event))
+            except ValueError:
+                pass
 
     def claim_stream(self) -> int:
         """Register a new SSE consumer; any older consumer stops reading the queue."""
@@ -167,15 +187,18 @@ class LiveSession:
                 t = self.pending.pop(cid, None)
                 if t and not t.done():
                     api = getattr(t, "tool_api", "")
-                    if api in self.tools.fdb_tools:
-                        # A running synchronous provider cannot be cancelled by
-                        # cancelling its awaiter. Preserve its result for reconciliation.
-                        self.emit("task", call_id=cid, status="cancel_requested")
+                    kind = self.agent.tools.get(api, {}).get("kind", "read_only") if hasattr(self.agent, "tools") else "read_only"
+                    if api in self.tools.fdb_tools and kind == "state_modifying":
+                        # A running synchronous state change cannot be recalled by cancelling its awaiter:
+                        # keep its result so the ledger can reconcile the real outcome (never guess).
+                        self.emit("task", call_id=cid, api=api, status="cancel_requested")
                         self.pending[cid] = t
                     else:
+                        # Read-only work (or a cancellable async mock): stop it, and drop any late result.
+                        self.cancelled.add(cid)
                         t.cancel()
-                        await self.in_q.put({"event_type": "tool_cancelled", "payload": {"call_id": cid}})
-                        self.emit("task", call_id=cid, status="cancelled")
+                        await self.in_q.put({"event_type": "tool_cancelled", "payload": {"call_id": cid, "confirmed": True}})
+                        self.emit("task", call_id=cid, api=api, status="cancelled")
                 else:
                     self.emit("task", call_id=cid, status="cancel_noop")
             else:
@@ -192,6 +215,13 @@ class LiveSession:
             res = {"status": "error", "error": "provider_exception", "detail": log_detail}
         finally:
             self.pending.pop(cid, None)
+        cancelled = getattr(self, "cancelled", set())
+        if cid in cancelled:
+            # the agent already received tool_cancelled for this call: a late result must never surface
+            cancelled.discard(cid)
+            return
+        if not isinstance(res, dict):
+            res = {"status": "error", "error": "malformed_result"}
         st = res.get("status", "success")
         self.emit("task", call_id=cid, api=api, status="done" if st == "success" else "error",
                   result=_short(res), mode=self.tools.mode)
@@ -218,7 +248,7 @@ class LiveSession:
             raise ValueError("empty text")
         # speaking over the assistant, or over running work, is a barge-in
         et = "interruption" if (speaking or self.busy()) else "user_speech_chunk"
-        self.emit("user", text=text, as_=et)
+        self.emit("user", text=text, event_type=et)
         payload = {"text": text} if et == "interruption" else {"text": text, "end_of_turn": True}
         self.push({"event_type": et, "payload": payload})
         return et
@@ -265,7 +295,7 @@ class LiveSession:
 
     def user_frame(self, b64: str) -> str:
         ref = self._save(b64, "jpg")
-        self.emit("user", text="[camera frame]", as_="video_frame")
+        self.emit("user", text="[camera frame]", event_type="video_frame")
         self.push({"event_type": "video_frame", "payload": {"frame_id": f"live_{self.frame_n}", "image_ref": ref}})
         return ref
 
@@ -277,7 +307,7 @@ class LiveSession:
         # One perception contract for live and harness (R18): the clip enters the agent as a
         # user_audio_chunk, so word confidences, alternative decodes, utterance ordering (version) and
         # the clarification gate before side effects all apply exactly as in the evaluated path.
-        self.emit("user", text="[voice clip]", as_="user_audio_chunk")
+        self.emit("user", text="[voice clip]", event_type="user_audio_chunk")
         self.push({"event_type": "user_audio_chunk", "payload": {"audio_ref": ref, "end_of_turn": True, "interrupted": speaking or self.busy()}})
         return ref
 
@@ -388,7 +418,7 @@ def readiness() -> Dict[str, Any]:
         "offline": os.environ.get("TRIAGELINE_OFFLINE") == "1",
         "planner": _planner_status(),
         "audio": P.speech_config(),
-        "speech": P.speech_config()["provider"] + ":" + P.speech_config()["model"] + " (server STT; browser TTS)",
+        "speech": _speech_summary(),
         "tools": sorted(set(MockEnvironment("readiness").registry) | (set(FDB_TOOLS) - {"search_flights"})),
         "packages": {m: bool(u.find_spec(m)) for m in ("faster_whisper", "onnxruntime", "huggingface_hub", "tokenizers", "PIL", "numpy")},
         "tesseract": bool(shutil.which("tesseract")),
@@ -412,3 +442,18 @@ def _planner_status():
         return {"provider": "invalid configuration", "configured": False, "error": str(exc)}
     return {"provider": cfg["provider"], "model": cfg["model"], "configured": st["configured"],
             "chain": st["chain"], "error": st["error"]}
+
+
+def _speech_summary() -> Dict[str, Any]:
+    """Truthful speech pipeline per client path (browser PWA vs LiveKit voice worker)."""
+    cfg = P.speech_config()
+    out: Dict[str, Any] = {"pwa": {"stt": f"{cfg['provider']}:{cfg['model']} (server) or browser SpeechRecognition",
+                                   "tts": "browser speechSynthesis"}}
+    try:
+        from livekit_agent import speech_providers as sp
+        c = sp.selected()
+        out["livekit_worker"] = {"stt": f"{c['stt_provider']}:{c['stt_model']}",
+                                 "tts": f"{c['tts_provider']}:{c['tts_model']}", "missing_keys": c["missing_keys"]}
+    except Exception as exc:  # noqa: BLE001 - worker deps optional in the gateway image
+        out["livekit_worker"] = {"error": type(exc).__name__}
+    return out

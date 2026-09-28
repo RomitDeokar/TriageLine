@@ -8,10 +8,9 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "ui"))
 
 PIL = pytest.importorskip("PIL")
-import live  # noqa: E402
+from ui import live  # noqa: E402
 
 
 def _png_b64() -> str:

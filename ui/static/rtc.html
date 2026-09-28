@@ -26,7 +26,7 @@
 </div>
 </section>
 <section class="panel" aria-label="Live transcription"><h2>Conversation</h2><small>Transcripts appear when the worker publishes them. They stay on this page, not in browser storage.</small><div id="transcript" role="log" aria-live="polite"></div></section>
-<p><small>HTTPS is required on a phone. Leaving or backgrounding this page ends capture. Native apps should use the LiveKit SDK with the same token API. A connected room does not prove that a voice worker has joined.</small></p>
+<p><small>HTTPS is required on a phone. Backgrounding this page pauses the microphone (the call ends after 3 minutes away); closing it ends the call. Native apps should use the LiveKit SDK with the same token API. A connected room does not prove that a voice worker has joined.</small></p>
 <div id="remote-audio"></div>
 <noscript>JavaScript is required for continuous voice.</noscript>
 <script src="/auth.js"></script>
