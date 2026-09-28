@@ -7,7 +7,6 @@ browsers use HttpOnly cookies. All business action tools remain simulated.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import json
@@ -19,6 +18,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -77,7 +77,11 @@ class RateLimit:
 
 
 def create_app() -> FastAPI:
-    production = os.getenv("TRIAGELINE_ENV", "development") == "production"
+    environment = os.getenv("TRIAGELINE_ENV", "development")
+    if environment not in {"development", "production"}:
+        raise RuntimeError("TRIAGELINE_ENV must be development or production")
+    # Fail closed when an operator reuses the older server's production flag.
+    production = environment == "production" or os.getenv("TRIAGELINE_PRODUCTION") == "1"
     access_code = os.getenv("TRIAGELINE_ACCESS_CODE", "")
     secret = os.getenv("TRIAGELINE_SESSION_SECRET", "") or secrets.token_hex(32)
     origins = [x.strip().rstrip("/") for x in os.getenv("CORS_ORIGINS", "").split(",") if x.strip()]
@@ -136,7 +140,7 @@ def create_app() -> FastAPI:
                         raise HTTPException(400, "Invalid Content-Length")
                     if size < 0 or size > MAX_BODY:
                         raise HTTPException(413, "Request too large")
-                    if request.headers.get("content-type", "").split(";")[0] != "application/json":
+                    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
                         raise HTTPException(415, "Use application/json")
                     async def read_bounded():
                         chunks, total = [], 0
@@ -179,7 +183,7 @@ def create_app() -> FastAPI:
         sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
         return payload + "." + sig
 
-    def authenticate(request: Request):
+    async def authenticate(request: Request):
         bearer = request.headers.get("authorization", "")
         token = bearer[7:] if bearer.startswith("Bearer ") else request.cookies.get("tl_auth", "")
         try:
@@ -274,7 +278,7 @@ def create_app() -> FastAPI:
                 if previous != signature:
                     raise HTTPException(409, "request_id was already used with different input")
                 return result
-            if len(s.requests) >= 500:
+            if len(s.requests) >= 500 and op not in {"end", "log", "interrupt"}:
                 raise HTTPException(429, "Session request limit reached; start a new session")
             try:
                 if op == "say":
@@ -294,7 +298,7 @@ def create_app() -> FastAPI:
                     result = {"log": s.events_after(0), "mode": live.MODE, "audio": live.P.speech_config()}
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
-            if body.request_id:
+            if body.request_id and op not in {"log", "end", "interrupt"}:
                 s.requests[body.request_id] = (signature, result)
             return result
 
@@ -337,10 +341,17 @@ def create_app() -> FastAPI:
                                  headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
 
     @app.post("/api/rtc/token")
-    async def rtc_token(owner=Depends(authenticate)):
+    async def rtc_token(body: Start, owner=Depends(authenticate)):
         limiter.check(("rtc", owner), 6)
         url, key, api_secret = (os.getenv(k, "") for k in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"))
-        if not url.startswith("wss://") or not key or not api_secret or "<" in url:
+        try:
+            parsed = urlsplit(url)
+            valid = (parsed.scheme == "wss" and parsed.hostname and not parsed.username
+                     and not parsed.password and not parsed.query and not parsed.fragment)
+            parsed.port  # Validate malformed/non-numeric ports too.
+        except ValueError:
+            valid = False
+        if not valid or not key or not api_secret or any("<" in v for v in (url, key, api_secret)):
             raise HTTPException(503, "Configure LiveKit URL, API key and secret, then start the voice worker")
         from livekit import api
         # Client cannot choose room/identity or gain admin grants. One room per owner.
@@ -349,7 +360,8 @@ def create_app() -> FastAPI:
                                  can_publish_data=True, can_publish_sources=["microphone"])
         token = (api.AccessToken(key, api_secret).with_identity("user-" + owner)
                  .with_ttl(timedelta(minutes=5)).with_grants(grants).to_jwt())
-        return {"url": url, "token": token, "room": room, "expires_in": 300, "tools": "simulated"}
+        return {"url": url, "token": token, "room": room, "identity": "user-" + owner,
+                "expires_in": 300, "expires_at": int(time.time()) + 300, "tools": "simulated"}
 
     @app.get("/")
     @app.get("/app")

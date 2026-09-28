@@ -164,6 +164,8 @@ def _gemini_plan(cfg, payload, tools):
 
 def plan(text: str, tools: Dict[str, Any], history: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Blocking provider request; caller MUST use a background task/thread. No automatic retries."""
+    if os.environ.get("TRIAGELINE_OFFLINE") == "1":
+        return []
     try:
         cfg = config()
         payload = {"previous_context": (history or [])[-3:], "transcript": text}
@@ -188,6 +190,8 @@ def plan(text: str, tools: Dict[str, Any], history: Optional[List[str]] = None) 
 
 def reply(text: str, history: Optional[List[str]] = None) -> str:
     """Gemini conversation fallback only; cannot execute or attest to real actions."""
+    if os.environ.get("TRIAGELINE_OFFLINE") == "1":
+        return "Offline mode supports local tool requests only. Enable a provider for general conversation."
     cfg = config()
     if cfg["provider"] != "gemini" or not gemini_key():
         return "I couldn't understand a complete request. Please describe what you need, including any missing details."

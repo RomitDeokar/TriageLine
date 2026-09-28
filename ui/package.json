@@ -1,0 +1,11 @@
+{
+  "name": "triageline-voice-client",
+  "private": true,
+  "scripts": {
+    "build": "esbuild rtc.js --bundle --minify --format=esm --target=es2022 --outfile=static/rtc.bundle.js",
+    "test": "node --test rtc.test.mjs",
+    "test:browser": "node browser.test.cjs"
+  },
+  "dependencies": { "livekit-client": "2.22.3" },
+  "devDependencies": { "esbuild": "0.25.12", "@playwright/test": "1.61.1" }
+}
