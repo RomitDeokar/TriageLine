@@ -54,8 +54,9 @@
 
   <main id="chat" aria-live="polite" aria-label="Conversation" tabindex="-1">
     <section class="hello" id="welcome-card">
-      <div class="hello-badge"><span class="pulse-dot"></span><span>Full-duplex agent</span></div>
+      <div class="hello-badge"><span class="pulse-dot"></span><span>Interruptible assistant</span></div>
       <h1>How can I help?</h1>
+      <p class="hello-note">Action tools are simulated. No real bookings, payments or emergency dispatch. <a href="/rtc.html">Open continuous LiveKit voice</a>.</p>
       <p class="hello-intro">Speak or type. Interrupt at any time — the assistant stops talking, cancels stale work and re-plans.</p>
       <div class="sample-prompts" role="list">
         <button class="sample-chip" role="listitem" data-sample="Find a flight to Denver and book the 8 AM one for Alice.">
@@ -104,6 +105,7 @@
       </span>
       <div id="status-dot" class="status-indicator-dot connecting"></div>
       <div id="status" class="status" role="status">Connecting to server…</div>
+      <button id="retry-connect" type="button" hidden>Reconnect</button>
     </div>
   </footer>
 
@@ -118,14 +120,14 @@
     <div class="sheet-toggles">
       <label class="toggle-row"><span>Speak replies aloud</span><input type="checkbox" id="m-tts" class="switch" checked></label>
       <label class="toggle-row"><span>Hands-free (listen after reply)</span><input type="checkbox" id="m-hands" class="switch"></label>
-      <label class="toggle-row"><span>Server Whisper ASR</span><input type="checkbox" id="m-server-asr" class="switch"></label>
+      <label class="toggle-row"><span>Configured server speech recognition</span><input type="checkbox" id="m-server-asr" class="switch"></label>
       <label class="toggle-row"><span>Haptic feedback</span><input type="checkbox" id="m-haptics" class="switch" checked></label>
     </div>
     <div class="sheet-actions">
       <button id="m-ready" class="menu-action-btn"><span class="mi">✓</span><span>Device &amp; model readiness check</span></button>
       <button id="m-export" class="menu-action-btn"><span class="mi">⤓</span><span>Export session audit (JSON)</span></button>
       <button id="m-new" class="menu-action-btn danger"><span class="mi">↺</span><span>Reset &amp; start new session</span></button>
-      <a href="/" class="menu-action-btn neutral"><span class="mi">▦</span><span>Evaluation console</span></a>
+      <a href="/rtc.html" class="menu-action-btn neutral"><span>Continuous LiveKit voice</span></a>
     </div>
     <div id="ready" class="ready"></div>
     <div class="sheet-foot" id="sid-label"></div>
@@ -157,6 +159,7 @@
 
 <input id="file" type="file" accept="image/*" hidden>
 <noscript><p style="padding:16px">TriageLine needs JavaScript enabled.</p></noscript>
+<script src="auth.js"></script>
 <script src="live.js"></script>
 </body>
 </html>

@@ -18,7 +18,7 @@
 
   const state = {
     sid: null, es: null, lastId: 0, seen: new Set(), starting: null, reconnectTimer: null, backoff: 1000,
-    speaking: false, listening: false, rec: null, mediaRec: null, recTimer: null, speechQ: [],
+    capturePending: false, captureEpoch: 0, speechEpoch: 0, speaking: false, listening: false, rec: null, mediaRec: null, recTimer: null, speechQ: [],
     tasks: {}, log: [], slots: {}, wasSpeakingAtStart: false, pendingSendAt: 0,
     audio: { provider: "local", offline: true, configured: false },
     metrics: { firstMs: [], tools: 0, barge: 0, cancel: 0 }, camStream: null, pttTimer: null, ptt: false,
@@ -41,7 +41,7 @@
     PREFS.forEach((id) => { if (id in saved) $("#" + id).checked = !!saved[id]; });
   } catch (_) { /* ignore corrupt prefs */ }
   PREFS.forEach((id) => $("#" + id).addEventListener("change", () => {
-    localStorage.setItem("tl_prefs", JSON.stringify(Object.fromEntries(PREFS.map((k) => [k, $("#" + k).checked]))));
+    try { localStorage.setItem("tl_prefs", JSON.stringify(Object.fromEntries(PREFS.map((k) => [k, $("#" + k).checked])))); } catch (_) {}
     if (id === "m-tts" && !$("#m-tts").checked) stopSpeech();
   }));
   if (!SR) { const c = $("#m-server-asr"); c.checked = true; c.disabled = true; }
@@ -106,7 +106,7 @@
 
   // ------------------------------------------------------------ session lifecycle
   function resetSessionUi() {
-    state.tasks = {}; state.slots = {}; state.lastId = 0; state.seen.clear();
+    state.tasks = {}; state.slots = {}; state.lastId = 0; state.seen.clear(); state.log = [];
     renderTasks(); updateMemoryDeck({});
   }
 
@@ -115,19 +115,26 @@
     state.starting = (async () => {
       closeStream();
       setStatus("Starting session…", "connecting"); setConn("Connecting…", "connecting");
-      for (let attempt = 0; ; attempt++) {
+      const requestId = crypto.randomUUID();
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const j = await post("/api/live/start");
+          await window.TriageAuth?.ensure();
+          const j = await post("/api/live/start", { request_id: requestId });
           state.sid = j.sid;
           state.audio = j.audio || state.audio;
           $("#mode").textContent = (j.mode || "").includes("MOCK") ? "MOCK TOOLS" : j.mode;
           $("#mode").title = j.mode || "";
           $("#sid-label").textContent = "Session " + j.sid.slice(0, 8);
           resetSessionUi();
-          sessionStorage.setItem("tl_sid", state.sid);
+          try { sessionStorage.setItem("tl_sid", state.sid); } catch (_) {}
           connect();
           return;
         } catch (e) {
+          if (attempt === 2 || e.status === 401 || /cancelled/i.test(e.message)) {
+            setStatus(e.message + " — use Reconnect", "neg"); setConn("Disconnected", "neg");
+            $("#retry-connect").hidden = false;
+            return false;
+          }
           const wait = Math.min(15000, 1500 * 2 ** attempt);
           setStatus(`Session start failed (${e.message}) — retrying in ${Math.round(wait / 1000)}s`, "neg");
           setConn("Offline", "neg");
@@ -151,9 +158,11 @@
     state.es = es;
     es.onopen = () => {
       state.backoff = 1000;
+      $("#retry-connect").hidden = true;
       setStatus(navigator.onLine ? "Ready — speak or type" : "Offline", navigator.onLine ? "ok" : "neg");
       setConn("Live", "ok");
     };
+    es.addEventListener("gap", () => toast("Some older messages expired; showing available history."));
     es.onmessage = (m) => { try { onEvent(JSON.parse(m.data)); } catch (err) { console.warn("bad event", err); } };
     es.onerror = () => {
       // EventSource auto-retries on transient errors; if it gave up (CLOSED) the session is likely gone.
@@ -170,17 +179,20 @@
     state.reconnectTimer = setTimeout(async () => {
       try { await post(`/api/live/${state.sid}/log`, {}, { timeout: 8000 }); connect(); }
       catch (e) {
-        if (e.code === "no_session") { bubble("sys", "Session expired — started a fresh one.", false); start(); }
+        if (e.code === "no_session" || e.status === 401) { bubble("sys", "Session expired — started a fresh one.", false); start(); }
         else scheduleReconnect();
       }
     }, wait);
   }
 
   async function resume() {
-    const sid = sessionStorage.getItem("tl_sid");
+    let sid;
+    try { sid = sessionStorage.getItem("tl_sid"); } catch (_) {}
     if (!sid) return start();
     try {
-      await post(`/api/live/${sid}/log`, {}, { timeout: 8000 });
+      const restored = await post(`/api/live/${sid}/log`, {}, { timeout: 8000 });
+      state.audio = restored.audio || state.audio;
+      $("#mode").title = restored.mode || "LIVE INPUT + MOCK TOOLS";
       state.sid = sid;
       $("#sid-label").textContent = "Session " + sid.slice(0, 8);
       connect();          // lastId=0 → server replays the session history
@@ -247,7 +259,13 @@
     } else if (ev.kind === "asr") {
       $("#interim").textContent = "";
       if (!ev.text) setStatus(ev.error || "Speech not recognized", "neg");
+    } else if (ev.kind === "interrupted") {
+      if (!replay) stopSpeech();
     } else if (ev.kind === "closed") {
+      closeStream(); state.sid = null;
+      stopSpeech(); stopListening(true);
+      try { sessionStorage.removeItem("tl_sid"); } catch (_) {}
+      $("#retry-connect").hidden = false;
       setStatus("Session ended", ""); setConn("Ended", ""); setWaveform(false);
     }
   }
@@ -321,8 +339,9 @@
       if (localVoice) u.voice = localVoice;
     }
     item.el.classList.add("speaking");
+    const epoch = state.speechEpoch;
     let finished = false;
-    const done = () => { if (finished) return; finished = true; clearTimeout(guard); item.el.classList.remove("speaking"); if (state.speaking) nextSpeech(); };
+    const done = () => { if (finished) return; finished = true; clearTimeout(guard); item.el.classList.remove("speaking"); if (state.speaking && epoch === state.speechEpoch) nextSpeech(); };
     // some mobile engines never fire onend — guard with a length-based timeout
     const guard = setTimeout(done, 4000 + item.text.length * 90);
     u.onend = done; u.onerror = done;
@@ -330,6 +349,7 @@
   }
 
   function stopSpeech() {
+    state.speechEpoch++;
     state.speechQ = [];
     const was = state.speaking;
     state.speaking = false; // onend/onerror may fire synchronously during cancel
@@ -343,16 +363,17 @@
   function maybeHandsFree() {
     if (!opt.hands() || state.listening || state.speaking || document.hidden) return;
     if (Object.values(state.tasks).some((t) => t.status === "running")) return;
-    setTimeout(() => { if (!state.listening && !state.speaking) startListening(); }, 350);
+    setTimeout(() => { if (opt.hands() && !document.hidden && !state.listening && !state.speaking && !busy()) startListening(); }, 350);
   }
 
   const busy = () => Object.values(state.tasks).some((t) => t.status === "running");
 
   // ------------------------------------------------------------ user input & barge-in
-  async function sendText(text, wasSpeaking) {
+  async function sendText(text, wasSpeaking, requestId = crypto.randomUUID()) {
     text = (text || "").replace(/\s+/g, " ").trim().slice(0, 500);
     if (!text) return;
     if (!state.sid) await start();
+    if (!state.sid) return;
     const barge = wasSpeaking || busy();
     delete state.tasks._await; renderTasks();
     const b = bubble("user pending" + (barge ? " barge" : ""), (barge ? `<span class="tag">Barge-in</span>` : "") + esc(text));
@@ -360,14 +381,14 @@
     state.pendingSendAt = performance.now();
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        await post(`/api/live/${state.sid}/say`, { text, speaking: wasSpeaking });
+        await post(`/api/live/${state.sid}/say`, { text, speaking: wasSpeaking, request_id: requestId });
         b.classList.remove("pending");
         return;
       } catch (e) {
         if (e.code === "no_session" && attempt === 0) { bubble("sys", "Session expired — reconnected, resending…", false); await start(); continue; }
         b.classList.remove("pending"); b.classList.add("failed");
         b.insertAdjacentHTML("beforeend", `<button class="retry" type="button">Retry</button>`);
-        $(".retry", b).onclick = () => { b.remove(); sendText(text, false); };
+        $(".retry", b).onclick = () => { b.remove(); sendText(text, false, requestId); };
         toast("Couldn't send: " + e.message, "neg");
         state.pendingSendAt = 0;
         return;
@@ -414,12 +435,18 @@
   }
 
   async function startListening() {
-    if (state.listening) return;
+    if (state.listening || state.capturePending) return;
+    if (!window.isSecureContext) { toast("Voice requires HTTPS or localhost", "neg"); return; }
     if (!state.sid) await start();
+    if (!state.sid) return;
     if (opt.serverAsr() && !state.audio.configured) {
       toast("Server speech is not configured. Check API keys or use text input.", "neg"); return;
     }
     state.wasSpeakingAtStart = stopSpeech() || busy();
+    if (state.wasSpeakingAtStart) {
+      try { await post(`/api/live/${state.sid}/interrupt`, { request_id: crypto.randomUUID() }); }
+      catch (e) { toast("Could not stop server work: " + e.message, "neg"); }
+    }
     buzz(12);
     if (opt.serverAsr()) return recordForServer();
     try {
@@ -458,6 +485,7 @@
   }
 
   function stopListening(discard) {
+    state.captureEpoch++;
     if (state.rec) { state.rec._discard = !!discard; try { state.rec.stop(); } catch (_) {} }
     if (state.mediaRec && state.mediaRec.state === "recording") { state.mediaRec._discard = !!discard; state.mediaRec.stop(); }
     clearTimeout(state.recTimer);
@@ -466,13 +494,18 @@
 
   // Server-side Whisper fallback (Firefox / iOS without Web Speech)
   async function recordForServer() {
+    if (state.capturePending) return;
+    state.capturePending = true;
+    const epoch = state.captureEpoch, sid = state.sid;
     let stream;
     try {
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error("Recording is not supported in this browser");
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     } catch (e) {
       const msg = e.name === "NotAllowedError" ? "Microphone blocked — allow it in browser settings" : "Microphone unavailable: " + e.message;
       setStatus(msg, "neg"); toast(msg, "neg"); return;
-    }
+    } finally { state.capturePending = false; }
+    if (epoch !== state.captureEpoch || sid !== state.sid || document.hidden) { stream.getTracks().forEach((t) => t.stop()); return; }
     const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
       .find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported?.(m));
     let mr;
@@ -486,13 +519,14 @@
       stream.getTracks().forEach((t) => t.stop());
       if (state.mediaRec === mr) state.mediaRec = null;
       setListening(false);
-      if (mr._discard || !chunks.length || performance.now() - t0 < 300) { setStatus("Ready — speak or type", "ok"); return; }
+      clearTimeout(state.recTimer);
+      if (sid !== state.sid || mr._discard || !chunks.length || performance.now() - t0 < 300) { setStatus("Ready — speak or type", "ok"); return; }
       const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
       const url = await new Promise((resolve) => { const f = new FileReader(); f.onload = () => resolve(f.result); f.readAsDataURL(blob); });
       setStatus("Transcribing on server…", "connecting");
       bubble("user" + (state.wasSpeakingAtStart ? " barge" : ""), `<span class="tag">Voice</span>Voice clip · ${((performance.now() - t0) / 1000).toFixed(1)}s`);
       state.pendingSendAt = performance.now();
-      try { await post(`/api/live/${state.sid}/audio`, { audio: url, speaking: state.wasSpeakingAtStart }, { timeout: 60000 }); setStatus("Ready — speak or type", "ok"); }
+      try { await post(`/api/live/${state.sid}/audio`, { audio: url, speaking: state.wasSpeakingAtStart, request_id: crypto.randomUUID() }, { timeout: 60000 }); setStatus("Ready — speak or type", "ok"); }
       catch (e) { setStatus("Audio upload failed: " + e.message, "neg"); toast("Audio upload failed", "neg"); state.pendingSendAt = 0; }
     };
     mr.start();
@@ -566,10 +600,11 @@
 
   async function sendFrame(url, tag = "Camera") {
     if (!state.sid) await start();
+    if (!state.sid) return;
     const b = bubble("user pending img", `<span class="tag">${esc(tag)}</span><img class="thumb" alt="Shared frame" src="${esc(url)}">`);
     setStatus("Uploading frame…", "connecting");
     try {
-      await post(`/api/live/${state.sid}/frame`, { image: url }, { timeout: 30000 });
+      await post(`/api/live/${state.sid}/frame`, { image: url, request_id: crypto.randomUUID() }, { timeout: 30000 });
       b.classList.remove("pending");
       setStatus("Frame shared — ask about it", "ok");
     } catch (e) {
@@ -610,7 +645,8 @@
   $("#m-new").onclick = async () => {
     closeSheet(); stopSpeech(); stopListening(true);
     const old = state.sid;
-    state.sid = null; sessionStorage.removeItem("tl_sid");
+    closeStream();
+    state.sid = null; try { sessionStorage.removeItem("tl_sid"); } catch (_) {}
     if (old) post(`/api/live/${old}/end`).catch(() => {});
     $$(".msg", chat).forEach((m) => m.remove());
     state.metrics = { firstMs: [], tools: 0, barge: 0, cancel: 0 }; renderMetrics();
@@ -670,6 +706,7 @@
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
+  $("#retry-connect").onclick = () => start();
   renderMetrics();
   // open the long-lived stream only after load so it never holds the page's load event
   async function boot() {
@@ -677,7 +714,8 @@
       const r = await fetch("/api/ready");
       if (r.ok) state.audio = (await r.json()).audio || state.audio;
     } catch (_) { /* fail closed: keep browser cloud speech disabled */ }
-    resume();
+    try { await window.TriageAuth?.ensure(); await resume(); }
+    catch (e) { setStatus(e.message, "neg"); $("#retry-connect").hidden = false; }
   }
   if (document.readyState === "complete") boot();
   else window.addEventListener("load", boot, { once: true });
