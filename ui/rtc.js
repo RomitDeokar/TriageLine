@@ -50,9 +50,24 @@ $('connect').onclick = () => { $('transcript').replaceChildren(); lines.clear();
 $('hangup').onclick = () => void client.leave();
 $('mute').onclick = async () => { $('mute').disabled = true; await client.toggleMic(); };
 $('play-audio').onclick = () => void client.resumeAudio();
-// Background audio requires a native SDK and OS-specific lifecycle integration.
-// This web client deliberately releases the mic rather than claiming background support.
-window.addEventListener('pagehide', () => void client.leave());
+// Mobile lifecycle: backgrounding pauses the microphone (the call and conversation stay alive) and
+// resumes on return; the call ends only after HIDDEN_HANGUP_MS in the background or on page unload.
+// True background capture needs a native LiveKit SDK (docs/MOBILE_INTEGRATION.md).
+const HIDDEN_HANGUP_MS = 3 * 60 * 1000;
+let hiddenTimer = null, wakeLock = null;
+async function holdWakeLock() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (_) { /* optional */ }
+}
+window.addEventListener('pagehide', (e) => { if (!e.persisted) void client.leave(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) void client.leave('Call paused when the app went into the background. Reconnect to continue.');
+  if (document.hidden) {
+    void client.pause();
+    clearTimeout(hiddenTimer);
+    hiddenTimer = setTimeout(() => void client.leave('Call ended after 3 minutes in the background. Reconnect to continue.'), HIDDEN_HANGUP_MS);
+  } else {
+    clearTimeout(hiddenTimer); hiddenTimer = null;
+    void client.resume();
+    if (client.state().connected) void holdWakeLock();
+  }
 });
+$('connect').addEventListener('click', () => void holdWakeLock());

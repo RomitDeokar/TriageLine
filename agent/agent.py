@@ -446,7 +446,9 @@ class ParticipantAgent:
                 if not any(c["api"] == api for c in self.inflight.values()):
                     await self.say("filler_speech", "Same request as before —")
                     if prev is not None:
-                        await self.say("final_response", self.describe_success(api, prev, dict(self.state["slots"])))
+                        subj = args.get("city") or args.get("destination") or args.get("location")
+                        await self.say("final_response", self.describe_success(
+                            api, prev, {"destination": subj} if isinstance(subj, str) else {}))
                 return None
             self.read_keys.add(rk)
         self.seq += 1
@@ -606,6 +608,13 @@ class ParticipantAgent:
         # explicit retraction arrives the same way whether spoken as a turn or a barge-in
         if nlu.RETRACTION.search(low) and not self._actionable(nlu.RETRACTION.sub(" ", turn)):
             return await self.retract()
+        # "Do X — actually, don't do that." A retraction that ENDS the turn (nothing actionable after it)
+        # withdraws the request that precedes it in the same breath: never execute it.
+        tail = list(nlu.RETRACTION.finditer(turn))
+        if tail and not self._actionable(turn[tail[-1].end():]) and \
+                re.search(r"(?:\b(?:actually|wait|no|sorry|on second thought)\b[\s,.\u2014-]*)$", turn[:tail[-1].start()], re.I):
+            self.note("same_turn_retraction", turn[:80])
+            return await self.retract()
 
         if self.pending_clarify:
             handled = await self.resume_clarification(turn)
@@ -613,7 +622,7 @@ class ParticipantAgent:
                 return
         self.last_turn = turn
 
-        # a multi-request turn ("track X, then search Y, and add it to my cart") runs clause by clause
+        # a multi-request turn ("look up X, then find Y, and put it in my basket") runs clause by clause
         if not _clause and not self.inflight and self.pending_clarify is None:
             groups = self.split_compound(turn)
             if len(groups) > 1:
@@ -685,9 +694,9 @@ class ParticipantAgent:
         await self.start_task(top, turn)
 
     # ------------------------------------------------------------------ compound requests
-    # a hesitation ellipsis ("I'm looking... um, for a desk") is a pause, not a sentence end: only a
+    # a hesitation ellipsis ("I need... uh, a lamp") is a pause, not a sentence end: only a
     # single terminal punctuation mark (or a clause connective) separates independent requests
-    # the terminal punctuation is KEPT on the clause (lookbehind), so "...name Skyler. Then" never
+    # the terminal punctuation is KEPT on the clause (lookbehind), so "...name Robin. Then" never
     # glues "Skyler Then" into one name and "P-O-9? I've" never extends a spelled id
     _SPLIT = re.compile(r"(?:(?<=[?!])\s+|(?<=[^.]\.)\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
                         r"while you'?re at it|after that|once you find|once that'?s done|plus)\b))", re.I)
@@ -746,8 +755,8 @@ class ParticipantAgent:
                     a1, m1 = nlu.build_args(self.tools.get(tool, {}), ptext, {})
                     a2, m2 = nlu.build_args(self.tools.get(tool, {}), text, {})
                     # two requests are independent only if EACH is complete on its own and they differ;
-                    # "track it for me. The order ID is X" is one request whose slot arrives later
-                    # and neither is a refinement of the other ("a coffee maker! ... a coffee maker under 50")
+                    # "check that one. The reference is X" is one request whose slot arrives later
+                    # and neither is a refinement of the other ("a kettle! ... a kettle under 40")
                     refine = all(a2.get(k) == v for k, v in a1.items()) or all(a1.get(k) == v for k, v in a2.items())
                     independent = not m1 and not m2 and a1 != a2 and not refine
                 if same_family and not independent:
@@ -835,7 +844,7 @@ class ParticipantAgent:
         self.compound_version = self.version
 
     def bind_from_results(self, spec: Dict[str, Any], missing: List[str], args: Dict[str, Any], turn: str) -> List[str]:
-        """Resolve "add it to my cart" / "from whatever you find" against the most recent tool result."""
+        """Resolve "put that one in the basket" / "from whatever you find" against the most recent tool result."""
         if not missing or not self.results or not self._ANAPHORA.search(turn or ""):
             return missing
         still = []
@@ -979,7 +988,7 @@ class ParticipantAgent:
         cands = pc.get("candidates") or []
         value = None
         # A reply that clearly names a DIFFERENT tool is a new request, not the answer we
-        # asked for ("what amount?" -> "track my order ABC123" must not become amount=123).
+        # asked for ("what amount?" -> "check order QRS765" must not become amount=765).
         _api = pc.get("api")
         _top = (nlu.score_tools(turn, self.tools) or [(0, None)])[0]
         if _api and not cands and _top[0] >= 2.5 and _top[1] not in (None, _api) and \
@@ -1005,13 +1014,13 @@ class ParticipantAgent:
         api = pc.get("api")
         fspec = nlu.field_spec(self.tools.get(api, {}), field) if api else {}
         if field.split(".")[-1].endswith("_id"):
-            # a bare spelled answer to an id question has no cue word: "It's B O B one two" -> BOB12
+            # a bare spelled answer to an id question has no cue word: "It's K L M four five" -> KLM45
             m = re.match(r"(?i)^\W*(?:it'?s|it is|that'?s|the id is|sure|yes|yeah|ok(?:ay)?)?[\s,]*(.*)$", turn)
             spelled = nlu.normalize_spoken_ids("id " + (m.group(1) if m else turn)).split(" ", 1)
             if len(spelled) == 2 and nlu.plausible_id(spelled[1].strip(" .!?")):
                 turn = spelled[1].strip(" .!?")
         if value is None and api:
-            # a full-sentence answer ("...the order ID is A-B-C-1-2-3") — extract the field the same
+            # a full-sentence answer ("...the reference is Q-R-S-7-6-5") — extract the field the same
             # way a first-turn request would be parsed, before falling back to a bare value (B1)
             found, _ = nlu.build_args({"args": {field.split(".")[0]: {**fspec, "required": False}}}, turn,
                                       {})
@@ -1023,7 +1032,7 @@ class ParticipantAgent:
             if field.endswith("destination") or "city" in field:
                 value = nlu.extract_city(turn) or (value if value and len(value.split()) <= 3 else None)
         if value is not None and field.split(".")[-1].endswith("_id") and not nlu.plausible_id(value):
-            # "Could you track it for me?" is not an order id (B2): keep waiting for the id
+            # "Can you look that up?" is not an order id (B2): keep waiting for the id
             top = (nlu.score_tools(turn, self.tools) or [(0, None)])[0]
             if top[0] >= 2.5 and top[1] != api:
                 return False                       # a different request: handle it as one
@@ -1671,10 +1680,16 @@ class ParticipantAgent:
                 await self.call("book_flight", ac["args"], deps=ac["deps"])
                 return
         # the completion is bound to the task that produced it, not to whatever is current (R22)
-        ctx = dict(c["ctx"]) if kind == "state_modifying" else dict(self.state["slots"])
-        subj = c["args"].get("city") or c["args"].get("destination")
-        if kind != "state_modifying" and isinstance(subj, str):
-            ctx["destination"] = subj
+        # Read-only results are grounded on the call-time context plus the call's own arguments,
+        # never on whatever the global slots hold now (an overlapping correction may have changed them).
+        ctx = dict(c["ctx"])
+        if kind != "state_modifying":
+            ctx.update({k: v for k, v in c["args"].items() if isinstance(v, (str, int, float))})
+            subj = c["args"].get("city") or c["args"].get("destination") or c["args"].get("location")
+            if isinstance(subj, str):
+                ctx["destination"] = subj
+            elif "destination" in ctx and not any(k in c["args"] for k in ("city", "destination", "location")):
+                ctx.pop("destination")   # the result is not about a place: don't attach a stale city
         await self.say("final_response", self.describe_success(api, res, ctx))
 
     def describe_success(self, api: str, res: Dict[str, Any], s: Optional[Dict[str, Any]]) -> str:

@@ -4,22 +4,31 @@ TriageLine cascaded voice agent for the official FDB-v3 benchmark.
 
 MODEL / PROVIDER DECLARATION (guide: "clear declaration of the model provider or custom agent")
 ------------------------------------------------------------------------------------------------
-This is a CUSTOM LiveKit agent. There is NO large language model in the default configuration.
+This is a CUSTOM LiveKit agent (the exact providers/models are printed at start-up by describe()):
 
   User audio -> Silero VAD (local)            [livekit-plugins-silero]
-             -> hosted STT                    [OpenAI whisper-1 | Groq whisper-large-v3-turbo |
-                                               Deepgram nova-3 — TRIAGELINE_STT_PROVIDER]
+             -> hosted STT                    [Gemini gemini-3.5-flash-lite | Deepgram nova-3 |
+                                               OpenAI whisper-1 | Groq — TRIAGELINE_STT_PROVIDER, auto]
              -> TriageAdapter  (livekit_agent/adapter.py: non-blocking tool tasks, utterance
                                 settling, barge-in)
-                -> ParticipantAgent (agent/agent.py + agent/nlu.py: rule-based, schema-driven
-                   tool selection + argument extraction, epoch-guarded interruption handling,
-                   cancellation, duplicate-action ledger)
+                -> ParticipantAgent (agent/agent.py + agent/nlu.py: schema-driven tool selection +
+                   argument extraction, epoch-guarded interruption handling, cancellation,
+                   duplicate-action ledger) + OPTIONAL schema-validated LLM planner through the
+                   failover chain in agent/providers.py (Gemini -> Cerebras -> OpenRouter -> Mistral)
              -> FDB-v3 mock tools (official mock_apis.py, unmodified)
-             -> hosted TTS                    [OpenAI tts-1/nova | Deepgram aura-2 — TRIAGELINE_TTS_PROVIDER]
+             -> hosted TTS                    [Gemini gemini-3.8-flash-lite-tts (streamed) | Deepgram aura-2 |
+                                               OpenAI tts-1 — TRIAGELINE_TTS_PROVIDER, auto]
 
-The upstream FDB-v3 template (v3/cascaded_agent.py) uses gpt-4o for tool calling. That LLM
-step is replaced here by ParticipantAgent on purpose: every state-changing tool call goes through
-one epoch-tracked, deduplicated path (see docs/ARCHITECTURE.md).
+The upstream FDB-v3 template (v3/cascaded_agent.py) lets gpt-4o call tools directly. Here every
+LLM proposal is validated against the tool schema and every state-changing call goes through one
+epoch-tracked, deduplicated path (see docs/ARCHITECTURE.md).
+
+MODES (TRIAGELINE_MODE):
+  benchmark (default)  FDB-v3 template behaviour: never asks clarifying questions, calls with the
+                       known arguments, no confirmation gate. Auto-dispatched into every room.
+  assistant            phone assistant: asks for missing details, confirms LLM-proposed side effects,
+                       conversational replies. Set TRIAGELINE_AGENT_NAME so the gateway's tokens
+                       dispatch only this worker (explicit dispatch).
 
 Telemetry contract with the official runner (v3/run_tool_benchmark.py):
   /tmp/agent_heartbeat.log   "!!! CASCADED AGENT JOINING ROOM ..." + "LATENCY_TRACK_JSON: {...}"
@@ -76,13 +85,27 @@ from mock_apis import MockAPIRegistry
 
 log = logging.getLogger("triageline.cascaded_agent")
 
-HEARTBEAT = "/tmp/agent_heartbeat.log"
-TOOL_LOG = "/tmp/agent_tool_calls.log"
-SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", "1.6"))          # commit gate (C2)
-MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.5"))  # unfinished-looking turns
-# FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4)
-os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1")
+MODE = os.environ.get("TRIAGELINE_MODE", "benchmark").strip().lower()
+if MODE not in ("benchmark", "assistant"):
+    raise SystemExit("TRIAGELINE_MODE must be benchmark or assistant")
+# The official runner reads these fixed paths; overridable for containers / assistant deployments.
+HEARTBEAT = os.environ.get("TRIAGELINE_HEARTBEAT_LOG", "/tmp/agent_heartbeat.log")
+TOOL_LOG = os.environ.get("TRIAGELINE_TOOL_LOG", "/tmp/agent_tool_calls.log")
+_default_settle = "1.6" if MODE == "benchmark" else "0.9"
+SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", _default_settle))    # commit gate (C2)
+MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.5"))     # unfinished-looking turns
+# FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4).
+# Assistant mode asks and confirms instead.
+os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1" if MODE == "benchmark" else "0")
 BACKCHANNEL = os.environ.get("TRIAGELINE_BACKCHANNEL", "1") == "1"
+# Only backchannel on turns long enough to need processing time (guide penalises excessive fillers).
+BACKCHANNEL_MIN_WORDS = int(os.environ.get("TRIAGELINE_BACKCHANNEL_MIN_WORDS", "6"))
+AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
+
+
+def should_backchannel(transcript: str, busy: bool, already: bool) -> bool:
+    """One short acknowledgement per room, only for substantive turns while nothing else is speaking."""
+    return BACKCHANNEL and not busy and not already and len((transcript or "").split()) >= BACKCHANNEL_MIN_WORDS
 
 
 def _append(path: str, *lines: str) -> None:
@@ -139,6 +162,46 @@ class LatencyTracker:
         return report, f"LATENCY_TRACK_JSON: {json.dumps(metrics)}"
 
 
+class TurnTimeline:
+    """Per-turn and barge-in timing (every turn, not only the first; the official record is unchanged).
+
+    Writes one ``TURN_LATENCY_JSON`` line per event to the heartbeat log:
+      * ``turn``      final transcript -> first agent audio (``response_s``)
+      * ``barge_in``  user speech onset while the agent speaks -> agent audio stopped (``stop_s``)
+    """
+    def __init__(self, room: str):
+        self.room = room
+        self.turn_at = 0.0
+        self.turn_text = ""
+        self.agent_speaking = False
+        self.barge_at = 0.0
+        self.records: list[dict] = []
+
+    def final_transcript(self, text: str) -> None:
+        self.turn_at, self.turn_text = time.time(), (text or "")[:120]
+
+    def user_started(self) -> None:
+        if self.agent_speaking and not self.barge_at:
+            self.barge_at = time.time()
+
+    def agent_state(self, new: str) -> dict | None:
+        now, rec = time.time(), None
+        if new == "speaking":
+            self.agent_speaking = True
+            if self.turn_at:
+                rec = {"type": "turn", "room": self.room, "response_s": round(now - self.turn_at, 3),
+                       "text": self.turn_text, "at": now}
+                self.turn_at = 0.0
+        else:
+            if self.agent_speaking and self.barge_at:
+                rec = {"type": "barge_in", "room": self.room, "stop_s": round(now - self.barge_at, 3), "at": now}
+            self.agent_speaking, self.barge_at = False, 0.0
+        if rec:
+            self.records.append(rec)
+            del self.records[:-200]
+        return rec
+
+
 class CascadedVoiceAgent(Agent):
     def __init__(self) -> None:
         super().__init__(instructions="")
@@ -173,7 +236,9 @@ def prewarm(proc: JobProcess):
 server = AgentServer(setup_fnc=prewarm)
 
 
-@server.rtc_session()
+# agent_name='' keeps LiveKit's automatic dispatch (required by the official benchmark runner);
+# a name switches to explicit dispatch so only tokens carrying RoomConfiguration(agents=[name]) get it.
+@server.rtc_session(agent_name=AGENT_NAME)
 async def entrypoint(ctx: agents.JobContext):
     registry = MockAPIRegistry(latency_profile=LATENCY_PROFILE)
     room_name = ctx.room.name
@@ -182,6 +247,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     vad, stt, tts = build_cascaded_pipeline(getattr(ctx.proc, "userdata", {}).get("vad"))
     tracker = LatencyTracker()
+    timeline = TurnTimeline(room_name)
     session = AgentSession(vad=vad, stt=stt, tts=tts, turn_handling=build_turn_handling())
 
     cancelled: set[str] = set()
@@ -228,17 +294,28 @@ async def entrypoint(ctx: agents.JobContext):
     @session.on("user_input_transcribed")
     def on_user_input(msg: agents.voice.UserInputTranscribedEvent):
         logging.info("STT TRANSCRIPT: '%s' (is_final=%s)", msg.transcript, msg.is_final)
+        if msg.is_final:
+            timeline.final_transcript(msg.transcript)
         if msg.is_final and not tracker.query_received:
             tracker.user_done_at = time.time()    # same anchor as the upstream template
             tracker.query_received = True
-            if BACKCHANNEL and not adapter.busy():
+            if should_backchannel(msg.transcript, adapter.busy(), getattr(tracker, "backchannelled", False)):
+                tracker.backchannelled = True
                 # immediate acknowledgement while the utterance settles (fast path). It is NOT counted
                 # as the first response (B17): latency is stamped on the first substantive line.
                 tracker.backchannel_pending = True
                 session.say("Mm-hm.", allow_interruptions=True, add_to_chat_ctx=False)
 
+    @session.on("user_state_changed")
+    def on_user_state(ev):
+        if getattr(ev, "new_state", None) == "speaking":
+            timeline.user_started()
+
     @session.on("agent_state_changed")
     def on_agent_state(ev: agents.voice.AgentStateChangedEvent):
+        rec = timeline.agent_state(ev.new_state)
+        if rec:
+            asyncio.create_task(append_async(HEARTBEAT, "TURN_LATENCY_JSON: " + json.dumps(rec)))
         # stamp the moment audio actually starts, not when speech was queued (audit B-07)
         if ev.new_state == "speaking" and tracker.query_received and not tracker.agent_start_at:
             if getattr(tracker, "backchannel_pending", False):
@@ -281,7 +358,8 @@ async def entrypoint(ctx: agents.JobContext):
 
     await session.start(room=ctx.room, agent=CascadedVoiceAgent())
     from livekit_agent.speech_providers import describe
-    print(f"!!! TRIAGELINE CASCADED AGENT STARTED: {describe()} !!!")
+    print(f"!!! TRIAGELINE CASCADED AGENT STARTED [{MODE}{', agent_name=' + AGENT_NAME if AGENT_NAME else ''}]: "
+          f"{describe()} !!!")
 
 
 if __name__ == "__main__":

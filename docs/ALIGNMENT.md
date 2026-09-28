@@ -1,3 +1,5 @@
+> **ARCHIVAL** — superseded by docs/SUBMISSION_CHECKLIST.md; paths below may not exist.
+
 # Guideline alignment & audit tracker
 
 This file tracks two things:

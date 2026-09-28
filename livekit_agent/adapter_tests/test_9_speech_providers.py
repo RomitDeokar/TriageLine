@@ -125,3 +125,53 @@ if __name__ == "__main__":
         t()
         print(f"  ok  {t.__name__}")
     print("PASS: test_9_speech_providers")
+
+
+def test_backchannel_only_for_substantive_turns():
+    import importlib, os, sys
+    import pytest
+    pytest.importorskip("livekit.agents")
+    sys.argv = [sys.argv[0]]
+    try:
+        ca = importlib.import_module("livekit_agent.cascaded_agent")
+    except Exception as exc:  # noqa: BLE001 - worker deps (mock_apis) may be absent
+        pytest.skip(f"cascaded_agent not importable here: {exc}")
+    assert not ca.should_backchannel("yes", False, False)
+    assert not ca.should_backchannel("find me flights to chicago on friday please", True, False)
+    assert not ca.should_backchannel("find me flights to chicago on friday please", False, True)
+    assert ca.should_backchannel("find me flights to chicago on friday please", False, False) == ca.BACKCHANNEL
+
+
+def test_triage_prompts_never_claim_real_dispatch():
+    from livekit_agent.triage_brain import _confirmation_prompt
+
+    class R:
+        known_facts = {"location": "Highway 9", "reason": "a fire"}
+        chosen_option = "dispatch_tow"
+    tow = _confirmation_prompt(R())
+    R.chosen_option = "escalate_emergency"
+    emergency = _confirmation_prompt(R())
+    assert "simulated" in tow and "I'll dispatch" not in tow
+    assert "cannot contact emergency services" in emergency and "escalating to emergency services now" not in emergency
+
+
+def test_turn_timeline_records_every_turn_and_barge_in():
+    import importlib, sys
+    import pytest
+    pytest.importorskip("livekit.agents")
+    sys.argv = [sys.argv[0]]
+    try:
+        ca = importlib.import_module("livekit_agent.cascaded_agent")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"cascaded_agent not importable here: {exc}")
+    t = ca.TurnTimeline("r")
+    for _ in range(2):
+        t.final_transcript("book a flight")
+        assert t.agent_state("speaking")["type"] == "turn"
+        t.user_started()
+        rec = t.agent_state("listening")
+        assert rec["type"] == "barge_in" and rec["stop_s"] >= 0
+    assert [r["type"] for r in t.records] == ["turn", "barge_in", "turn", "barge_in"]
+    # speech that was not interrupted produces no barge-in record
+    t.agent_state("speaking")
+    assert t.agent_state("listening") is None

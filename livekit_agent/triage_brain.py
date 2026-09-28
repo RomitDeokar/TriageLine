@@ -120,13 +120,14 @@ def _confirmation_prompt(record) -> str:
     facts = record.known_facts
     if record.chosen_option == "dispatch_tow":
         location = facts.get("location", "your location")
-        return f"I'll dispatch a tow truck to {location}. Should I go ahead?"
+        return (f"I can log a simulated tow request to {location}. This demo does not contact a real "
+                f"tow service. Should I go ahead?")
     if record.chosen_option == "escalate_emergency":
         location = facts.get("location", "your location")
         reason = facts.get("reason", "an emergency")
         return (
-            f"This sounds like an emergency ({reason}) at {location}. "
-            "I'm escalating to emergency services now -- confirm?"
+            f"This sounds like an emergency ({reason}) at {location}. I cannot contact emergency services -- "
+            "please call your local emergency number now. Should I also log a simulated escalation?"
         )
     if record.chosen_option == "close_case":
         return "Sounds good -- should I close out this case?"
@@ -213,7 +214,8 @@ class TriageBrainLLM(LLMProvider):
                 self.pending_action_id = None
                 self.pending_decision_id = None
                 return LLMResponse(
-                    text=f"Confirmed -- {record.action_type.replace('_', ' ')} is finalized.",
+                    text=f"Logged -- simulated {record.action_type.replace('_', ' ')} recorded. "
+                         f"No real service was contacted.",
                     intent="confirm",
                 )
             if kind == DECLINE:

@@ -1,92 +1,132 @@
-"""Mobile token contract, auth isolation, and production route restrictions."""
+"""LiveKit token contract (both paths), backend auth, production route restrictions — on the ASGI app."""
 import base64
-import hashlib
-import hmac
 import json
-import os
-import sys
-import threading
-import urllib.error
-import urllib.request
-from http.server import ThreadingHTTPServer
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "ui"))
+import pytest
+from fastapi.testclient import TestClient
 
-import mobile  # noqa: E402
-import server  # noqa: E402
+from ui import api, mobile
+
+LK = {"LIVEKIT_URL": "wss://example.livekit.cloud", "LIVEKIT_API_KEY": "lk_key", "LIVEKIT_API_SECRET": "lk_secret_" + "s" * 32}
 
 
-def _request(url, method="GET", token=None, origin=None):
-    headers = {}
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    if origin:
-        headers["Origin"] = origin
-    req = urllib.request.Request(url, method=method, data=b"{}" if method == "POST" else None, headers=headers)
-    try:
-        res = urllib.request.urlopen(req, timeout=5)
-    except urllib.error.HTTPError as exc:
-        res = exc
-    with res:
-        return res.status, dict(res.headers), json.loads(res.read())
+def _claims(token):
+    payload = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
-def test_scoped_signed_participant_tokens(monkeypatch):
-    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
-    monkeypatch.setenv("LIVEKIT_API_KEY", "lk_key")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "lk_secret")
-    first, second = mobile.issue_token(), mobile.issue_token()
-    assert first["room"] != second["room"]
+@pytest.fixture
+def lk(monkeypatch):
+    for k, v in LK.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("TRIAGELINE_OFFLINE", "1")
+
+
+def test_scoped_signed_participant_tokens(lk, monkeypatch):
+    first, second = mobile.issue_token("a" * 32), mobile.issue_token("a" * 32)
+    assert first["room"] != second["room"]            # fresh room per call: rejoin gets a new agent job
     assert first["identity"] != second["identity"]
-    assert first["mode"] == "LIVE AUDIO + MOCK TOOLS"
-    header, payload, signature = first["token"].split(".")
-    expected = base64.urlsafe_b64encode(hmac.new(b"lk_secret", (header + "." + payload).encode(), hashlib.sha256).digest()).rstrip(b"=").decode()
-    assert hmac.compare_digest(signature, expected)
-    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-    assert claims["video"]["room"] == first["room"]
-    assert claims["video"]["roomJoin"] is True
-    assert claims["exp"] - claims["iat"] == 600
+    assert first["tools"] == "simulated" and first["expires_in"] == 600
+    c = _claims(first["token"])
+    assert c["video"]["room"] == first["room"] and c["video"]["roomJoin"] is True
+    assert c["video"].get("canPublishSources") == ["microphone"]
+    assert "roomAdmin" not in c["video"] and "roomCreate" not in c["video"]
+    assert c["exp"] - c["nbf"] == 600
+    assert "roomConfig" not in c                        # no agent_name -> automatic dispatch
+    monkeypatch.setenv("TRIAGELINE_AGENT_NAME", "triageline-assistant")
+    c = _claims(mobile.issue_token()["token"])
+    assert c["roomConfig"]["agents"][0]["agentName"] == "triageline-assistant"
 
 
-def test_production_http_auth_and_no_mock_routes(monkeypatch):
+def test_rejects_bad_livekit_urls(monkeypatch):
+    for url in ("", "https://x.example", "wss://user:pw@x.example", "wss://x.example:notaport", "wss://<your-project>"):
+        monkeypatch.setenv("LIVEKIT_URL", url)
+        monkeypatch.setenv("LIVEKIT_API_KEY", "k")
+        monkeypatch.setenv("LIVEKIT_API_SECRET", "s")
+        with pytest.raises(mobile.NotConfigured):
+            mobile.issue_token()
+
+
+def test_backend_token_route_requires_api_key(lk, monkeypatch):
     monkeypatch.setenv("TRIAGELINE_API_KEY", "x" * 36)
-    monkeypatch.setenv("TRIAGELINE_PRODUCTION", "1")
-    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
-    monkeypatch.setenv("LIVEKIT_API_KEY", "lk_key")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "lk_secret")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    base = f"http://127.0.0.1:{httpd.server_address[1]}"
-    try:
-        status, headers, body = _request(base + "/api/mobile/token", "POST", origin="https://evil.example")
-        assert status == 401 and body["code"] == "unauthorized"
-        assert "Access-Control-Allow-Origin" not in headers
-        status, _, body = _request(base + "/api/mobile/token", "POST", "x" * 36)
-        assert status == 201 and body["url"] == "wss://example.livekit.cloud"
-        assert "lk_secret" not in json.dumps(body)
-        for route in ("/api/ready", "/api/run", "/api/live/start", "/api/live/anything/log"):
-            status, _, _ = _request(base + route, "POST", "x" * 36)
-            assert status == 404
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=3)
+    with TestClient(api.create_app()) as c:
+        r = c.post("/api/mobile/token", json={})
+        assert r.status_code == 401 and r.json()["code"] == "unauthorized"
+        r = c.post("/api/mobile/token", json={}, headers={"Authorization": "Bearer " + "y" * 36})
+        assert r.status_code == 401
+        r = c.post("/api/mobile/token", json={}, headers={"Authorization": "Bearer " + "x" * 36})
+        assert r.status_code == 201 and r.json()["url"] == LK["LIVEKIT_URL"]
+        assert LK["LIVEKIT_API_SECRET"] not in r.text
 
 
-def test_unconfigured_mobile_endpoint_does_not_expose_errors(monkeypatch):
+def test_backend_route_disabled_without_api_key(lk):
+    with TestClient(api.create_app()) as c:
+        assert c.post("/api/mobile/token", json={}, headers={"Authorization": "Bearer "}).status_code == 401
+
+
+def test_unconfigured_livekit_does_not_expose_errors(monkeypatch):
     monkeypatch.setenv("TRIAGELINE_API_KEY", "k" * 36)
-    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        status, _, body = _request(f"http://127.0.0.1:{httpd.server_address[1]}/api/mobile/token", "POST", "k" * 36)
-        assert status == 503 and body["code"] == "unavailable"
-        assert "secret" not in json.dumps(body).lower()
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=3)
+    monkeypatch.setenv("TRIAGELINE_OFFLINE", "1")
+    with TestClient(api.create_app()) as c:
+        r = c.post("/api/mobile/token", json={}, headers={"Authorization": "Bearer " + "k" * 36})
+        assert r.status_code == 503 and r.json()["code"] == "unavailable"
+        assert "secret" not in r.text.lower()
+        c.post("/api/auth/login", json={})
+        r = c.post("/api/rtc/token", json={})
+        assert r.status_code == 503
+
+
+def test_rtc_token_for_signed_in_user_is_fresh_per_call(lk):
+    with TestClient(api.create_app()) as c:
+        assert c.post("/api/rtc/token", json={}).status_code == 401
+        c.post("/api/auth/login", json={})
+        a, b = c.post("/api/rtc/token", json={}).json(), c.post("/api/rtc/token", json={}).json()
+        assert a["room"] != b["room"] and a["room"].startswith("triageline-")
+
+
+def test_production_hides_console_and_details(lk, monkeypatch):
+    monkeypatch.setenv("TRIAGELINE_ENV", "production")
+    monkeypatch.setenv("TRIAGELINE_ACCESS_CODE", "invite-code-long-enough")
+    monkeypatch.setenv("TRIAGELINE_SESSION_SECRET", "z" * 40)
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
+    with TestClient(api.create_app()) as c:
+        assert c.get("/api/scenarios").status_code in (404, 405)
+        assert c.post("/api/run", json={}).status_code in (404, 405)
+        r = c.get("/api/ready")
+        assert r.status_code == 200 and "packages" not in r.json() and "assets" not in r.json()
+
+
+def test_production_rejects_short_backend_key(lk, monkeypatch):
+    monkeypatch.setenv("TRIAGELINE_ENV", "production")
+    monkeypatch.setenv("TRIAGELINE_ACCESS_CODE", "invite-code-long-enough")
+    monkeypatch.setenv("TRIAGELINE_SESSION_SECRET", "z" * 40)
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
+    monkeypatch.setenv("TRIAGELINE_API_KEY", "short")
+    with pytest.raises(RuntimeError):
+        api.create_app()
+
+
+def test_console_available_in_development(monkeypatch):
+    monkeypatch.setenv("TRIAGELINE_OFFLINE", "1")
+    with TestClient(api.create_app()) as c:
+        r = c.get("/api/scenarios")
+        assert r.status_code == 200 and len(r.json()) >= 1
+        path = r.json()[0]["path"]
+        r = c.post("/api/run", json={"path": path, "agent": "triageline", "time_scale": 8})
+        assert r.status_code == 200, r.text
+        assert "trace" in r.json()
+        assert c.post("/api/run", json={"path": "../etc/passwd"}).status_code == 400
+        assert c.get("/console").status_code == 200
+
+
+def test_same_origin_behind_tls_proxy_and_cross_origin_rejected(monkeypatch):
+    """Browser sends Origin https://host while the app sees http:// behind the proxy: must be allowed."""
+    monkeypatch.setenv("TRIAGELINE_OFFLINE", "1")
+    with TestClient(api.create_app()) as c:
+        ok = c.post("/api/auth/login", json={}, headers={"Origin": "https://testserver"})
+        assert ok.status_code == 200
+        bad = c.post("/api/auth/login", json={}, headers={"Origin": "https://evil.example"})
+        assert bad.status_code == 403
+        fwd = c.post("/api/auth/login", json={}, headers={"Origin": "https://app.example",
+                                                          "X-Forwarded-Host": "app.example"})
+        assert fwd.status_code == 200

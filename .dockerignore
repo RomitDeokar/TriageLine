@@ -1,0 +1,14 @@
+.git
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.venv*
+ui/node_modules
+live_uploads
+results/20*/
+livekit_agent/.fdb_v3_repo
+livekit_agent/fdb_v3_data_released
+livekit_agent/.env*
+.env
+.env.*
+legacy/ui/node_modules

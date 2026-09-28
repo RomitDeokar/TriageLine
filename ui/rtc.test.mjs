@@ -46,3 +46,15 @@ test('token failures are visible and release connection',async()=>{
 test('old connection cannot overwrite new connection state',async()=>{
  const connect=deferred(),{c,rooms,states}=setup({connect});const first=c.join();await tick();await c.leave();const second=c.join();connect.resolve();await Promise.all([first,second]);assert.equal(rooms[0].enabled,false);assert.equal(rooms[1].enabled,true);assert.equal(states.at(-1).connected,true);await c.leave();
 });
+test('backgrounding pauses the mic and returning resumes it without hanging up',async()=>{
+ const {c,rooms,states}=setup();await c.join();await c.pause();assert.equal(rooms[0].enabled,false);assert.equal(states.at(-1).connected,true);assert.equal(rooms[0].disconnected,0);
+ await c.resume();assert.equal(rooms[0].enabled,true);assert.equal(states.at(-1).muted,false);await c.leave();
+});
+test('resume never re-enables a mic the user muted',async()=>{
+ const {c,rooms}=setup();await c.join();await c.toggleMic();await c.pause();await c.resume();assert.equal(rooms[0].enabled,false);await c.leave();
+});
+test('agent detected by published audio even without ParticipantKind',async()=>{
+ const {c,rooms,messages}=setup();await c.join();
+ rooms[0].remoteParticipants.set('w',{identity:'worker',kind:0,trackPublications:new Map([['a',{kind:'audio'}]])});
+ rooms[0].handlers.ParticipantConnected();assert.match(messages.at(-1),/Voice connected/);await c.leave();
+});

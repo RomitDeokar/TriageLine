@@ -57,7 +57,8 @@ REPAIR_MARKERS = re.compile(
     re.I)
 RETRACTION = re.compile(
     r"\b(never ?mind|forget (?:it|about it|that)|cancel (?:that|it|everything)|don'?t bother|"
-    r"stop(?: that)?|no need|skip it|call it off)\b", re.I)
+    r"stop(?: that)?|no need|skip it|call it off|scratch that|hold off|"
+    r"(?:don'?t|do not) (?:do|book|change|send|submit|go ahead with) (?:that|it|this|anything)(?: after all)?)\b", re.I)
 INTENT_SWITCH = re.compile(r"\b(forget the \w+|different question|something else)\b", re.I)
 GREETING = re.compile(r"\b(hi|hello|hey|what can you (?:do|help)|who are you|help me with)\b", re.I)
 WEEKDAYS = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
@@ -300,7 +301,7 @@ _ORDINAL_SUFFIX = re.compile(r"(\d)(?:st|nd|rd|th)\b", re.I)
 
 def extract_date(text: str) -> Optional[str]:
     """Last date mention (repair-aware by position); calendar dates are returned without the spoken
-    ordinal suffix ("August 20th" -> "August 20"), the canonical form tool schemas expect (A-11)."""
+    ordinal suffix ("March 3rd" -> "March 3"), the canonical form tool schemas expect (A-11)."""
     m = list(DATE_RE.finditer(text or ""))
     if not m:
         return None
@@ -424,7 +425,7 @@ _SPELLED_RE = re.compile(r"(?<![A-Za-z0-9])((?:[A-Za-z0-9][\-\s]){1,15}[A-Za-z0-
 
 
 def spelled_ids(text: str) -> List[str]:
-    """Spoken, character-by-character ids: "A-B-C-1-2-3" -> ABC123, "K-2" -> K2, "D-E-L-I-V" -> DELIV."""
+    """Spoken, character-by-character ids: "Q-R-S-7-6-5" -> QRS765, "K-2" -> K2, "M-N-O-P" -> MNOP."""
     out = []
     for m in _SPELLED_RE.finditer(text or ""):
         raw = m.group(1)
@@ -527,11 +528,11 @@ _SHOP_CUE = re.compile(r"(?i)\b(?:looking for|look for|i want an?|i need an?(?: 
 
 def _shopping_request(text: str) -> bool:
     """An open-vocabulary product request: a shopping cue plus a noun phrase that is not a trip,
-    a place to live, a route or a filter ("looking for a desk", "i want a mechanical keyboard")."""
+    a place to live, a route or a filter ("looking for a desk", "i need a desk lamp")."""
     if not _SHOP_CUE.search(text or ""):
         return False
     if _concepts(tokens(text)) & {"apartment", "flight"}:
-        return False                      # "search for a place with 2 bedrooms ... need a home office"
+        return False                      # "find me a flat with 3 rooms ... and a study"
     q = extract_query(text)
     if re.search(r"(?i)\bsection\b", text or "") and re.search(r"(?i)\b(?:electronics|clothing|kitchen|toys|books|"
                                                                r"sports|home|garden|beauty|grocery)\b", text or ""):
@@ -764,7 +765,7 @@ _BOOL_FILTERS = {"pets_allowed", "parking", "furnished"}
 
 def extract_filters(text: str) -> List[Tuple[str, Any]]:
     """Every (filter_key, value) the user asks to set, in order, self-repair aware per key
-    ("set the max price to 3000 ... actually change the max price to 3500" -> one max_price=3500)."""
+    ("cap it at 2800 ... hmm, make the cap 3100" -> one max_price=3100)."""
     t = text or ""
     low = t.lower()
     found: Dict[str, Tuple[int, Any]] = {}
@@ -1167,9 +1168,9 @@ def _settled_match(regex, text: str):
 
 def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = False) -> Optional[float]:
     """Role-anchored number extraction (A-07): a number is bound to a field only when a unit/keyword of
-    that field is next to it; the value the user settled on wins (\"3 of them -- no wait, just 1\" -> 1)."""
+    that field is next to it; the value the user settled on wins (\"4 of those -- no wait, just 2\" -> 2)."""
     t = re.sub(r"\.{2,}|\u2026", " ", text or "")
-    t = norm(re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|like)\b[,.]*", " ", t))     # "go up... um, to 1600"
+    t = norm(re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|like)\b[,.]*", " ", t))     # "raise it... uh, to 2200"
     t = re.sub(r"(?i)\b(add|put|get|order|buy|want|make it)\s*,\s*", r"\1 ", t)    # "add, like, 2" (B6)
     t = re.sub(r"\s*,\s*(?=\d)", " ", t) if re.search(r"(?i)\b(add|buy|order)\b", t) else t
     for w, n in WORD_NUM.items():
@@ -1349,7 +1350,7 @@ def _join_spelled(seq: List[str]) -> Optional[str]:
 
 def normalize_spoken_ids(text: str) -> str:
     """Collapse a spoken alphanumeric id after an id cue into one token:
-    "order number is x, y, z, eight, eight" -> "order number is XYZ88"; "item P five two" -> "item P52";
+    "order number is k, l, m, four, five" -> "order number is KLM45"; "item P five two" -> "item P52";
     "double five" -> "55"; NATO letters ("Kilo two") -> K2. Only runs after an id cue word."""
     if not text:
         return text
