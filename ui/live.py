@@ -63,6 +63,10 @@ class ToolAdapter:
 class LiveSession:
     def __init__(self, sid: str):
         self.sid = sid
+        self.upload_lock = threading.RLock()
+        self.upload_bytes = 0
+        self.input_count = 0
+        self.init_error = None
         self.created = self.touched = time.time()
         self.out: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=500)
         self.log: list = []
@@ -77,15 +81,24 @@ class LiveSession:
         os.makedirs(self.dir, exist_ok=True)
         self.thread = threading.Thread(target=self._main, daemon=True)
         self.thread.start()
-        self.ready.wait(5)
+        if not self.ready.wait(5) or self.init_error:
+            self.close()
+            raise RuntimeError("session initialization failed")
 
     # ------------------------------------------------------------ loop thread
     def _main(self):
         asyncio.set_event_loop(self.loop)
         self.in_q: asyncio.Queue = asyncio.Queue()
         self.out_q: asyncio.Queue = asyncio.Queue()
-        self.agent = ParticipantAgent(self.in_q, self.out_q, live=True)
-        self.tools = ToolAdapter(self.sid)
+        self.t0 = time.monotonic()
+        try:
+            self.agent = ParticipantAgent(self.in_q, self.out_q, live=True)
+            self.tools = ToolAdapter(self.sid)
+        except Exception as exc:
+            self.init_error = type(exc).__name__
+            self.ready.set()
+            self.loop.close()
+            return
         self.pending: Dict[str, asyncio.Task] = {}
         self.t0 = time.monotonic()
         self.loop.create_task(self.agent.run())
@@ -187,6 +200,11 @@ class LiveSession:
 
     # ------------------------------------------------------------ API (HTTP threads)
     def push(self, ev: Dict[str, Any]):
+        if self.closed:
+            raise ValueError("session is closed")
+        if self.input_count >= 500:
+            raise ValueError("session input limit reached; start a new session")
+        self.input_count += 1
         self.touched = time.time()
         self.loop.call_soon_threadsafe(self.in_q.put_nowait, ev)
 
@@ -205,10 +223,22 @@ class LiveSession:
         self.push({"event_type": et, "payload": payload})
         return et
 
+    def interrupt(self):
+        self.push({"event_type": "speech_started", "payload": {}})
+        self.emit("interrupted")
+
     def _save(self, b64: str, ext: str) -> str:
+        with self.upload_lock:
+            if self.closed:
+                raise ValueError("session is closed")
+            return self._save_locked(b64, ext)
+
+    def _save_locked(self, b64: str, ext: str) -> str:
         """Decode, validate and store one upload. Content is checked, not the client's claim (audit §7):
         images must decode with Pillow and are re-encoded as JPEG; audio must carry a WebM/Ogg/WAV/MP4
         container signature."""
+        if len(b64) > MAX_UPLOAD * 4 // 3 + 128:
+            raise ValueError("upload too large")
         try:
             raw = base64.b64decode(b64.split(",", 1)[-1], validate=True)
         except (ValueError, binascii.Error) as e:
@@ -221,6 +251,11 @@ class LiveSession:
             raw = _validated_jpeg(raw)
         elif not _looks_like_audio(raw):
             raise ValueError("unsupported audio format (expected webm/ogg/wav/mp4)")
+        if self.frame_n >= 100 or self.upload_bytes + len(raw) > 30 * 1024 * 1024:
+            raise ValueError("session upload limit reached; start a new session")
+        self.upload_bytes += len(raw)
+        if ext == "webm":
+            ext = "ogg" if raw.startswith(b"OggS") else "wav" if raw.startswith(b"RIFF") else "mp4" if raw[4:8] == b"ftyp" else "webm"
         self.frame_n += 1
         name = f"{ext}_{self.frame_n:04d}.{ext}"
         path = os.path.join(self.dir, name)
@@ -243,7 +278,7 @@ class LiveSession:
         # user_audio_chunk, so word confidences, alternative decodes, utterance ordering (version) and
         # the clarification gate before side effects all apply exactly as in the evaluated path.
         self.emit("user", text="[voice clip]", as_="user_audio_chunk")
-        self.push({"event_type": "user_audio_chunk", "payload": {"audio_ref": ref, "end_of_turn": True}})
+        self.push({"event_type": "user_audio_chunk", "payload": {"audio_ref": ref, "end_of_turn": True, "interrupted": speaking or self.busy()}})
         return ref
 
     def close(self):
@@ -252,7 +287,8 @@ class LiveSession:
         self.emit("closed")
         self.closed = True
         # uploads (camera frames / voice clips) never outlive the session (audit §7)
-        shutil.rmtree(self.dir, ignore_errors=True)
+        with self.upload_lock:
+            shutil.rmtree(self.dir, ignore_errors=True)
 
         try:
             self.loop.call_soon_threadsafe(self.loop.stop)
@@ -265,7 +301,7 @@ _AUDIO_MAGIC = (b"\x1a\x45\xdf\xa3",  # WebM / Matroska (MediaRecorder default)
 
 
 def _looks_like_audio(raw: bytes) -> bool:
-    return raw.startswith(_AUDIO_MAGIC) or raw[4:8] == b"ftyp"   # MP4/M4A (Safari)
+    return raw.startswith(_AUDIO_MAGIC[:2]) or (raw.startswith(b"RIFF") and raw[8:12] == b"WAVE") or raw[4:8] == b"ftyp"   # MP4/M4A (Safari)
 
 
 def _validated_jpeg(raw: bytes) -> bytes:
@@ -277,9 +313,12 @@ def _validated_jpeg(raw: bytes) -> bytes:
     Image.MAX_IMAGE_PIXELS = 40_000_000
     try:
         with Image.open(io.BytesIO(raw)) as im:
+            if im.width * im.height > 16_000_000:
+                raise ValueError("image dimensions exceed limit")
             im.verify()
         with Image.open(io.BytesIO(raw)) as im:
             buf = io.BytesIO()
+            im.thumbnail((1920, 1920))
             im.convert("RGB").save(buf, "JPEG", quality=88)
             return buf.getvalue()
     except Exception as e:  # noqa: BLE001 - any decoder error means "not an image we accept"

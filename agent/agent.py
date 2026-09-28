@@ -140,9 +140,11 @@ class ParticipantAgent:
         self.last_turn = ""
         self.last_api: Optional[str] = None
         self.planner_pending: Optional[Dict[str, Any]] = None
+        self.chat_history: list[str] = []
         self._planner_skip = False
         self.answered = False
         self.tasks: set = set()
+        self.read_results: dict = {}
         self.read_keys: set = set()                       # op keys of read-only calls already issued (C3)
         self.last_done: Optional[Dict[str, Any]] = None   # last completed read-only call (B3)
         # vision: bounded, latest-frame-wins
@@ -176,6 +178,7 @@ class ParticipantAgent:
     def note(self, code: str, detail: str = "", **kw):
         """Structured diagnostics: subsystem + code, never the user's transcript."""
         self.diag.append({"code": code, "detail": detail[:200], **kw})
+        del self.diag[:-200]
 
     def spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -222,14 +225,22 @@ class ParticipantAgent:
                 turn, self.buffer = nlu.normalize_asr(nlu.norm(" ".join(self.buffer))), []
                 self.turn_fillers = 0
                 await self.on_turn(turn)
+        elif et == "speech_started":
+            # Stop obsolete work at voice onset, before slow ASR returns any text.
+            clarification = self.pending_clarify
+            await self.cancel_where(lambda c: True)
+            self.invalidate()
+            self.pending_clarify = clarification
         elif et == "user_audio_chunk":
+            if p.get("interrupted"):
+                await self.dispatch({"event_type": "speech_started"})
             # streaming ASR: each clip starts transcribing the moment it arrives
             self.audio_parts.append(self.spawn(asyncio.to_thread(P.transcribe, p.get("audio_ref"), self.vocab_prompt())))
             if p.get("end_of_turn"):
                 jobs, self.audio_parts = self.audio_parts, []
                 self.turn_fillers = 0
                 await self.say("filler_speech", "Mm-hm, one second." if self.pending_clarify is None else "Got it.")
-                self.spawn(self._await_asr(jobs, self.version))
+                self.spawn(self._await_asr(jobs, self.version, bool(p.get("interrupted"))))
         elif et == "video_frame":
             self.on_frame(p)
         elif et == "interruption":
@@ -260,6 +271,10 @@ class ParticipantAgent:
                 return self.note("stale_planner_dropped")
             self.planner_pending = None
             calls = llm_planner.validate(p["calls"], self.tools)
+            if not calls and p.get("reply"):
+                self.chat_history = (self.chat_history + [pending["turn"], p["reply"]])[-6:]
+                await self.say("final_response", p["reply"])
+                return
             if not calls:
                 self._planner_skip = True
                 try:
@@ -282,7 +297,7 @@ class ParticipantAgent:
         elif kind == "asr_done":
             if p["version"] != self.version:
                 return self.note("stale_asr_dropped")
-            await self.on_audio_result(p["results"])
+            await self.on_audio_result(p["results"], p.get("interrupted", False))
         elif kind == "vision_done":
             if p["frame_seq"] == self.frame_seq:
                 self.vision = {**(p["vis"] or {}), "frame_seq": p["frame_seq"]}
@@ -372,7 +387,7 @@ class ParticipantAgent:
             rk = self.op_key(api, args)
             if retries == 0 and rk in self.read_keys:
                 self.note("duplicate_read_suppressed", api)
-                prev = next((r for a, r in reversed(self.results) if a == api), None)
+                prev = self.read_results.get(rk)
                 if not any(c["api"] == api for c in self.inflight.values()):
                     await self.say("filler_speech", "Same request as before —")
                     if prev is not None:
@@ -398,6 +413,7 @@ class ParticipantAgent:
             if pred(c):
                 await self.out_q.put({"action": "cancel_tool", "payload": {"call_id": cid}})
                 self.inflight.pop(cid, None)
+                self.read_keys.discard(self.op_key(c["api"], c["args"]))
                 rec = self.ledger.for_call(cid)
                 if rec is not None:
                     # cancelling the local task does not prove the side effect was rolled back (R03):
@@ -456,14 +472,14 @@ class ParticipantAgent:
         topics = [n.replace("_", " ") for n in list(self.tools)[:6]]
         return "Voice assistant: " + ", ".join(topics) + "." if topics else ""
 
-    async def _await_asr(self, jobs: List[asyncio.Task], version: int):
+    async def _await_asr(self, jobs: List[asyncio.Task], version: int, interrupted: bool = False):
         try:
             results = await asyncio.gather(*jobs)
         except asyncio.CancelledError:
             return
-        await self.post("asr_done", results=results, version=version)
+        await self.post("asr_done", results=results, version=version, interrupted=interrupted)
 
-    async def on_audio_result(self, results: List[Dict[str, Any]]):
+    async def on_audio_result(self, results: List[Dict[str, Any]], interrupted: bool = False):
         text = nlu.norm(" ".join(r["text"] for r in results))
         words = [w for r in results for w in r["words"]]
         if not text:
@@ -504,7 +520,10 @@ class ParticipantAgent:
                                     "api": None, "args": {}, "version": self.version}
             await self.say("clarification_request", f"Just to confirm — is the passenger name {name}?")
             return
-        await self.on_turn(text, from_audio=True)
+        if interrupted:
+            await self.on_interruption(text)
+        else:
+            await self.on_turn(text, from_audio=True)
 
     # ------------------------------------------------------------------ turns
     async def on_turn(self, turn: str, from_audio: bool = False, _clause: bool = False):
@@ -1135,13 +1154,19 @@ class ParticipantAgent:
         history = [json.dumps({"tool": api, "result": result}) for api, result in self.results[-3:]]
         await self.say("filler_speech", "Let me check that request.")
 
+        conversation = self.live and prefer is None and not BENCHMARK_POLICY
+        chat_history = list(self.chat_history)
+
         async def work():
+            answer = None
             try:
                 calls = await asyncio.to_thread(llm_planner.plan, turn, tools, history)
+                if not calls and conversation and ver == self.version:
+                    answer = await asyncio.to_thread(llm_planner.reply, turn, chat_history + history)
             except Exception as exc:
                 self.note("planner_failed", type(exc).__name__)
                 calls = []
-            await self.post("planner_done", token=token, version=ver, calls=calls)
+            await self.post("planner_done", token=token, version=ver, calls=calls, reply=answer)
 
         self.spawn(work())
         return True
@@ -1495,12 +1520,16 @@ class ParticipantAgent:
         if p.get("status") != "error" and self.still_valid(c):
             self.results = (self.results + [(api, res)])[-10:]
             if kind == "read_only":
+                self.read_results[self.op_key(api, c["args"])] = res
                 self.last_done = {"api": api, "args": dict(c["args"]), "deps": c["deps"]}
         op = self.ledger.for_call(cid)
         is_err = p.get("status") == "error"
+        if is_err and kind == "read_only":
+            self.read_keys.discard(self.op_key(api, c["args"]))
 
         # ---- state-modifying outcome bookkeeping (R03/R04/R16) happens before any validity check
         if op is not None:
+            self.read_results.clear()
             self.read_keys.clear()        # world state changed: an identical read may now differ (C3)
             if is_err:
                 err = res.get("error", "error")
