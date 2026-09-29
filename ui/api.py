@@ -38,8 +38,18 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / "livekit_agent/.env.local")
-load_dotenv(ROOT / ".env")
+# Exported process values override both files; the gateway's root .env takes priority over
+# worker-only settings in livekit_agent/.env.local (same order as scripts/check_providers.py).
+_PRESET_ACCESS_CODE = "TRIAGELINE_ACCESS_CODE" in os.environ
+
+
+def load_gateway_env(root: Path = ROOT) -> None:
+    """Load gateway settings first, then use worker settings only as fallback."""
+    load_dotenv(root / ".env")
+    load_dotenv(root / "livekit_agent/.env.local")
+
+
+load_gateway_env()
 from ui import live, mobile  # noqa: E402
 
 log = logging.getLogger("triageline.api")
@@ -91,13 +101,28 @@ class RateLimit:
             self.windows.popitem(last=False)
 
 
+def report_access_code(code: str) -> None:
+    """Print where the access code came from and a non-secret fingerprint (length + last char) so an
+    operator can see why a login is rejected without the code ever being logged."""
+    if not code:
+        print("[auth] TRIAGELINE_ACCESS_CODE is empty: sign-in needs no code", flush=True)
+        return
+    source = "the process environment (overrides .env files)" if _PRESET_ACCESS_CODE else ".env / livekit_agent/.env.local"
+    print(f"[auth] access code loaded from {source}: {len(code)} chars, ends with {code[-1]!r}", flush=True)
+    if " #" in code or code.startswith(("'", '"')) or code.endswith(("'", '"')):
+        print("[auth] WARNING: the access code contains ' #' or quotes. Your env loader kept an inline comment or "
+              "quotes as part of the value. Put the code alone on its line: TRIAGELINE_ACCESS_CODE=yourcode", flush=True)
+
+
 def create_app() -> FastAPI:
     environment = os.getenv("TRIAGELINE_ENV", "development")
     if environment not in {"development", "production"}:
         raise RuntimeError("TRIAGELINE_ENV must be development or production")
     # Fail closed when an operator reuses the older server's production flag.
     production = environment == "production" or os.getenv("TRIAGELINE_PRODUCTION") == "1"
-    access_code = os.getenv("TRIAGELINE_ACCESS_CODE", "")
+    # Surrounding whitespace is never part of a code (copy/paste, CRLF files, "KEY=value   " lines).
+    access_code = os.getenv("TRIAGELINE_ACCESS_CODE", "").strip()
+    report_access_code(access_code)
     secret = os.getenv("TRIAGELINE_SESSION_SECRET", "") or secrets.token_hex(32)
     origins = [x.strip().rstrip("/") for x in os.getenv("CORS_ORIGINS", "").split(",") if x.strip()]
     hosts = [x.strip() for x in os.getenv("ALLOWED_HOSTS", "").split(",") if x.strip()]
@@ -279,7 +304,7 @@ def create_app() -> FastAPI:
     @app.post("/api/auth/login")
     async def login(body: Login, request: Request):
         limiter.check(("login", client_ip(request)), 10)
-        if access_code and not hmac.compare_digest(body.access_code.encode(), access_code.encode()):
+        if access_code and not hmac.compare_digest(body.access_code.strip().encode(), access_code.encode()):
             raise HTTPException(401, "Invalid access code")
         token = issue(secrets.token_hex(16))
         response = JSONResponse({"access_token": token, "token_type": "Bearer", "expires_in": TOKEN_TTL})
