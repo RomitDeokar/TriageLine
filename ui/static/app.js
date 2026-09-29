@@ -2,7 +2,7 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let SCEN = [], SEL = null, AGENT = "triageline";
 let activeModFilter = "all", searchQuery = "";
@@ -10,7 +10,8 @@ const lastScores = {};
 let currentTrace = null, currentTraceEnd = 0, currentPlayTimer = null, currentPlaySpeed = 1;
 
 // ---------------------------------------------------------------- Theme Switcher
-const savedTheme = localStorage.getItem("tl_theme") || "light";
+let savedTheme = "light";
+try { savedTheme = localStorage.getItem("tl_theme") || "light"; } catch (_) { /* storage blocked */ }
 document.documentElement.setAttribute("data-theme", savedTheme);
 updateThemeUI(savedTheme);
 
@@ -20,14 +21,14 @@ if (themeToggleBtn) {
     const cur = document.documentElement.getAttribute("data-theme");
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("tl_theme", next);
+    try { localStorage.setItem("tl_theme", next); } catch (_) { /* storage blocked */ }
     updateThemeUI(next);
   };
 }
 
 function updateThemeUI(theme) {
   const lbl = $("#theme-label");
-  if (lbl) lbl.textContent = theme === "dark" ? "Dark" : "Light";
+  if (lbl) lbl.textContent = theme === "dark" ? "Light" : "Dark";
 }
 
 // ---------------------------------------------------------------- Navigation Tabs
@@ -57,8 +58,10 @@ async function api(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   } : {});
-  const j = await r.json();
-  if (j.error) throw new Error(j.error);
+  let j;
+  try { j = await r.json(); }
+  catch (_) { throw new Error(`server returned ${r.status} ${r.statusText || ""}`.trim()); }
+  if (!r.ok || j.error) throw new Error(j.error || `server returned ${r.status}`);
   return j;
 }
 
@@ -110,8 +113,8 @@ function renderScenarioList() {
         <div class="tags-row">
           <span class="tag mod-${mod}">${esc(s.modality || "text")}</span>
           <span class="tag diff-${diff}">${esc(s.difficulty || "L1")}</span>
-          ${s.path && s.path.includes("extra") ? '<span class="tag">EXTRA</span>' : ""}
-          ${hasMissing ? '<span class="media-warn">⚠ Missing Media</span>' : ""}
+          ${s.path && s.path.includes("extra") ? '<span class="tag">extra</span>' : ""}
+          ${hasMissing ? '<span class="media-warn">media missing</span>' : ""}
         </div>
         <span class="sc ${scoreClass}" id="sc-${i}">${scoreVal !== "" ? scoreVal : "—"}</span>
       </li>`;
@@ -149,17 +152,17 @@ function select(i) {
 
   $("#sc-title").textContent = SEL.id;
   $("#sc-meta").innerHTML = `
-    <span>${esc(SEL.modality || "text").toUpperCase()}</span>
+    <span>${esc(SEL.modality || "text")}</span>
     <span class="dot-sep">·</span>
-    <span>DIFFICULTY ${esc(SEL.difficulty || "L1")}</span>
+    <span>difficulty ${esc(SEL.difficulty || "L1")}</span>
     <span class="dot-sep">·</span>
-    <span>${SEL.events ? SEL.events.length : 0} TIMED EVENTS</span>
-    ${SEL.path && SEL.path.includes("extra") ? '<span class="dot-sep">·</span><span>EXTRA TEST</span>' : ""}
+    <span>${SEL.events ? SEL.events.length : 0} timed events</span>
+    ${SEL.path && SEL.path.includes("extra") ? '<span class="dot-sep">·</span><span>extra</span>' : ""}
   `;
 
-  let desc = SEL.description || "Official evaluation scenario with ground truth scoring metrics.";
+  let desc = SEL.description || "A bundled practice scenario with a scored ground truth.";
   if (SEL.missing_media && SEL.missing_media.length) {
-    desc += `<span class="warn-inline">⚠ Missing bundled media file(s): ${esc(SEL.missing_media.join(", "))}. Agent will engage fallback.</span>`;
+    desc += `<span class="warn-inline">Missing media: ${esc(SEL.missing_media.join(", "))}. The agent will fall back without it.</span>`;
   }
   $("#sc-desc").innerHTML = desc;
   $("#run-btn").disabled = false;
@@ -186,7 +189,7 @@ $("#run-btn").onclick = async () => {
   btn.classList.add("busy");
   btn.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-    <span>Executing…</span>`;
+    <span>Running…</span>`;
   btn.disabled = true;
 
   try {
@@ -281,7 +284,7 @@ function parseTrace(trace) {
       if (c) { c.t1 = t; c.st = e.status === "success" ? "ok" : "err"; c.res = e.result; }
       rows.push({
         id: `r-${idx}`, t, who: "tool result", cls: "tool",
-        msg: `<code>${esc(e.api_name)}</code> ${e.status === "success" ? '<span style="color:var(--slow)">✓ Success</span>' : '<span style="color:var(--cancel)">✕ Failed</span>'} <span class="muted">${esc(shortArgs(e.result, 100))}</span>`
+        msg: `<code>${esc(e.api_name)}</code> ${e.status === "success" ? '<span style="color:var(--slow)">ok</span>' : '<span style="color:var(--cancel)">failed</span>'} <span class="muted">${esc(shortArgs(e.result, 100))}</span>`
       });
     } else if (e.kind === "tool_cancelled" || e.kind === "cancel_noop") {
       const c = calls[e.call_id];
@@ -289,7 +292,7 @@ function parseTrace(trace) {
       rows.push({
         id: `r-${idx}`, t, who: "cancel", cls: "cancel",
         msg: `<code>${esc(e.call_id)}</code> ${c ? esc(c.api) : ""} <span class="muted">${
-          e.kind === "tool_cancelled" ? "Cancelled mid-flight (aborted on interrupt)" : "Cancel requested (call had already completed)"
+          e.kind === "tool_cancelled" ? "cancelled mid-flight" : "cancel arrived after it finished"
         }</span>`
       });
     } else if (e.kind === "tool_abandoned") {
@@ -351,7 +354,7 @@ function renderAll(res, tlSel, trSel) {
   });
 
   const slowLanes = (lanes.length ? lanes : [0]).map((_, L) =>
-    lane(L === 0 ? "Slow Tools" : "", calls.filter((c) => c._lane === L).map((c) => c._html).join(""))
+    lane(L === 0 ? "tools" : "", calls.filter((c) => c._lane === L).map((c) => c._html).join(""))
   );
 
   const ticks = [];
@@ -370,19 +373,19 @@ function renderAll(res, tlSel, trSel) {
   tl.innerHTML = `
     <div id="scrubber-needle" class="scrubber-needle hidden" style="left:110px"></div>
     ${vlines}
-    ${lane("User Input", marks.filter((m) => m.lane === "user").map(mk).join(""))}
-    ${lane("Fast Reflex", marks.filter((m) => m.lane === "fast").map(mk).join(""))}
+    ${lane("caller", marks.filter((m) => m.lane === "user").map(mk).join(""))}
+    ${lane("fast path", marks.filter((m) => m.lane === "fast").map(mk).join(""))}
     ${slowLanes.join("")}
-    ${lane("Assistant", marks.filter((m) => m.lane === "answer").map(mk).join(""))}
+    ${lane("answer", marks.filter((m) => m.lane === "answer").map(mk).join(""))}
     <div class="axis"><div></div><div class="track">${ticks.join("")}</div></div>
     <div class="legend">
-       <span><i style="background:var(--user)"></i>User Speech</span>
-       <span><i style="background:var(--cancel);border-radius:2px;transform:rotate(45deg)"></i>Barge-in Interrupt</span>
-       <span><i style="background:var(--fast)"></i>Fast Filler (&lt;5ms)</span>
-       <span><i style="background:var(--clar)"></i>Clarification</span>
-       <span><i style="background:var(--slow);border-radius:2px"></i>Active Tool</span>
-       <span><i style="background:var(--cancel);border-radius:2px"></i>Cancelled Tool</span>
-       <span><i style="background:var(--ink)"></i>Final Response</span>
+       <span><i style="background:var(--user)"></i>caller</span>
+       <span><i style="background:var(--cancel);border-radius:1px;transform:rotate(45deg)"></i>barge-in</span>
+       <span><i style="background:var(--fast)"></i>quick acknowledgement</span>
+       <span><i style="background:var(--clar)"></i>question back</span>
+       <span><i style="background:var(--slow);border-radius:1px;height:4px"></i>tool running</span>
+       <span><i style="background:repeating-linear-gradient(135deg,var(--cancel) 0 2px,transparent 2px 4px);border-radius:1px;box-shadow:inset 0 0 0 1px var(--cancel)"></i>tool cancelled</span>
+       <span><i style="background:var(--bg);box-shadow:inset 0 0 0 2px var(--ink)"></i>final answer</span>
     </div>`;
 
   const trContainer = $(trSel);
@@ -480,7 +483,7 @@ function updatePlayBtn(isPlaying) {
   } else {
     playBtn.innerHTML = `
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      <span id="tl-play-text">Play Replay</span>`;
+      <span id="tl-play-text">Replay</span>`;
   }
 }
 
@@ -531,7 +534,7 @@ function renderScore(s, res) {
   const cfg = (res && res.config) || {}, st = (res && res.status) || {};
   const warnings = [];
 
-  if (!cfg.official) warnings.push(`Development Preview (${cfg.time_scale}× speed) — Virtual clock accelerated`);
+  if (!cfg.official) warnings.push(`Preview at ${cfg.time_scale}× — the clock is sped up, so latency is not scored like the official run`);
   if (st.missing_media && st.missing_media.length) warnings.push("Missing input media files: " + st.missing_media.join(", "));
   if (st.runner_stopped_with_pending_calls && st.runner_stopped_with_pending_calls.length) {
     warnings.push("Runner halted with uncancelled pending calls: " + st.runner_stopped_with_pending_calls.join(", "));
@@ -554,57 +557,57 @@ function renderScore(s, res) {
 
   const totalScore = s.total;
   let scoreTag = "score-tag good";
-  let scoreVerdict = "PASSED";
+  let scoreVerdict = "mostly right";
   if (totalScore >= 98) {
     scoreTag = "score-tag perfect";
-    scoreVerdict = "OPTIMAL COMPLIANCE";
+    scoreVerdict = "clean run";
   } else if (totalScore < 60) {
     scoreTag = "score-tag fail";
-    scoreVerdict = "DEFICIENT";
+    scoreVerdict = "failed — see the checks";
   } else if (totalScore < 85) {
     scoreTag = "score-tag partial";
-    scoreVerdict = "PARTIAL RESOLUTION";
+    scoreVerdict = "partly right";
   }
 
   strip.innerHTML = `
     <div class="total">
-      <div class="k">Evaluation Result</div>
+      <div class="k">score</div>
       <div class="v">${s.total.toFixed(1)} <span class="denom">/ 100</span></div>
       <span class="${scoreTag}">${scoreVerdict}</span>
     </div>
-    ${cell("Task Execution", b.task)}
-    ${cell("Interrupt Recovery", b.recovery)}
-    ${cell("Latency Overhead", b.latency)}
-    ${cell("Safety & State", b.safety)}
+    ${cell("task", b.task)}
+    ${cell("recovery", b.recovery)}
+    ${cell("latency", b.latency)}
+    ${cell("safety", b.safety)}
   `;
 
   // Render Checkpoints
   const out = [];
   if (b.task) {
-    out.push(group("Task Completion & Tool Grounding", b.task.detail.checkpoints.map((c) =>
+    out.push(group("Task and tool grounding", b.task.detail.checkpoints.map((c) =>
       ck(c.passed, c.id, `weight ${c.weight}`, c.note)
     )));
   }
   if (b.recovery) {
-    out.push(group("Interruption Handling & Recovery", b.recovery.detail.checks.map((c) =>
+    out.push(group("Interruption and recovery", b.recovery.detail.checks.map((c) =>
       ck(c.passed, c.check, "", c.note)
     )));
   }
   if (b.latency) {
-    out.push(group("Latency Constraints & Responsiveness", b.latency.detail.responses.map((r) =>
+    out.push(group("Latency", b.latency.detail.responses.map((r) =>
       ck(r.fraction >= 0.99, `Event #${r.event_index}`, r.delta_ms == null ? "No reply issued" : `${Math.round(r.delta_ms)} ms response`, "")
     )));
   }
   if (b.safety) {
-    out.push(group("Safety, Fillers & Idempotency", b.safety.detail.notes.map((n) =>
-      ck(n === "clean", n === "clean" ? "Clean execution (No violations)" : n, "", "")
+    out.push(group("Safety, fillers, duplicates", b.safety.detail.notes.map((n) =>
+      ck(n === "clean", n === "clean" ? "No violations" : n, "", "")
     )));
   }
 
-  const warnHtml = warnings.map((w) => `<div class="warn-box">⚠ ${esc(w)}</div>`).join("");
+  const warnHtml = warnings.map((w) => `<div class="warn-box">${esc(w)}</div>`).join("");
   box.innerHTML = `
-    <div style="margin-bottom:12px;font-size:12px;color:var(--muted);font-family:var(--font-mono)">
-      Configuration: ${esc(cfg.agent)} · ${cfg.time_scale}× scale · tail ${cfg.tail_ms}ms ${cfg.official ? "(Official Scorer Standard)" : ""}
+    <div style="margin-bottom:18px;font-size:11.5px;color:var(--muted);font-family:var(--font-mono)">
+      ${esc(cfg.agent)} · ${esc(cfg.time_scale)}× · ${esc(cfg.tail_ms)} ms tail${cfg.official ? " · scored timing" : ""}
     </div>
     ${warnHtml}
     ${out.join("")}
@@ -665,7 +668,7 @@ if (copyBtn) {
 
     navigator.clipboard.writeText(text).then(() => {
       const orig = copyBtn.textContent;
-      copyBtn.textContent = "Copied!";
+      copyBtn.textContent = "Copied";
       setTimeout(() => copyBtn.textContent = orig, 1800);
     });
   };
@@ -722,7 +725,7 @@ $("#c-run").onclick = async () => {
   btn.classList.add("busy");
   btn.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-    <span>Executing…</span>`;
+    <span>Running…</span>`;
   btn.disabled = true;
 
   const utt = $("#c-utt").value.trim();
@@ -774,7 +777,7 @@ $("#c-run").onclick = async () => {
   btn.classList.remove("busy");
   btn.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-    <span>Run conversation</span>`;
+    <span>Run it</span>`;
   btn.disabled = false;
 };
 
@@ -800,10 +803,10 @@ $("#suite-btn").onclick = async () => {
   for (let i = 0; i < SCEN.length; i++) {
     btn.innerHTML = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      <span>Running ${i + 1} of ${SCEN.length}…</span>`;
+      <span>${i + 1} of ${SCEN.length}…</span>`;
     const row = $("#r" + i);
     if (!row) continue;
-    row.style.backgroundColor = "var(--surface-subtle)";
+    row.style.backgroundColor = "var(--brand-light)";
 
     try {
       const [b, t] = await Promise.all([
@@ -813,7 +816,7 @@ $("#suite-btn").onclick = async () => {
 
       if ((t.status?.missing_media || []).length) {
         sums.missing++;
-        $(".id", row).innerHTML += ' <span class="media-warn" style="font-size:10px">(Missing Media)</span>';
+        $(".id", row).innerHTML += ' <span class="media-warn">media missing</span>';
       }
 
       const bs = b.score?.total ?? 0;
@@ -856,7 +859,7 @@ $("#suite-btn").onclick = async () => {
     }
   }
 
-  const note = `${SCEN.length} attempted · ${sums.n} evaluated · ${sums.fail} failed · ${sums.missing} missing media · 1× official standard`;
+  const note = `${SCEN.length} attempted · ${sums.n} evaluated · ${sums.fail} failed · ${sums.missing} missing media · 1× scored timing`;
   if (!sums.n) {
     tf.innerHTML = `<tr><td colspan="6" class="neg">No completed benchmark runs. ${note}</td></tr>`;
   } else {
@@ -865,7 +868,7 @@ $("#suite-btn").onclick = async () => {
     const d = mt - mb;
     tf.innerHTML = `
       <tr>
-        <td><strong>Aggregate Mean Performance</strong></td>
+        <td><strong>Mean</strong></td>
         <td></td>
         <td class="num">${mb.toFixed(1)}</td>
         <td class="num">${mt.toFixed(1)}</td>
@@ -878,7 +881,7 @@ $("#suite-btn").onclick = async () => {
 
   btn.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-    <span>Run all scenarios</span>`;
+    <span>Run all</span>`;
   btn.disabled = false;
 };
 

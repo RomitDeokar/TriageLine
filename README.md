@@ -2,17 +2,19 @@
 
 > **Submission status and remaining steps: [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).** Run the app with `python -m ui` (or `docker compose up`). Scores in this README predating 2026-09-28 are diagnostics, not the live judged FDB-v3 score.
 
-## Quick start (verified 2026-09-26)
+## Quick start (verified 2026-09-29)
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-fdb.txt pytest
 # 1) Key-free: live assistant with mock tools (rules planner, no hosted calls)
-.venv/bin/python ui/server.py --offline          # http://localhost:8080/live.html
-# 2) Gemini (recommended): put GEMINI_API_KEY + LIVEKIT_URL/_API_KEY/_API_SECRET in livekit_agent/.env.local
-.venv/bin/python ui/server.py                    # browser app: Gemini planner + Gemini STT
+.venv/bin/pip install -r requirements-app.txt
+.venv/bin/python -m ui --offline                 # http://localhost:8080  (/live.html PWA · /rtc.html voice · /console)
+# 2) Gemini (recommended): put GEMINI_API_KEY + LIVEKIT_URL/_API_KEY/_API_SECRET in .env (see .env.example)
+.venv/bin/python -m ui                           # browser app: Gemini planner + Gemini STT
 .venv/bin/python livekit_agent/cascaded_agent.py dev   # LiveKit worker (Gemini STT -> rules+Gemini planner -> Gemini TTS)
 # 3) Tests / practice harness
-.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q     # 154 passed
+.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q     # 210 passed
+(cd ui && npm ci && npm test)                                       # 10 passed
 .venv/bin/python run_local.py --all                                 # 89.1/100
 ```
 
@@ -37,8 +39,9 @@ names depend on your account; plan for quota errors and a paid tier before real 
 1. Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `GEMINI_API_KEY` in
    `livekit_agent/.env.local`. Start the LiveKit worker:
    `.venv/bin/python livekit_agent/cascaded_agent.py dev` (use `start` in deployment).
-2. Deploy `ui/server.py` behind **HTTPS** with `TRIAGELINE_PRODUCTION=1` and a random
-   `TRIAGELINE_API_KEY` of at least 32 characters. Set `HOST=0.0.0.0` only behind a
+2. Deploy `python -m ui` (or `docker compose up`) behind **HTTPS** with `TRIAGELINE_ENV=production`,
+   `TRIAGELINE_ACCESS_CODE` (16+), `TRIAGELINE_SESSION_SECRET` (32+), `ALLOWED_HOSTS` and a random
+   `TRIAGELINE_API_KEY` of at least 32 characters. Full guide: [`docs/MOBILE_INTEGRATION.md`](docs/MOBILE_INTEGRATION.md). Set `HOST=0.0.0.0` only behind a
    trusted TLS proxy. The worker and API need the same LiveKit credentials. Do not put
    the API key, Gemini key, or LiveKit secret in a mobile app.
 3. Your own authenticated backend calls `POST /api/mobile/token` with
@@ -101,7 +104,7 @@ python run_local.py --all --agent agent.agent:ParticipantAgent
 Actually re-run this session: **89.1/100** across the 9 public scenarios
 (pub_01–04, 08, 09 at 100.0; pub_05 audio_asr_ambiguity 53.8; pub_06
 audio_disfluency 56.9; pub_07 visual_port_lookup 90.8). See
-`Triage_Line_Theme05_Readiness_Report.md` for the verified run log.
+`docs/archive/Triage_Line_Theme05_Readiness_Report.md` for the (archived) run log.
 
 Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 `docs/TOOLS.md`.
@@ -118,15 +121,15 @@ Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 | Stage | Component | Where it runs |
 |---|---|---|
 | VAD | Silero (`livekit-plugins-silero`) | local |
-| STT | `TRIAGELINE_STT_PROVIDER=auto`: Gemini `gemini-2.5-flash` if keyed, then Deepgram, Groq, OpenAI | hosted |
+| STT | `TRIAGELINE_STT_PROVIDER=auto`: Gemini `gemini-3.5-flash-lite` if keyed, then Deepgram, Groq, OpenAI | hosted |
 | Understanding + tool calls | `ParticipantAgent`: local rules first; optional Gemini schema-validated planner if rules cannot complete a call | local + optional hosted |
 | Tools | official FDB-v3 `mock_apis.py` (pinned commit, unmodified) | local |
-| TTS | `TRIAGELINE_TTS_PROVIDER=auto`: Gemini `gemini-2.5-flash-preview-tts` if keyed, then Deepgram, OpenAI | hosted |
+| TTS | `TRIAGELINE_TTS_PROVIDER=auto`: Gemini `gemini-3.8-flash-lite-tts` if keyed, then Deepgram, OpenAI | hosted |
 | Judge (evaluation only) | official evaluators, OpenAI `gpt-4o` | hosted |
 
 - **Provider name:** `triageline` → `result_triageline.json` (offline mode: `triageline_text`)
 - **Pinned:** FDB-v3 commit `3e799c45`, `requirements-fdb.txt` (livekit-agents 1.8.3), Python 3.10–3.12, CLIP HF revision. The agent is deterministic (no sampling).
-- **Free keys:** step-by-step guide in [`docs/FREE_API_KEYS.md`](docs/FREE_API_KEYS.md) (LiveKit Build plan + Groq + Deepgram).
+- **Free keys:** step-by-step guide in [`docs/FREE_API_KEYS.md`](docs/FREE_API_KEYS.md) (LiveKit Build plan + one Gemini key; Cerebras/OpenRouter/Mistral failover).
 
 `run_fdb_v3.sh` stages: venv + pinned deps → credentials → clone the pinned FDB-v3 commit + `gdown` the data → start `cascaded_agent.py` and wait for registration → official `run_tool_benchmark_all_released.py` + `evaluate_tool_calls.py` / `evaluate_pass_rate.py` / `analyze_tool_latency.py` → artefacts in `results/<timestamp>/` + `results/results.md`. The judge is preflighted: if gpt-4o is unreachable, the run falls back to exact match and says so.
 
@@ -139,14 +142,14 @@ Details, tool manifest, scoring rubric: `docs/PROTOCOL.md`, `docs/SCORING.md`,
 
 Re-measure honestly: `python3 livekit_agent/fdb_v3_offline_replay.py` (no `--text`) then the official `evaluate_pass_rate.py`.
 
-**Overfitting caveat.** Commits tuned rules on the full public benchmark and the dev/held-out split is cut from the same set, so the text number is optimistic. An independent paraphrased dev set is still to do.
+**Overfitting caveat.** Rules were tuned on the public benchmark, so the text number is optimistic. An independent paraphrased set (`scenarios_heldout/`, `scripts/heldout_eval.py`) scores 26/30 rules-only, and `scripts/integrity_audit.py` checks decision code for benchmark phrasing.
 
 ### Robustness fixes (2026-09-26 review)
 - **Commit gate (C2):** finals are merged into one running transcript; commit after `TRIAGELINE_SETTLE_S` (1.6 s), or `TRIAGELINE_MAX_SETTLE_S` (2.5 s) when the turn looks unfinished / a ranked tool lacks required args. Semantic turn detector used when `livekit-plugins-turn-detector` is installed (`turn_handling=`, B16).
 - **Read-only dedup (C3):** identical read-only calls are never issued twice in a session (reset after any state change).
 - **Benchmark policy (C4):** `TRIAGELINE_BENCHMARK_POLICY=1` (default in `cascaded_agent.py`) calls with known args instead of asking.
 - **ASR repair (C1):** spoken-id normaliser (`x, y, z, eight, eight`→XYZ88, `double five`, NATO), context-gated confusions (card→cart, idea→ID, origin→order), STT biased from the tool manifest (Whisper `prompt`, Deepgram `keyterm`), temperature 0; `TRIAGELINE_STT_PROVIDER=auto` prefers Deepgram nova-3 → Groq whisper-large-v3-turbo → OpenAI whisper-1.
-- **Hybrid LLM planner (C6, optional):** `TRIAGELINE_LLM_PLANNER=1` (gpt-4o-mini or Groq Llama, T=0, seed 7, schema-validated JSON) is consulted only when rules can't build a complete call.
+- **Hybrid LLM planner (C6, optional):** `TRIAGELINE_LLM_PLANNER=auto` — Gemini first, failover to Cerebras / OpenRouter / Mistral (`TRIAGELINE_LLM_CHAIN`), T=0, seed 7, schema-validated native tool calls; consulted only when rules can't build a complete call, and state changes still need confirmation in assistant mode.
 - Bugs B1–B8, B10–B17 fixed; B9: `mock_apis.py`/`latency_injector.py` are now byte-identical to upstream at the pinned commit. Tests: `tests/test_live_robustness.py` (fragments, corrections, ids, fillers, chains, teardown, fuzz).
 
 ## C. Triage Line extension (`livekit_agent/triage_brain.py`, `legacy/core/`)
@@ -184,5 +187,6 @@ livekit_agent/                                 B: FDB-v3 LiveKit integration; C:
 legacy/core/, legacy/docs/                     C's brain (dialogue/deliberation/commit) + demo transcript
 run_fdb_v3.sh                                  B's official reproduction command
 docs/                                          kit docs (PROTOCOL/SCORING/TOOLS) + this phase's ARCHITECTURE/DECK/SHOTLIST
-Triage_Line_Theme05_Readiness_Report.md        scored, verified-only readiness report
+docs/SUBMISSION_CHECKLIST.md                   current status and remaining steps (source of truth)
+ui/                                            gateway (api.py), PWA, voice client, evaluation console
 ```

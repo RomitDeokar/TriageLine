@@ -140,9 +140,11 @@ a:hover { color: var(--accent); }
 .msg.clar { align-self: flex-start; max-width: 92%; padding: 0 0 0 14px; border-left: 2px solid var(--accent);
   font-size: 16.5px; color: var(--ink); }
 .msg.clar .tag { color: var(--accent); }
-.msg.sys { align-self: stretch; max-width: none; display: flex; align-items: center; gap: 10px;
-  font: 400 11.5px var(--mono); color: var(--mut); text-align: center; }
-.msg.sys::before, .msg.sys::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+/* system notes: a centred line of small type between hairlines (text stays one flow; <b> never becomes a flex item) */
+.msg.sys { align-self: center; max-width: 86%; padding: 0 30px; font: 400 11.5px/1.5 var(--mono); color: var(--mut);
+  text-align: center; position: relative; }
+.msg.sys::before, .msg.sys::after { content: ""; position: absolute; top: .78em; width: 22px; height: 1px; background: var(--rule-2); }
+.msg.sys::before { left: 0; } .msg.sys::after { right: 0; }
 .msg.sys b { color: var(--amber); font-weight: 500; }
 .msg.sys.err b { color: var(--rose); }
 .msg.sys .meta { display: none; }
@@ -157,6 +159,7 @@ a:hover { color: var(--accent); }
 /* ---------- background work ---------- */
 .tasks { display: flex; gap: 16px; padding: 8px 18px; overflow-x: auto; flex-shrink: 0; scrollbar-width: none; border-top: 1px solid var(--rule); }
 .tasks::-webkit-scrollbar { display: none; }
+.tasks { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); padding-right: 36px; }
 .tasks.empty { display: none; }
 .task { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; white-space: nowrap; color: var(--ink-2); animation: rise .2s var(--ease); }
 .task i { width: 6px; height: 6px; border-radius: 50%; background: var(--mut-2); flex-shrink: 0; }

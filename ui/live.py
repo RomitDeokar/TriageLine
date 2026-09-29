@@ -211,6 +211,7 @@ class LiveSession:
             res = await self.tools.execute(api, args)
         except asyncio.CancelledError:
             self.pending.pop(cid, None)
+            getattr(self, "cancelled", set()).discard(cid)   # cancel already reached the agent
             return
         except Exception as e:  # provider exception → structured, ambiguous terminal event (R20)
             log_detail = type(e).__name__          # never echo provider internals / secrets to the user

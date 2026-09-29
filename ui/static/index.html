@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -17,7 +17,7 @@
     <div class="brand-icon" aria-hidden="true"><span class="brand-dot"></span></div>
     <div class="brand-text">
       <h1>TriageLine <span class="brand-badge">console</span></h1>
-      <p>Old-kit scenario harness · development only</p>
+      <p>practice harness · old-kit scorer · dev only</p>
     </div>
   </div>
 
@@ -50,7 +50,7 @@
 
     <a class="tab live-link" href="/live.html" title="Open Live Assistant mobile PWA">
       <span class="live-indicator-dot"></span>
-      <span>Live Assistant</span>
+      <span>Open the assistant</span>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
     </a>
   </div>
@@ -67,13 +67,13 @@
         </div>
         
         <div class="seg" id="agent-seg" role="group" aria-label="Agent Model Selection">
-          <button class="on" data-agent="triageline">TriageLine (Dual-Process)</button>
-          <button data-agent="baseline">Baseline Agent</button>
+          <button class="on" data-agent="triageline">TriageLine</button>
+          <button data-agent="baseline">Baseline</button>
         </div>
 
         <div class="search-box">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="text" id="sc-search" placeholder="Filter scenarios (e.g. interrupt, audio)…" aria-label="Filter scenarios">
+          <input type="text" id="sc-search" placeholder="Filter — interrupt, audio, booking…" aria-label="Filter scenarios">
         </div>
 
         <div class="filter-chips" id="mod-filters">
@@ -88,11 +88,11 @@
 
       <div class="side-footer">
         <label class="speed">
-          <span>Simulation Speed</span>
+          <span>Replay speed</span>
           <select id="ts" aria-label="Time Scale Multiplier">
-            <option value="1" selected>1× (Official Timing)</option>
-            <option value="2">2× Fast Preview</option>
-            <option value="4">4× Rapid Preview</option>
+            <option value="1" selected>1× — scored timing</option>
+            <option value="2">2× preview</option>
+            <option value="4">4× preview</option>
           </select>
         </label>
       </div>
@@ -102,15 +102,15 @@
       <div class="stage-head-card">
         <div class="stage-head-info">
           <div class="eyebrow" id="sc-meta">—</div>
-          <h2 id="sc-title">Select a scenario to evaluate</h2>
-          <p id="sc-desc" class="stage-desc-text muted">Choose a scenario from the sidebar to inspect its sequence of events, run it against the dual-process engine, and measure official scoring checkpoints.</p>
+          <h2 id="sc-title">Pick a scenario on the left.</h2>
+          <p id="sc-desc" class="stage-desc-text muted">Each one is a short, timed script — a request, a correction, a barge-in. Run it and watch what the agent says, which tools it starts, and what it throws away.</p>
         </div>
         <div class="stage-actions">
           <button id="run-btn" class="primary" disabled>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             <span>Run scenario</span>
           </button>
-          <span class="shortcut-hint">⌘ + Enter to run</span>
+          <span class="shortcut-hint">⌘/Ctrl + Enter</span>
         </div>
       </div>
 
@@ -122,9 +122,9 @@
         <div class="card-head">
           <h3>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            <span>Execution Timeline</span>
+            <span>Timeline</span>
           </h3>
-          <span class="muted small" id="tl-note">virtual timing (ms) · hover/tap markers for diagnostics</span>
+          <span class="muted small" id="tl-note">virtual clock · hover a mark for detail</span>
         </div>
 
         <!-- Interactive Playback Scrubber -->
@@ -132,7 +132,7 @@
           <div class="playback-controls">
             <button id="tl-play" class="playback-btn" title="Replay timeline from 0ms">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span id="tl-play-text">Play Replay</span>
+              <span id="tl-play-text">Replay</span>
             </button>
             <div class="playback-time" id="tl-playback-time">0 ms</div>
             <input type="range" id="tl-scrubber" class="timeline-slider" min="0" max="1000" value="0" step="10">
@@ -144,7 +144,7 @@
           </div>
         </div>
 
-        <div id="timeline" class="timeline empty">Select and run a scenario to inspect the microsecond interaction between fast reflex and background tools.</div>
+        <div id="timeline" class="timeline empty">Nothing has run yet.</div>
       </div>
 
       <!-- Synchronized Transcript & Scorer Checkpoints -->
@@ -153,29 +153,29 @@
           <div class="card-head">
             <h3>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>Execution Transcript</span>
+              <span>What was said</span>
             </h3>
             <div class="transcript-actions">
-              <input type="text" id="tr-search" class="tr-search-input" placeholder="Search transcript…" aria-label="Search transcript">
+              <input type="text" id="tr-search" class="tr-search-input" placeholder="Search…" aria-label="Search transcript">
               <button id="copy-transcript" class="filter-chip" title="Copy transcript as text">Copy</button>
             </div>
           </div>
-          <ol id="transcript" class="transcript"><li class="muted">Awaiting scenario execution…</li></ol>
+          <ol id="transcript" class="transcript"><li class="muted">Empty until you run something.</li></ol>
         </div>
 
         <div class="card">
           <div class="card-head">
             <h3>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-              <span>Official Scorer Checkpoints</span>
+              <span>Scorer checks</span>
             </h3>
             <div class="ck-filter-chips" id="ck-filters">
               <button class="filter-chip active" data-filter="all">All</button>
-              <button class="filter-chip" data-filter="fail">Failures Only</button>
-              <button class="filter-chip" data-filter="pass">Passed Only</button>
+              <button class="filter-chip" data-filter="fail">Failed</button>
+              <button class="filter-chip" data-filter="pass">Passed</button>
             </div>
           </div>
-          <div id="checks" class="checks"><p class="muted">Run scenario to view audit checkpoints and compliance scores.</p></div>
+          <div id="checks" class="checks"><p class="muted">Checks appear after a run.</p></div>
         </div>
       </div>
     </div>
@@ -185,20 +185,20 @@
   <section id="view-compose" class="view" role="tabpanel" aria-label="Compose Scenario">
     <div class="stage narrow">
       <div class="compose-header">
-        <div class="eyebrow">Interactive Stress Testing</div>
-        <h2>Conversation Sandbox & Interruption Lab</h2>
-        <p class="muted">Compose a custom conversation stream, trigger mid-turn interruptions at exact millisecond offsets, and test real-time replanning without pre-scripting.</p>
+        <div class="eyebrow">compose</div>
+        <h2>Write your own interruption.</h2>
+        <p class="muted">Type a request, then what the caller blurts out halfway through and when. The agent has not seen your wording before — this is the quickest way to find where the rules break.</p>
       </div>
 
       <div class="card form">
-        <label>Initial User Request
-          <input id="c-utt" type="text" value="Find me flights to Chicago for Friday." placeholder="Enter user prompt…">
+        <label>Request
+          <input id="c-utt" type="text" value="Find me flights to Chicago for Friday." placeholder="What the caller asks for">
         </label>
         <div class="row">
-          <label class="grow">Interruption / Barge-in Utterance <span class="muted small">(optional)</span>
+          <label class="grow">Then they say <span class="muted small">(optional)</span>
             <input id="c-int" type="text" value="Actually, make it Seattle instead." placeholder="e.g. Wait, actually make it Seattle">
           </label>
-          <label class="w140">Offset (+ms)
+          <label class="w140">After (ms)
             <input id="c-at" type="number" value="1600" min="200" step="100">
           </label>
         </div>
@@ -206,7 +206,7 @@
         <!-- Live Interruption Visual Slider -->
         <div class="offset-slider-group">
           <div class="offset-slider-header">
-            <span class="muted small">Interruption timing visualizer:</span>
+            <span class="muted small">Barge-in lands this long after the request ends</span>
             <span class="offset-value" id="c-at-label">+1,600 ms</span>
           </div>
           <input type="range" id="c-at-slider" min="300" max="4000" step="50" value="1600" class="timeline-slider">
@@ -214,34 +214,34 @@
 
         <label class="check">
           <input type="checkbox" id="c-tool">
-          <span>Inject an unseen zero-shot tool <code class="small">hotel_search</code> (read-only)</span>
+          <span>Add a tool it has never seen: <code class="small">hotel_search</code> (read-only)</span>
         </label>
         <div class="presets-container">
-          <span class="presets-label">Quick Test Presets:</span>
+          <span class="presets-label">or start from</span>
           <div class="presets">
-            <button class="chip" data-p='["Find flights to Miami please.","Never mind, forget it.",1500,false]'>Retraction (Never mind)</button>
-            <button class="chip" data-p='["Find flights to Austin.","Forget the flight, my TV is blinking red, open a support ticket.",1400,false]'>Intent Switch</button>
-            <button class="chip" data-p='["Find a flight to Denver and book the 2 PM one for Priya.","",0,false]'>Chained Booking</button>
-            <button class="chip" data-p='["Can you find a hotel in Boston?","",0,true]'>Unseen Tool</button>
-            <button class="chip" data-p='["Book a flight to Boston, sorry I mean Denver, for tomorrow.","",0,false]'>Speech Self-Repair</button>
+            <button class="chip" data-p='["Find flights to Miami please.","Never mind, forget it.",1500,false]'>“never mind”</button>
+            <button class="chip" data-p='["Find flights to Austin.","Forget the flight, my TV is blinking red, open a support ticket.",1400,false]'>changing the subject</button>
+            <button class="chip" data-p='["Find a flight to Denver and book the 2 PM one for Priya.","",0,false]'>search then book</button>
+            <button class="chip" data-p='["Can you find a hotel in Boston?","",0,true]'>an unseen tool</button>
+            <button class="chip" data-p='["Book a flight to Boston, sorry I mean Denver, for tomorrow.","",0,false]'>“sorry, I mean…”</button>
           </div>
         </div>
         <div>
           <button id="c-run" class="primary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            <span>Run conversation</span>
+            <span>Run it</span>
           </button>
         </div>
       </div>
 
       <div class="card timeline-card">
-        <div class="card-head"><h3>Execution Timeline</h3></div>
-        <div id="c-timeline" class="timeline empty">Awaiting custom conversation run…</div>
+        <div class="card-head"><h3>Timeline</h3></div>
+        <div id="c-timeline" class="timeline empty">Nothing has run yet.</div>
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>Live Event Log</h3></div>
-        <ol id="c-transcript" class="transcript"><li class="muted">No events recorded.</li></ol>
+        <div class="card-head"><h3>Event log</h3></div>
+        <ol id="c-transcript" class="transcript"><li class="muted">Empty.</li></ol>
       </div>
     </div>
   </section>
@@ -251,32 +251,32 @@
     <div class="stage">
       <div class="stage-head-card">
         <div class="stage-head-info">
-          <div class="eyebrow">Comprehensive Benchmark</div>
-          <h2>Official Scorer Benchmark Matrix</h2>
-          <p class="muted">Executes all published and extra scenarios head-to-head between <b>Baseline</b> and <b>TriageLine</b> using <code>harness/scorer.py</code> at official 1× timing. Audio and visual scenarios require bundled assets in <code>audio/</code> and <code>frames/</code>.</p>
+          <div class="eyebrow">benchmark · practice set</div>
+          <h2>Every scenario, both agents.</h2>
+          <p class="muted">Runs the bundled practice scenarios against the baseline and TriageLine with the old kit’s <code>harness/scorer.py</code> at 1× timing. This is <b>not</b> the FDB-v3 score the organisers re-run — see <code>run_fdb_v3.sh</code> for that. Audio and camera scenarios need the files in <code>audio/</code> and <code>frames/</code>.</p>
         </div>
         <button id="suite-btn" class="primary">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          <span>Run all scenarios</span>
+          <span>Run all</span>
         </button>
       </div>
 
       <!-- Benchmark Summary KPI Deck -->
       <div class="suite-kpi-deck" id="suite-kpis">
         <div class="suite-kpi-card">
-          <div class="k">Evaluated Scenarios</div>
+          <div class="k">scenarios run</div>
           <div class="v" id="kpi-count">0 / 13</div>
         </div>
         <div class="suite-kpi-card">
-          <div class="k">TriageLine Mean Score</div>
+          <div class="k">triageline, mean</div>
           <div class="v" id="kpi-triageline">—</div>
         </div>
         <div class="suite-kpi-card">
-          <div class="k">Baseline Mean Score</div>
+          <div class="k">baseline, mean</div>
           <div class="v" id="kpi-baseline">—</div>
         </div>
         <div class="suite-kpi-card">
-          <div class="k">Net Performance Advantage</div>
+          <div class="k">difference</div>
           <div class="v" id="kpi-delta">—</div>
         </div>
       </div>
@@ -286,12 +286,12 @@
           <table class="table" id="suite-table">
             <thead>
               <tr>
-                <th>Scenario ID</th>
+                <th>Scenario</th>
                 <th>Modality</th>
                 <th class="num">Baseline</th>
                 <th class="num">TriageLine</th>
-                <th class="num">Δ Delta</th>
-                <th class="bar-col">Score Comparison</th>
+                <th class="num">Δ</th>
+                <th class="bar-col">baseline / triageline</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -306,9 +306,9 @@
   <section id="view-about" class="view" role="tabpanel" aria-label="System Architecture">
     <div class="stage narrow prose">
       <div>
-        <div class="eyebrow">System Architecture</div>
-        <h2>Dual-Process Interruptible Agent Architecture</h2>
-        <p class="muted">Engineered for Samsung PRISM Theme 05. The system decouples immediate reflexive conversational feedback from asynchronous tool execution and perception.</p>
+        <div class="eyebrow">how it works</div>
+        <h2>A fast path that answers, a slow path that works.</h2>
+        <p class="muted">Built for Samsung PRISM Theme 05. Every event is handled twice: once, immediately, to acknowledge and update what the agent believes; and once in the background, where tools, speech recognition and vision run without blocking the conversation. Anything started under an older belief is cancelled or thrown away.</p>
       </div>
 
       <figure class="arch">
@@ -331,25 +331,25 @@ Events ─▶ ┌──────────── FAST PATH  (&lt; 5 ms, inl
 </pre>
       </figure>
 
-      <h3>Core Design Principles</h3>
+      <h3>The six rules it lives by</h3>
       <dl class="defs">
-        <dt>Zero-Latency Barge-In</dt>
-        <dd>Every user utterance or interruption is processed in under 5 milliseconds. The fast path immediately updates internal slot hypotheses, halts outdated TTS speech, issues contextual filler acknowledgments, and halts obsolete background work without freezing the event consumer.</dd>
+        <dt>Answer before thinking</dt>
+        <dd>The fast path runs inline on every event and takes a few milliseconds on the harness clock. It updates the slots, stops stale speech, gives a short acknowledgement and cancels work the caller just made obsolete — without waiting on anything slow.</dd>
 
-        <dt>Epoch-Guarded Invalidation</dt>
-        <dd>Each interruption increments a monotonic epoch counter. Outbound tool calls and perception tasks carry their originating epoch; any completion arriving with a superseded epoch is immediately discarded, preventing race conditions.</dd>
+        <dt>Old answers expire</dt>
+        <dd>Each correction bumps an epoch counter. Tool calls and perception jobs remember the epoch they started in; a result that comes back from an older epoch is dropped instead of being read out.</dd>
 
-        <dt>Uncertainty-Aware ASR</dt>
-        <dd>When speech transcription exhibits low confidence or multiple phonetically plausible options (e.g. Austin vs Boston), the agent generates a focused clarification request ("Did you say Austin or Boston?") rather than guessing blindly.</dd>
+        <dt>Ask when unsure</dt>
+        <dd>When two transcriptions disagree on something that matters — Austin or Boston — the agent asks one short question rather than guessing.</dd>
 
-        <dt>Zero-Shot Schema Tools</dt>
-        <dd>Tools are dynamically ranked by semantic overlap with function declarations, parameter schemas, and type definitions. Required arguments are intelligently synthesized directly from user requests.</dd>
+        <dt>Tools from their schema</dt>
+        <dd>Tools are matched from their names, descriptions and argument schemas, so a tool added at runtime can be called without code changes. Arguments are filled from what the caller said; missing required ones are asked for.</dd>
 
-        <dt>Multi-Modal Visual Grounding</dt>
-        <dd>Multi-angle OCR is coupled with zero-shot CLIP embeddings on center-cropped frames. High-confidence visual features guide tool invocation, while ambiguous frames trigger explicit user confirmation.</dd>
+        <dt>Look, then say what it saw</dt>
+        <dd>Camera frames go through OCR and CLIP. A confident match is used directly; an ambiguous one is read back to the caller for confirmation.</dd>
 
-        <dt>Deterministic Safety Ledger</dt>
-        <dd>Fillers are capped at an evaluation budget of 3 per turn. State-modifying operations are indexed in an idempotency register to guarantee at-most-once execution under all network conditions.</dd>
+        <dt>Never do it twice</dt>
+        <dd>Fillers are capped at three per turn. Every state-changing call goes through an idempotency ledger, so a retry, a repeat or a reconnect cannot book the same thing twice.</dd>
       </dl>
     </div>
   </section>

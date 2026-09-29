@@ -1,74 +1,52 @@
-# Free API keys: how to run TriageLine at no cost
+# Free API keys: running TriageLine at no cost
 
-TriageLine has **no LLM in the agent**. Understanding and tool calls are handled by the rule-based
-`ParticipantAgent`. Only three things need hosted services:
+One **Google AI Studio key** is enough for everything except the transport: Gemini does the speech-to-text,
+the text-to-speech and the optional LLM planner. The free LLM providers below act only as automatic
+failover for the planner. Groq and Deepgram are optional alternatives, not requirements.
 
 | Need | Free option (checked 2026-09) | Env var(s) |
 |---|---|---|
-| Realtime transport (rooms, agent dispatch) | **LiveKit Cloud "Build" plan**: no card, 1,000 agent-session minutes + 5,000 WebRTC minutes per month, up to 5 concurrent agent sessions | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` |
-| Speech-to-text | **Groq** free plan: `whisper-large-v3-turbo`, OpenAI-compatible, about 20 req/min and 2,000 req/day<br>or **Deepgram**: $200 free credit at signup (`nova-3` streaming) | `GROQ_API_KEY` or `DEEPGRAM_API_KEY` |
-| Text-to-speech | **Deepgram** Aura-2 (same $200 credit, about 6M characters) | `DEEPGRAM_API_KEY` |
-| *Optional:* official LLM judge | The official evaluators hard-code **`gpt-4o`** through the OpenAI SDK. There is **no free gpt-4o**: GitHub Models was retired in July 2026. Use a paid OpenAI key (a full 100-example judge pass costs well under $1), or run without the judge (`--no-llm-judge`, exact match = lower bound). | `OPENAI_API_KEY` (optional `OPENAI_BASE_URL`) |
+| Realtime transport | **LiveKit Cloud "Build" plan**: no card; 1,000 agent-session minutes and 5,000 WebRTC minutes a month | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` |
+| STT + TTS + planner | **Google AI Studio (Gemini)** free tier. Defaults: `gemini-3.5-flash-lite` (STT and planner) and `gemini-3.8-flash-lite-tts` (TTS) | `GEMINI_API_KEY` |
+| Planner failover (optional) | **Cerebras**, **OpenRouter** (`:free` models) and **Mistral** (experiment tier), all OpenAI-compatible | `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`; order with `TRIAGELINE_LLM_CHAIN=gemini,cerebras,openrouter,mistral` |
+| Streaming speech (optional, lower latency) | **Deepgram**: $200 signup credit (`nova-3` STT, Aura-2 TTS) | `DEEPGRAM_API_KEY` |
+| Official LLM judge (evaluation only) | The official evaluators hard-code **`gpt-4o`**. No free tier exists; a full 100-example pass costs well under $1 | `OPENAI_API_KEY` |
 
-> Groq TTS (Orpheus) is **not** supported here. It returns WAV only and caps input at 200 characters,
-> which breaks streamed agent speech. Use Deepgram for TTS.
+Free-tier quotas and model names change. Run `python3 scripts/check_providers.py` to confirm each configured key with one tiny request.
 
-## 1. LiveKit Cloud (required for the live benchmark and the demo)
-1. Sign up at <https://cloud.livekit.io>. GitHub or Google login works, and no card is needed.
-2. Create a project. Open **Settings → API Keys → Create key**.
-3. Copy the **WebSocket URL** (`wss://<project>.livekit.cloud`), the **API Key** and the **API Secret**.
-4. You don't need dispatch rules: the agent registers without `agent_name`, so it is auto-dispatched to
-   every new room.
+## 1. LiveKit Cloud
+1. Sign up at <https://cloud.livekit.io> (GitHub or Google login, no card), then create a project.
+2. Go to **Settings → API Keys → Create key**. Copy the WebSocket URL (`wss://<project>.livekit.cloud`), the key and the secret.
+3. Optional: set `TRIAGELINE_AGENT_NAME=triageline` on the worker **and** the gateway. The worker then joins only the rooms whose tokens request it (explicit dispatch), which lets several workers share one project.
 
-## 2. Groq (free STT)
-1. Sign in at <https://console.groq.com>, then **API Keys → Create API Key**.
-2. Copy the key (it starts with `gsk_`). Set `TRIAGELINE_STT_PROVIDER=groq`.
-3. Free-plan limits apply per organisation. A 100-example FDB run makes about 100–300 STT requests, so it
-   fits in one day's quota.
+## 2. Gemini (Google AI Studio)
+1. Open <https://aistudio.google.com/apikey> → **Create API key**.
+2. Set `GEMINI_API_KEY=...`. With `TRIAGELINE_*_PROVIDER=auto` (the default), Gemini is selected for STT, TTS and the planner.
+3. On an older project without the 3.x models, set `TRIAGELINE_STT_MODEL=gemini-2.5-flash` (and the matching TTS model).
 
-## 3. Deepgram (free TTS, or STT)
-1. Sign up at <https://console.deepgram.com>. The $200 credit is added automatically.
-2. Open **API Keys → Create a New API Key** with the Member role, and copy it.
-3. Set `TRIAGELINE_TTS_PROVIDER=deepgram` (and optionally `TRIAGELINE_STT_PROVIDER=deepgram`).
+## 3. Failover providers (optional)
+- Cerebras: <https://cloud.cerebras.ai> → API keys.
+- OpenRouter: <https://openrouter.ai/keys>. Free models end in `:free` and allow about 50 requests a day without credit.
+- Mistral: <https://console.mistral.ai> → API keys (free experiment plan).
+
+The planner retries once on a 429, a 5xx or a timeout, then moves to the next provider. Bad keys (401/400) are skipped at once.
 
 ## 4. Put the keys in place
 ```bash
-cp livekit_agent/.env.example livekit_agent/.env.local     # gitignored, never committed
-# edit livekit_agent/.env.local:
+cp .env.example .env                  # gitignored. The worker also reads livekit_agent/.env.local
 LIVEKIT_URL=wss://<project>.livekit.cloud
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
-TRIAGELINE_STT_PROVIDER=groq
-GROQ_API_KEY=gsk_...
-TRIAGELINE_TTS_PROVIDER=deepgram
-DEEPGRAM_API_KEY=...
-# OPENAI_API_KEY=sk-...        # only if you want the official gpt-4o judge (paid)
+GEMINI_API_KEY=...
+# CEREBRAS_API_KEY=...  OPENROUTER_API_KEY=...  MISTRAL_API_KEY=...
+# OPENAI_API_KEY=sk-...                # only for the official gpt-4o judge
 ```
 
 ## 5. Run
 ```bash
-# no keys at all: official data + official evaluators, text replay (diagnostic)
-./run_fdb_v3.sh --offline-text
-
-# fully free live run (LiveKit + Groq + Deepgram), judge off
-./run_fdb_v3.sh --no-llm-judge --limit 5      # smoke run first
-./run_fdb_v3.sh --no-llm-judge                # all 100 examples
-
-# the scored configuration (adds the official gpt-4o judge)
-./run_fdb_v3.sh
-
-# talk to the agents yourself
-python livekit_agent/cascaded_agent.py console          # FDB tool agent, local mic/speaker
-python livekit_agent/triage_livekit_agent.py console    # Triage Line extension
+./run_fdb_v3.sh --offline-text                          # no keys: text replay (diagnostic only)
+PYTHON=python3.12 ./run_fdb_v3.sh --limit 5 --require-judge   # judged live smoke run
+PYTHON=python3.12 ./run_fdb_v3.sh --require-judge             # full scored run
+python -m ui                                            # PWA + /rtc.html voice (same keys)
+python livekit_agent/cascaded_agent.py dev              # the voice worker
 ```
-To join from a browser, open <https://agents-playground.livekit.io>, connect it to your project, and the
-running agent (`... dev`) joins the room.
-
-## Notes
-- The official runner transcribes the agent's audio with NVIDIA NeMo `parakeet-tdt-0.6b-v2`, running
-  locally. It is free but large (it pulls in torch). A GPU is recommended; CPU works, just slowly.
-- Keys are only read from the environment or from `livekit_agent/.env.local`. `run_fdb_v3.sh` writes them
-  to `v3/.env.local` (mode 600, inside the gitignored clone) because the official scripts read that file.
-  Keys are never written to `results/`.
-- Free tiers change. If a limit is hit, the run log shows the provider's error; re-run with `--limit`, or
-  switch providers through `TRIAGELINE_STT_PROVIDER` / `TRIAGELINE_TTS_PROVIDER`.

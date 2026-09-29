@@ -122,7 +122,6 @@ async def scenario_dedup_state_modifying():
         await r.adapter.agent.call("add_to_cart", {"product_id": "PROD1", "quantity": 2})
     await req()
     await asyncio.sleep(0.02)
-    first_calls = [c for c in r.issued if c[1] == "add_to_cart"]
     await req()  # duplicate while pending
     await asyncio.sleep(0.02)
     ok = len([c for c in r.issued if c[1] == "add_to_cart"]) == 1
