@@ -122,7 +122,7 @@
           const j = await post("/api/live/start", { request_id: requestId });
           state.sid = j.sid;
           state.audio = j.audio || state.audio;
-          $("#mode").textContent = (j.mode || "").includes("MOCK") ? "MOCK TOOLS" : j.mode;
+          $("#mode").textContent = /MOCK|SIMULATED/.test(j.mode || "") ? "Simulated tools" : (j.mode || "Simulated tools");
           $("#mode").title = j.mode || "";
           $("#sid-label").textContent = "Session " + j.sid.slice(0, 8);
           resetSessionUi();
@@ -192,7 +192,7 @@
     try {
       const restored = await post(`/api/live/${sid}/log`, {}, { timeout: 8000 });
       state.audio = restored.audio || state.audio;
-      $("#mode").title = restored.mode || "LIVE INPUT + MOCK TOOLS";
+      $("#mode").title = restored.mode || "LIVE INPUT + SIMULATED TOOLS";
       state.sid = sid;
       $("#sid-label").textContent = "Session " + sid.slice(0, 8);
       connect();          // lastId=0 → server replays the session history
@@ -249,16 +249,21 @@
       pruneTasks();
     } else if (ev.kind === "user") {
       if (!replay) {
-        if (ev.as_ === "interruption") { state.metrics.barge++; renderMetrics(); }
+        if ((ev.event_type || ev.as_) === "interruption") { state.metrics.barge++; renderMetrics(); }
         return;         // user bubbles are rendered optimistically at send time
       }
-      if (ev.as_ === "video_frame") bubble("user", `<span class="tag">Camera</span>Frame shared`);
-      else if (ev.as_ === "user_audio_chunk") bubble("user", `<span class="tag">Voice</span>Voice clip`);
-      else bubble("user" + (ev.as_ === "interruption" ? " barge" : ""),
-        (ev.as_ === "interruption" ? `<span class="tag">Barge-in</span>` : "") + esc(ev.text));
+      if ((ev.event_type || ev.as_) === "video_frame") bubble("user", `<span class="tag">Camera</span>Frame shared`);
+      else if ((ev.event_type || ev.as_) === "user_audio_chunk") bubble("user", `<span class="tag">Voice</span>Voice clip`);
+      else bubble("user" + ((ev.event_type || ev.as_) === "interruption" ? " barge" : ""),
+        ((ev.event_type || ev.as_) === "interruption" ? `<span class="tag">Barge-in</span>` : "") + esc(ev.text));
     } else if (ev.kind === "asr") {
       $("#interim").textContent = "";
       if (!ev.text) setStatus(ev.error || "Speech not recognized", "neg");
+      else if (!replay) {
+        // show what the server heard on the latest voice-clip bubble
+        const clip = [...chat.querySelectorAll(".msg.user.voice")].pop();
+        if (clip && !clip.dataset.heard) { clip.dataset.heard = "1"; clip.insertAdjacentHTML("beforeend", `<span class="heard">“${esc(ev.text)}”</span>`); }
+      }
     } else if (ev.kind === "interrupted") {
       if (!replay) stopSpeech();
     } else if (ev.kind === "closed") {
@@ -524,7 +529,7 @@
       const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
       const url = await new Promise((resolve) => { const f = new FileReader(); f.onload = () => resolve(f.result); f.readAsDataURL(blob); });
       setStatus("Transcribing on server…", "connecting");
-      bubble("user" + (state.wasSpeakingAtStart ? " barge" : ""), `<span class="tag">Voice</span>Voice clip · ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      bubble("user voice" + (state.wasSpeakingAtStart ? " barge" : ""), `<span class="tag">Voice</span>Voice clip · ${((performance.now() - t0) / 1000).toFixed(1)}s`);
       state.pendingSendAt = performance.now();
       try { await post(`/api/live/${state.sid}/audio`, { audio: url, speaking: state.wasSpeakingAtStart, request_id: crypto.randomUUID() }, { timeout: 60000 }); setStatus("Ready — speak or type", "ok"); }
       catch (e) { setStatus("Audio upload failed: " + e.message, "neg"); toast("Audio upload failed", "neg"); state.pendingSendAt = 0; }
@@ -686,7 +691,8 @@
       const r = await (await fetch("/api/ready")).json();
       out.push(row("Tool planner", r.planner?.configured, r.planner?.provider || "local rules"),
         row("Available tools", !!r.tools?.length, String(r.tools?.length || 0)),
-        row("Server speech configuration", !!r.audio?.configured, r.speech || "local Whisper"),
+        row("Server speech configuration", !!r.audio?.configured,
+          r.audio ? `${r.audio.provider}:${r.audio.model}` : "local Whisper"),
         row("Local-only mode", !!r.offline, r.offline ? "no hosted API calls" : "hosted APIs allowed"));
       out.push(row("Whisper ASR model", r.asr_loaded, r.asr_loaded ? "" : "lazy-loads on first clip"),
         row("CLIP vision model", r.clip_loaded, r.clip_loaded ? "" : "lazy-loads on first frame"),

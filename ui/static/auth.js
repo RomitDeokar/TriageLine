@@ -14,8 +14,22 @@
     return new Promise((resolve, reject) => {
       const d = document.createElement('dialog');
       d.setAttribute('aria-label', 'Sign in to TriageLine');
-      d.style.cssText = 'max-width:360px;width:90%;padding:24px;border:1px solid #334155;border-radius:16px;background:#101827;color:#eef2ff';
-      d.innerHTML = '<form><h2>Welcome to TriageLine</h2><p>Enter the access code provided by your operator. Never enter an AI provider key here.</p><label>Access code <input name="code" type="password" autocomplete="current-password" required style="width:100%;padding:12px;margin:12px 0"></label><p role="alert"></p><button type="submit">Continue</button> <button type="button">Cancel</button></form>';
+      d.className = 'tl-auth';
+      d.innerHTML = '<form class="tl-auth-form"><p class="tl-auth-kicker">TriageLine</p><h2>Enter your access code</h2>'
+        + '<p class="tl-auth-copy">Your operator gave you this code. It is not an AI provider key.</p>'
+        + '<input name="code" type="password" autocomplete="current-password" required aria-label="Access code" placeholder="Access code">'
+        + '<p class="tl-auth-err" role="alert"></p><div class="tl-auth-row"><button type="button">Cancel</button><button type="submit">Continue</button></div></form>';
+      if (!document.getElementById('tl-auth-style')) {
+        const st = document.createElement('style'); st.id = 'tl-auth-style';
+        st.textContent = 'dialog.tl-auth{max-width:380px;width:90%;padding:28px;border:0;border-radius:22px;background:#211e1b;color:#efe8dc;font-family:"Inter Tight",system-ui,sans-serif;box-shadow:0 30px 70px rgba(0,0,0,.6)}'
+          + 'dialog.tl-auth::backdrop{background:rgba(10,9,8,.72)}.tl-auth-kicker{margin:0 0 14px;font:500 11px "IBM Plex Mono",monospace;color:#e0714a}'
+          + '.tl-auth h2{margin:0 0 8px;font:400 26px/1.1 Fraunces,Georgia,serif;letter-spacing:-.01em}.tl-auth-copy{margin:0 0 20px;color:#968d80;font-size:14px;line-height:1.5}'
+          + '.tl-auth input{width:100%;font-family:inherit;font-size:16px;padding:13px 16px;border-radius:12px;border:1px solid #413b35;background:#181614;color:inherit;outline:none}'
+          + '.tl-auth input:focus{border-color:#e0714a}.tl-auth-err{min-height:1.2em;margin:10px 0;color:#d9695f;font-size:13px}'
+          + '.tl-auth-row{display:flex;justify-content:flex-end;gap:10px}.tl-auth-row button{font-family:inherit;font-size:14px;font-weight:600;min-height:44px;padding:0 20px;border-radius:999px;border:1px solid #413b35;background:none;color:#efe8dc;cursor:pointer}'
+          + '.tl-auth-row button[type=submit]{background:#e0714a;border-color:#e0714a;color:#1a0f0a}.tl-auth-row button:disabled{opacity:.5}';
+        document.head.appendChild(st);
+      }
       const finish = () => { d.close(); d.remove(); };
       d.querySelector('[type=button]').onclick = () => { finish(); reject(new Error('Sign-in cancelled. Use Reconnect to try again.')); };
       d.addEventListener('cancel', (e) => { e.preventDefault(); finish(); reject(new Error('Sign-in cancelled')); });

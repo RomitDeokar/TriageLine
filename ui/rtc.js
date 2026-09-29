@@ -31,7 +31,7 @@ const view = {
       const key = speaker + ':' + segment.id;
       let line = lines.get(key);
       if (!line) { line = document.createElement('p'); lines.set(key, line); $('transcript').appendChild(line); }
-      line.textContent = speaker + ': ' + segment.text;
+      line.dataset.who = speaker; line.textContent = segment.text;
       if (lines.size > 200) { const oldest = lines.keys().next().value; lines.get(oldest).remove(); lines.delete(oldest); }
     }
   }

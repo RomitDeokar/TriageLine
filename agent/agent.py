@@ -539,6 +539,12 @@ class ParticipantAgent:
     async def on_audio_result(self, results: List[Dict[str, Any]], interrupted: bool = False):
         text = nlu.norm(" ".join(r["text"] for r in results))
         words = [w for r in results for w in r["words"]]
+        hook = getattr(self, "on_transcript", None)       # UI echo of what the server heard (live mode)
+        if hook:
+            try:
+                hook(text, next((r.get("error") for r in results if r.get("error")), None))
+            except Exception:  # noqa: BLE001 - a display hook must never break the turn
+                pass
         if not text:
             reason = next((r.get("error") for r in results if r.get("error")), "empty")
             self.note("asr_no_text", reason)

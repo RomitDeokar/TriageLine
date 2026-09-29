@@ -96,6 +96,8 @@ class LiveSession:
         self.t0 = time.monotonic()
         try:
             self.agent = ParticipantAgent(self.in_q, self.out_q, live=True)
+            self.agent.on_transcript = lambda text, err: self.emit(
+                "asr", text=text, error=("Speech not recognized" if err and not text else None))
             self.tools = ToolAdapter(self.sid)
         except Exception as exc:
             self.init_error = type(exc).__name__

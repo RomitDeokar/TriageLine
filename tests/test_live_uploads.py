@@ -54,3 +54,19 @@ def test_uploads_deleted_when_session_ends():
     assert os.listdir(s.dir)
     live.SESSIONS.end(s.sid)
     assert not os.path.exists(s.dir)
+
+
+def test_server_transcript_is_echoed_to_the_ui(session):
+    """A voice clip's recognised text reaches the PWA as an ``asr`` event (the UI shows what was heard)."""
+    import asyncio
+    import time
+    fut = asyncio.run_coroutine_threadsafe(session.agent.on_audio_result(
+        [{"text": "track order QRS765", "words": [], "error": None}]), session.loop)
+    fut.result(5)
+    deadline = time.time() + 2
+    while time.time() < deadline and not any(e["kind"] == "asr" for e in session.events_after(0)):
+        time.sleep(0.05)
+    asr = [e for e in session.events_after(0) if e["kind"] == "asr"]
+    assert asr and asr[0]["text"] == "track order QRS765" and asr[0]["error"] is None
+    users = [e for e in session.events_after(0) if e["kind"] == "user"]
+    assert all("event_type" in e and "as_" not in e for e in users)
