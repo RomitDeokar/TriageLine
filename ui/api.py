@@ -43,6 +43,9 @@ ROOT = Path(__file__).resolve().parents[1]
 _PRESET_ACCESS_CODE = "TRIAGELINE_ACCESS_CODE" in os.environ
 
 
+_ENV_FILES = (ROOT / ".env", ROOT / "livekit_agent/.env.local")   # first file wins
+
+
 def load_gateway_env(root: Path = ROOT) -> None:
     """Load gateway settings first, then use worker settings only as fallback."""
     load_dotenv(root / ".env")
@@ -107,8 +110,20 @@ def report_access_code(code: str) -> None:
     if not code:
         print("[auth] TRIAGELINE_ACCESS_CODE is empty: sign-in needs no code", flush=True)
         return
-    source = "the process environment (overrides .env files)" if _PRESET_ACCESS_CODE else ".env / livekit_agent/.env.local"
+    from dotenv import dotenv_values
+    found = {}
+    for f in _ENV_FILES:
+        value = dotenv_values(f).get("TRIAGELINE_ACCESS_CODE") if f.exists() else None
+        if value is not None:
+            found[f.relative_to(ROOT).as_posix()] = value.strip()
+    if _PRESET_ACCESS_CODE:
+        source = "an OS/shell environment variable (it overrides BOTH .env files)"
+    else:
+        source = next(iter(found), "?")
     print(f"[auth] access code loaded from {source}: {len(code)} chars, ends with {code[-1]!r}", flush=True)
+    if len(set(found.values()) | {code}) > 1:
+        print(f"[auth] WARNING: TRIAGELINE_ACCESS_CODE differs between {', '.join(found) or 'the files'} and what is "
+              f"in use. Only the value from {source} counts. Make them identical or delete the extra line.", flush=True)
     if " #" in code or code.startswith(("'", '"')) or code.endswith(("'", '"')):
         print("[auth] WARNING: the access code contains ' #' or quotes. Your env loader kept an inline comment or "
               "quotes as part of the value. Put the code alone on its line: TRIAGELINE_ACCESS_CODE=yourcode", flush=True)
@@ -261,6 +276,16 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "Session expired or unavailable")
         return s
 
+    def is_https(request: Request) -> bool:
+        # uvicorn rewrites the scheme from X-Forwarded-Proto only for trusted proxies (FORWARDED_ALLOW_IPS);
+        # also honour the header directly so a TLS proxy that is not in that list still works.
+        proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        return request.url.scheme == "https" or proto == "https"
+
+    def is_loopback(request: Request) -> bool:
+        host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        return host in {"localhost", "127.0.0.1", "::1"}
+
     def client_ip(request: Request) -> str:
         # uvicorn --proxy-headers --forwarded-allow-ips=<proxy> rewrites request.client from X-Forwarded-For.
         return request.client.host if request.client else "unknown"
@@ -306,10 +331,18 @@ def create_app() -> FastAPI:
         limiter.check(("login", client_ip(request)), 10)
         if access_code and not hmac.compare_digest(body.access_code.strip().encode(), access_code.encode()):
             raise HTTPException(401, "Invalid access code")
+        https = is_https(request)
+        # Production marks the cookie Secure. Browsers silently DROP a Secure cookie received over plain
+        # http:// (except on localhost), so the code was accepted but the next request was unauthenticated
+        # and the user was asked to sign in again forever. Refuse loudly instead of issuing a dead cookie.
+        if production and not https and not is_loopback(request):
+            raise HTTPException(400, "Access code is correct, but production sign-in needs HTTPS. Open the site "
+                                     "via https:// (TLS proxy with X-Forwarded-Proto), or set "
+                                     "TRIAGELINE_ENV=development for plain-http testing.")
         token = issue(secrets.token_hex(16))
         response = JSONResponse({"access_token": token, "token_type": "Bearer", "expires_in": TOKEN_TTL})
         response.set_cookie("tl_auth", token, max_age=TOKEN_TTL, httponly=True,
-                            secure=production or request.url.scheme == "https", samesite="strict")
+                            secure=production or https, samesite="strict")
         return response
 
     @app.get("/api/auth/me")

@@ -186,6 +186,28 @@ def test_offline_provider_boundaries(client, monkeypatch):
     assert 'Offline' in llm_planner.reply('hello')
 
 
+def test_production_plain_http_login_fails_loudly_not_silently(monkeypatch):
+    """Production + http:// on a public host: a Secure cookie would be dropped by the browser, so the
+    user could never sign in although the code was right. The server must say so instead."""
+    for name in ('TRIAGELINE_PRODUCTION', 'CORS_ORIGINS'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('TRIAGELINE_OFFLINE', '1')
+    monkeypatch.setenv('TRIAGELINE_ENV', 'production')
+    monkeypatch.setenv('TRIAGELINE_ACCESS_CODE', 'invite-code-long-enough')
+    monkeypatch.setenv('TRIAGELINE_SESSION_SECRET', 's' * 40)
+    monkeypatch.setenv('ALLOWED_HOSTS', 'app.example,localhost')
+    good = {'access_code': 'invite-code-long-enough'}
+    with TestClient(api.create_app(), base_url='http://app.example') as c:
+        assert c.post('/api/auth/login', json={'access_code': 'wrong'}).status_code == 401
+        r = c.post('/api/auth/login', json=good)
+        assert r.status_code == 400 and 'HTTPS' in r.json()['error']
+        # behind a TLS proxy (X-Forwarded-Proto: https) it works
+        r = c.post('/api/auth/login', json=good, headers={'X-Forwarded-Proto': 'https'})
+        assert r.status_code == 200 and 'Secure' in r.headers['set-cookie']
+    with TestClient(api.create_app(), base_url='http://localhost') as c:   # browsers keep Secure cookies on localhost
+        assert c.post('/api/auth/login', json=good).status_code == 200
+
+
 def test_access_code_ignores_surrounding_whitespace(monkeypatch):
     for name in ('TRIAGELINE_ENV', 'TRIAGELINE_PRODUCTION', 'ALLOWED_HOSTS', 'CORS_ORIGINS'):
         monkeypatch.delenv(name, raising=False)
