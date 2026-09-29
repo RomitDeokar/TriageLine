@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import os
-import urllib.request  # noqa: F401  (tests patch llm_planner.urllib.request.urlopen)
+import urllib.request  # noqa: F401  (tests patch llm_planner.urllib.request.urlopen)  # noqa: F401 - tests patch llm_planner.urllib.request
 from typing import Any, Dict, List, Optional
 
 from . import providers

@@ -1,7 +1,7 @@
 {
   "name": "TriageLine Live Assistant",
   "short_name": "TriageLine",
-  "description": "Interruptible real-time voice assistant (full-duplex barge-in, async tools, visual grounding).",
+  "description": "Interruptible real-time voice assistant: talk over it, correct it mid-task, show it what you mean. Actions are simulated.",
   "id": "/live.html",
   "start_url": "/live.html",
   "scope": "/",
@@ -9,7 +9,23 @@
   "orientation": "portrait",
   "background_color": "#121110",
   "theme_color": "#121110",
-  "categories": ["productivity", "utilities"],
-  "icons": [{"src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}],
-  "shortcuts": [{"name": "Evaluation console", "url": "/"}]
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Voice call",
+      "short_name": "Call",
+      "url": "/rtc.html"
+    }
+  ]
 }
