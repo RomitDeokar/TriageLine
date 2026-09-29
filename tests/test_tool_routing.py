@@ -13,9 +13,9 @@ from agent import nlu  # noqa: E402
 from livekit_agent.fdb_tools import FDB_TOOLS as T  # noqa: E402
 
 ROUTING = {
-    "I'm looking for a pair of wireless headphones and I'd like to track it under a hundred dollars "
-    "as possible. What do you have?": "search_products",
-    "Can you check where my package is, order BOB12?": "track_order",
+    "So I'm shopping for some noise cancelling earbuds and I'd prefer to stay under a hundred dollars "
+    "ideally. Anything in stock?": "search_products",
+    "Can you check where my package is, order KAT73?": "track_order",
     "I need a two bedroom place in Seattle for under 2500 a month": "search_apartments",
     "How long is the drive from downtown to the airport?": "calculate_commute",
     "Convert 100 dollars to euros": "get_exchange_rate",
@@ -24,13 +24,13 @@ ROUTING = {
     "Change the bedrooms filter to 2": "update_search_filter",
     "Add two of PROD1 to my cart": "add_to_cart",
     "Put PROD1 in my basket": "add_to_cart",
-    "Update my passport number to X1234567": "update_identity_doc",
+    "Change my passport number to X1234567": "update_identity_doc",
     "Set up autopay for my credit card from checking": "modify_autopay",
     "Pay my utilities bill automatically from checking": "modify_autopay",
     "What perks come with a platinum card?": "get_card_benefits",
     "Book me on flight FL123, name John Doe": "book_flight",
     "Any flights to Miami on Friday?": "search_flights",
-    "Where is my order BOB12": "track_order",
+    "Where is my order KAT73": "track_order",
     "I want a cheap laptop": "search_products",
 }
 
@@ -48,7 +48,7 @@ ARGS = [
     ("Convert 100 USD to EUR", "get_exchange_rate", {"amount": 100, "from_currency": "USD", "to_currency": "EUR"}),
     ("Commute time from Main Street to 5th Avenue by transit", "calculate_commute",
      {"origin_address": "Main Street", "destination_address": "5th Avenue", "mode": "transit"}),
-    ("Update my passport number to X1234567", "update_identity_doc",
+    ("Change my passport number to X1234567", "update_identity_doc",
      {"doc_type": "passport", "doc_number": "X1234567"}),
     ("Set up autopay for my credit card from checking", "modify_autopay",
      {"bill_type": "credit_card", "source_account": "checking"}),

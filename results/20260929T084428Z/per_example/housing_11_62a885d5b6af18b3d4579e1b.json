@@ -1,0 +1,48 @@
+{
+  "example_id": "housing_11",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... well... i was thinking a 1-bedroom under 1200... but actually, no wait — my partner is moving in with me, so we need a 2-bedroom, and we can go up... um, to 1600 a month.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "bedrooms": 2,
+        "max_price": 1600
+      },
+      "timestamp_start": 0.014,
+      "timestamp_end": 0.762
+    }
+  ],
+  "transcript": "Looking for 2-bedroom apartments under 1600. I started that search apartments, but the system also needs the city — what should I use?",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Looking for 2-bedroom apartments under 1600.",
+      "t": 0.014
+    },
+    {
+      "kind": "clarification_request",
+      "text": "I started that search apartments, but the system also needs the city — what should I use?",
+      "t": 0.762
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "bedrooms": 2,
+        "max_price": 1600
+      }
+    }
+  ]
+}

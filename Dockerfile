@@ -36,6 +36,7 @@ COPY --chown=app:app agent agent
 COPY --chown=app:app harness harness
 COPY --chown=app:app livekit_agent livekit_agent
 USER app
-RUN python livekit_agent/cascaded_agent.py download-files || true
+# turn-detector + silero weights baked into the image (the cascaded_agent.py entry form is deprecated)
+RUN cd livekit_agent && python -m livekit.agents download-files
 # TRIAGELINE_MODE=assistant for phone users; benchmark for the FDB-v3 runner (default).
 CMD ["python", "livekit_agent/cascaded_agent.py", "start"]

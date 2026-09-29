@@ -42,7 +42,7 @@ async def slow_tool_does_not_block():
 
     adapter = TriageAdapter(tool_executor=executor, tool_canceller=canceller, speak=speak)
     await adapter.start(FDB_TOOLS)
-    await adapter.on_user_final("Find flights to Chicago on July 15.")
+    await adapter.on_user_final("Find flights to Chicago on July 19.")
     await asyncio.sleep(0.1)
     await adapter.on_user_final("Actually, make it Denver instead.")
     await asyncio.sleep(0.3)                              # well before the slow call would finish
@@ -73,13 +73,13 @@ async def settle_merges_split_finals():
 
     adapter = TriageAdapter(tool_executor=executor, tool_canceller=noop, speak=noop, settle_s=0.3)
     await adapter.start(FDB_TOOLS)
-    await adapter.on_user_final("I need to fly to Seattle, um...")
+    await adapter.on_user_final("Get me a flight to Seattle, um...")
     await asyncio.sleep(0.1)
     await adapter.on_user_final("on November 1st.")
     await asyncio.sleep(0.6)
     await adapter.stop()
     assert len(calls) == 1, f"split finals were not merged into one request: {calls}"
-    assert calls[0][1].get("destination") == "Seattle" and "November 1" in calls[0][1].get("date", ""), calls
+    assert calls[0][1].get("destination") == "Seattle" and "November 3" in calls[0][1].get("date", ""), calls
 
 
 async def main():

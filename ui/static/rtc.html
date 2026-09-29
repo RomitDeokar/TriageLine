@@ -61,6 +61,8 @@ button:disabled{opacity:.38;cursor:not-allowed}
 #transcript p[data-who="Assistant"]::before{color:var(--accent)}
 .fine{font-size:12.5px;color:var(--mut-2);margin:0}
 audio{display:none}
+.flow{display:flex;flex-direction:column;gap:6px;margin:0 0 14px;font-size:14px;color:var(--ink-2,inherit)}
+.flow select{font:inherit;min-height:44px;padding:0 12px;border-radius:12px;border:1px solid var(--rule-2);background:none;color:var(--ink)}
 @media(max-width:560px){.orb{width:88px;height:88px}#voice-status{font-size:17px}.controls button{flex:1 1 auto}.lede{font-size:16px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -78,6 +80,12 @@ audio{display:none}
     <div class="orb" aria-hidden="true"><i></i></div>
     <p id="voice-status" role="status" aria-live="polite">Ready. Start the voice worker, then connect and allow your microphone.</p>
   </div>
+  <label class="flow">Call type
+    <select id="flow" aria-label="Call type">
+      <option value="assistant">Voice assistant (bookings, orders, housing, finance)</option>
+      <option value="triage">Triage Line — roadside / incident triage (extension)</option>
+    </select>
+  </label>
   <div class="controls">
     <button id="connect" class="primary">Start call</button>
     <button id="mute" disabled aria-pressed="true">Enable microphone</button>

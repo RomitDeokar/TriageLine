@@ -105,8 +105,9 @@ stage_1_install() {
         "$PY" -m pip install -q -r "$ROOT_DIR/requirements-fdb.txt" >>"$LOG" 2>&1 || fail "pip install failed, see $LOG"
         "$PY" -m pip install -q pytest >>"$LOG" 2>&1 || true
     fi
-    "$PY" -c 'import sys; assert (3,10) <= sys.version_info[:2] <= (3,14), sys.version' \
-        || fail "Python $("$PY" -V) is outside 3.10-3.14"
+    local pymax="(3,12)"; [ "$SKIP_INSTALL" = 1 ] && [ "$SKIP_NEMO" = 1 ] && pymax="(3,14)"
+    "$PY" -c "import sys; assert (3,10) <= sys.version_info[:2] <= $pymax, sys.version" \
+        || fail "Python $("$PY" -V) is outside the supported range (3.10-3.12; NeMo ASR used by the official runner is tested <=3.12)"
     if [ "$SKIP_NEMO" = 0 ]; then
         if "$PY" -c "import nemo.collections.asr" >/dev/null 2>&1; then
             log "NeMo ASR already installed"
@@ -116,6 +117,12 @@ stage_1_install() {
         fi
     fi
     "$PY" -c "import livekit.agents, dotenv, openai, gdown" 2>>"$LOG" || fail "core packages not importable"
+    if [ "$OFFLINE_TEXT" = 0 ] && [ "${TRIAGELINE_TURN_DETECTOR:-1}" = 1 ]; then
+        # semantic turn-detector / Silero weights must be on disk BEFORE the first room (clean machine)
+        log "downloading LiveKit plugin model weights (turn detector, silero)"
+        ( cd "$LK_DIR" && "$PY" -m livekit.agents download-files ) >>"$LOG" 2>&1 \
+            || { log "WARNING: download-files failed -> TRIAGELINE_TURN_DETECTOR=0 (VAD endpointing only)"; export TRIAGELINE_TURN_DETECTOR=0; }
+    fi
     log "python: $("$PY" -V 2>&1); livekit-agents $("$PY" -c 'import livekit.agents as a; print(a.__version__)')"
 }
 
@@ -123,7 +130,14 @@ stage_1_install() {
 stage_2_configure() {
     log "=== Stage 2/6: credentials ==="
     # load livekit_agent/.env.local if present (never printed, never copied to results/)
-    if [ -f "$LK_DIR/.env.local" ]; then set -a; . "$LK_DIR/.env.local"; set +a; log "loaded livekit_agent/.env.local"; fi
+    # repo-root .env first, then livekit_agent/.env.local (loaded last, so it wins)
+    local f
+    for f in "$ROOT_DIR/.env" "$LK_DIR/.env.local"; do
+        if [ -f "$f" ]; then set -a; . "$f"; set +a; log "loaded ${f#$ROOT_DIR/}"; fi
+    done
+    # scored configuration, pinned (reproducible): rules-only benchmark agent, rules-first LLM mode
+    export TRIAGELINE_MODE=benchmark TRIAGELINE_BENCHMARK_POLICY=1
+    export TRIAGELINE_LLM_PLANNER="${TRIAGELINE_LLM_PLANNER_OVERRIDE:-0}" TRIAGELINE_LLM_MODE=fallback
     if [ "$OFFLINE_TEXT" = 1 ]; then
         [ "$USE_LLM" = 0 ] || [ -n "${OPENAI_API_KEY:-}" ] || { log "no OPENAI_API_KEY: judge disabled (exact match)"; USE_LLM=0; }
         return 0
@@ -149,6 +163,13 @@ PYCONFIG
         USE_LLM=0
     fi
     [ ${#missing[@]} -eq 0 ] || fail "missing: ${missing[*]}. Copy livekit_agent/.env.example to livekit_agent/.env.local and fill it in (see docs/FREE_API_KEYS.md)."
+    # a key being present is not enough: prove the exact STT/TTS model names work BEFORE 100 silent examples
+    if [ "${SKIP_SPEECH_PROBE:-0}" != 1 ]; then
+        local probe="$OUT_DIR/speech_preflight.txt"
+        ( cd "$ROOT_DIR" && "$PY" scripts/check_providers.py --no-llm --speech ) >"$probe" 2>&1 && local prc=0 || local prc=$?
+        cat "$probe" >>"$LOG"; grep -E "round trip|FAIL" "$probe" || true
+        [ "$prc" = 0 ] || fail "speech preflight failed (TTS->STT round trip with STT=$stt TTS=$tts). Fix the key / model name (TRIAGELINE_STT_MODEL, TRIAGELINE_TTS_MODEL) or set SKIP_SPEECH_PROBE=1 to bypass"
+    fi
     log "credentials present (STT=$stt, TTS=$tts, judge=$([ "$USE_LLM" = 1 ] && echo gpt-4o || echo off))"
 }
 
@@ -258,7 +279,7 @@ stage_5_evaluate() {
     if [ "$FORCE" = 1 ] || [ "${KEEP_OLD_RESULTS:-0}" != 1 ]; then
         # isolate this run: stale result files from an earlier (possibly interrupted) run must never be scored
         find "$data" -name "result_${PROVIDER}.json" -delete
-        find "$data" -name "result_${PROVIDER}*.wav" -delete 2>/dev/null || true
+        find "$data" \( -name "result_${PROVIDER}*.wav" -o -name "output_${PROVIDER}*.wav" \) -delete 2>/dev/null || true
         force=(--force)
     fi
     local marker="$OUT_DIR/.inference_started"; : > "$marker"
@@ -284,9 +305,10 @@ for d in sorted(p for p in root.iterdir() if p.is_dir()):
     f = d / f"result_{prov}.json"
     try:
         data = json.loads(f.read_text())
-        if not isinstance(data, (dict, list)) or (isinstance(data, dict) and (
-                data.get("error") or str(data.get("status", "ok")).lower() in ("error", "failed", "timeout", "crash"))):
-            bad.append(d.name)
+        # only an explicitly completed run counts: the official runner also writes
+        # "inference_failed" / "no_output" results, which would silently score as zero tool calls
+        if not isinstance(data, dict) or data.get("error") or str(data.get("status", "")).lower() != "completed":
+            bad.append(f"{d.name}({data.get('status') if isinstance(data, dict) else type(data).__name__})")
     except Exception:
         bad.append(d.name)
 print(" ".join(bad))
@@ -302,6 +324,16 @@ PYCHK
     ( cd "$V3" && "$PY" evaluate_pass_rate.py --benchmark benchmark_data_v2.json --results-dir "$data" \
         --provider "$PROVIDER" --output "$OUT_DIR/${PROVIDER}_pass_rate_report.json" "${judge[@]}" ) >>"$LOG" 2>&1 \
         || fail "evaluate_pass_rate.py failed"
+    if [ "$USE_LLM" = 1 ]; then
+        # a passing preflight does not prove every item was judged (the evaluators fall back per item)
+        if "$PY" "$ROOT_DIR/scripts/judge_coverage.py" "$OUT_DIR/${PROVIDER}_evaluation_report.json" \
+                "$OUT_DIR/${PROVIDER}_pass_rate_report.json" 2>&1 | tee -a "$LOG" | head -5; then :; fi
+        if ! "$PY" "$ROOT_DIR/scripts/judge_coverage.py" "$OUT_DIR/${PROVIDER}_evaluation_report.json" \
+                "$OUT_DIR/${PROVIDER}_pass_rate_report.json" >/dev/null 2>&1; then
+            [ "$REQUIRE_JUDGE" = 1 ] && fail "some checks were NOT judged by gpt-4o (see judge coverage above); re-run with a working judge"
+            log "WARNING: some checks fell back to exact match (see judge coverage above)"
+        fi
+    fi
     if [ "$OFFLINE_TEXT" = 0 ]; then
         if [ -n "${OPENAI_API_KEY:-}" ]; then
             ( cd "$V3" && "$PY" analyze_tool_latency.py --results-dir "$data" --provider "$PROVIDER" \
@@ -347,8 +379,11 @@ print(json.dumps({
     "python": sys.version.split()[0],
     "speech": {k: sp.get(k) for k in ("stt_provider", "stt_model", "tts_provider", "tts_model", "tts_voice", "error") if k in sp},
     "stt_bias": e.get("TRIAGELINE_STT_BIAS", "1"),
-    "settle_s": e.get("TRIAGELINE_SETTLE_S", "1.6"), "max_settle_s": e.get("TRIAGELINE_MAX_SETTLE_S", "2.5"),
+    "settle_s": e.get("TRIAGELINE_SETTLE_S", "1.0"), "max_settle_s": e.get("TRIAGELINE_MAX_SETTLE_S", "2.0"),
     "benchmark_policy": e.get("TRIAGELINE_BENCHMARK_POLICY"),
+    "triageline_mode": e.get("TRIAGELINE_MODE", "benchmark"),
+    "llm_mode": e.get("TRIAGELINE_LLM_MODE", "fallback"), "llm_planner_setting": e.get("TRIAGELINE_LLM_PLANNER", "auto"),
+    "turn_detector": e.get("TRIAGELINE_TURN_DETECTOR", "1"),
     "llm_planner": {"enabled": llm_planner.enabled(), **{k: v for k, v in llm_planner.status().items() if k != "enabled"}},
     "seeds": {"mock_latency_profile": e["LATENCY"], "stt_temperature": 0, "llm_temperature": 0, "llm_seed": 7},
 }, indent=2, default=str))

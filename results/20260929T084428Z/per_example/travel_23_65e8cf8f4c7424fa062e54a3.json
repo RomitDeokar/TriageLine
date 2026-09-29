@@ -1,0 +1,73 @@
+{
+  "example_id": "travel_23",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... um... so I need to, like, update my passport number to P-1-1-2-2 because I just renewed it. And then, uh, I also got a new driver license, so could you change that one to D-L-9-0-9-0 as well?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P1122"
+      },
+      "timestamp_start": 0.023,
+      "timestamp_end": 0.024
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL9090"
+      },
+      "timestamp_start": 0.032,
+      "timestamp_end": 0.034
+    }
+  ],
+  "transcript": "Okay — updating that now (passport). Done — your document details are updated. Okay — updating that now (driver_license). Done — your document details are updated.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (passport).",
+      "t": 0.023
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your document details are updated.",
+      "t": 0.032
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (driver_license).",
+      "t": 0.032
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your document details are updated.",
+      "t": 0.034
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "passport",
+        "doc_number": "P1122"
+      }
+    },
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL9090"
+      }
+    }
+  ]
+}

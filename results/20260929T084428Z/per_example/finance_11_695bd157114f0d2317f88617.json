@@ -1,0 +1,47 @@
+{
+  "example_id": "finance_11",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um, so um, so I want to set my credit card payment to pull from, like, my savings account instead of where it is now. Could you switch that over for me?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      },
+      "timestamp_start": 0.024,
+      "timestamp_end": 0.024
+    }
+  ],
+  "transcript": "Okay — updating that now (credit_card). Done — your autopay settings are updated.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (credit_card).",
+      "t": 0.024
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your autopay settings are updated.",
+      "t": 0.025
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      }
+    }
+  ]
+}

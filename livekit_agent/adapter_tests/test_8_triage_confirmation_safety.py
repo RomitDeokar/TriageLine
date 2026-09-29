@@ -1,6 +1,6 @@
 """Triage Line confirmation-safety regression tests (audit E-01 .. E-07).
 
-Every probe from docs/audit/FULL_AUDIT_2026-09-25.md section 5 is pinned here, driven through the
+Every probe from docs/archive/audit/FULL_AUDIT_2026-09-25.md section 5 is pinned here, driven through the
 real TriageCallSession (legacy dialogue -> deliberation -> commit state machine) with the legacy
 mock STT/TTS/audio providers.
 

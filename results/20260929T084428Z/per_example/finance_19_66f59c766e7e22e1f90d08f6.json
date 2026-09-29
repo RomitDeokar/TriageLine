@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_19",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Okay so... um... I want to convert 200 euros to yen — no wait, I just remembered I need British pounds, not yen. And actually, let me change the amount too, make it 300 euros instead of 200.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 300,
+        "from_currency": "EUR",
+        "to_currency": "GBP"
+      },
+      "timestamp_start": 0.029,
+      "timestamp_end": 0.03
+    }
+  ],
+  "transcript": "Checking the EUR to GBP rate. Here's what I found: converted amount 330.0, rate 1.1.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Checking the EUR to GBP rate.",
+      "t": 0.029
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 330.0, rate 1.1.",
+      "t": 0.03
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 300,
+        "from_currency": "EUR",
+        "to_currency": "GBP"
+      }
+    }
+  ]
+}

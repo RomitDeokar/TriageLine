@@ -50,12 +50,32 @@ def configured() -> bool:
         return False
 
 
-def agent_name() -> str:
+def agent_name(flow: str | None = None) -> str:
+    """Worker to dispatch for a call flow. ``flow`` is a closed choice, never a client-supplied agent name:
+      assistant (default)  TRIAGELINE_AGENT_NAME           (cascaded_agent.py, TRIAGELINE_MODE=assistant)
+      triage               TRIAGELINE_TRIAGE_AGENT_NAME    (triage_livekit_agent.py - the extension use case)
+    """
+    if flow == "triage":
+        return os.environ.get("TRIAGELINE_TRIAGE_AGENT_NAME", "").strip()
     return os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
 
 
-def issue_token(owner: str | None = None, ttl_s: int | None = None) -> dict:
-    """Short-lived participant token for a brand-new room. ``owner`` tags the identity only."""
+FLOWS = ("assistant", "triage")
+
+
+def flows() -> dict:
+    """Which flows this gateway can route (a flow without a configured worker name is unavailable,
+    except the default assistant flow, which may use automatic dispatch)."""
+    return {"assistant": True, "triage": bool(agent_name("triage"))}
+
+
+def issue_token(owner: str | None = None, ttl_s: int | None = None, flow: str | None = None) -> dict:
+    """Short-lived participant token for a brand-new room. ``owner`` tags the identity only;
+    ``flow`` selects which allow-listed worker is dispatched (see agent_name)."""
+    flow = flow if flow in FLOWS else "assistant"
+    if flow == "triage" and not agent_name("triage"):
+        raise NotConfigured("The Triage Line flow needs TRIAGELINE_TRIAGE_AGENT_NAME on the gateway and the same "
+                            "TRIAGELINE_AGENT_NAME on the triage worker")
     url, key, secret = livekit_config()
     from livekit import api
 
@@ -67,10 +87,10 @@ def issue_token(owner: str | None = None, ttl_s: int | None = None) -> dict:
     grants = api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True,
                              can_publish_data=True, can_publish_sources=["microphone"])
     token = api.AccessToken(key, secret).with_identity(identity).with_ttl(timedelta(seconds=ttl)).with_grants(grants)
-    name = agent_name()
+    name = agent_name(flow)
     if name:
         token = token.with_room_config(api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name=name)]))
     now = int(time.time())
     return {"url": url, "token": token.to_jwt(), "room": room, "identity": identity,
-            "expires_in": ttl, "expires_at": now + ttl, "agent_name": name or None,
+            "expires_in": ttl, "expires_at": now + ttl, "agent_name": name or None, "flow": flow,
             "mode": MODE, "tools": "simulated"}

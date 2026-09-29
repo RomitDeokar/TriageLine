@@ -14,14 +14,14 @@ from livekit_agent.fdb_tools import FDB_TOOLS  # noqa: E402
 CASES = [
     ("search_flights", "search flights to Boston tomorrow"),
     ("book_flight", "book it for John Smith"),
-    ("update_identity_doc", "update my passport number to X123456"),
+    ("update_identity_doc", "change my passport number to X123456"),
     ("get_card_benefits", "what are the benefits of my platinum card"),
     ("get_exchange_rate", "convert 100 USD to EUR"),
     ("modify_autopay", "turn on autopay for utilities from checking"),
-    ("search_apartments", "find a 2 bedroom apartment in Denver under 2000"),
+    ("search_apartments", "show me a two bed apartment in Denver under 2000"),
     ("calculate_commute", "commute time from 1 Main St to 2 Oak Ave driving"),
     ("update_search_filter", "set price_range filter to under_500"),
-    ("track_order", "track order BOB12"),
+    ("track_order", "track order KAT73"),
     ("search_products", "search for headphones under 50 dollars"),
     ("add_to_cart", "add product PROD1 quantity 2 to cart"),
 ]

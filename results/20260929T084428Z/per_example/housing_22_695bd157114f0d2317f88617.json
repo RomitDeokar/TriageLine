@@ -1,0 +1,91 @@
+{
+  "example_id": "housing_22",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... uh... hmm... um... first can you update my filter so pets are allowed?... um, I keep forgetting to set that. Then, like, search in Seattle for a 1-bedroom. And then once you find something, uh, check the transit time from there to the stadium because I go to games pretty often.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      },
+      "timestamp_start": 0.04,
+      "timestamp_end": 0.233
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Seattle",
+        "bedrooms": 1
+      },
+      "timestamp_start": 0.242,
+      "timestamp_end": 0.93
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "destination_address": "the stadium",
+        "mode": "transit",
+        "origin_address": "Seattle"
+      },
+      "timestamp_start": 0.942,
+      "timestamp_end": 1.447
+    }
+  ],
+  "transcript": "Okay — updating that now (pets_allowed). Done — pets_allowed is now True. Looking for 1-bedroom apartments in Seattle. Here's what I found: duration mins 25, transit.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (pets_allowed).",
+      "t": 0.04
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — pets_allowed is now True.",
+      "t": 0.242
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Looking for 1-bedroom apartments in Seattle.",
+      "t": 0.242
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, transit.",
+      "t": 1.448
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "pets_allowed",
+        "value": true
+      }
+    },
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Seattle",
+        "bedrooms": 1
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_1.apartments[0].address",
+        "destination_address": "the stadium",
+        "mode": "transit"
+      }
+    }
+  ]
+}

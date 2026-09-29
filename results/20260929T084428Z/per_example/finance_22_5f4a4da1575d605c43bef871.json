@@ -1,0 +1,73 @@
+{
+  "example_id": "finance_22",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Well... like, first... um, I want to change my mortgage autopay so it pulls from, uh, savings — that's the right account for that. And then, um, I also want to set my credit card payment to come from checking.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "mortgage",
+        "source_account": "savings"
+      },
+      "timestamp_start": 0.033,
+      "timestamp_end": 0.034
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "checking"
+      },
+      "timestamp_start": 0.042,
+      "timestamp_end": 0.042
+    }
+  ],
+  "transcript": "Okay — updating that now (mortgage). Done — your autopay settings are updated. Okay — updating that now (credit_card). Done — your autopay settings are updated.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (mortgage).",
+      "t": 0.033
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your autopay settings are updated.",
+      "t": 0.042
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (credit_card).",
+      "t": 0.042
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your autopay settings are updated.",
+      "t": 0.042
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "mortgage",
+        "source_account": "savings"
+      }
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "checking"
+      }
+    }
+  ]
+}

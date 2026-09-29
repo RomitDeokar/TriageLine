@@ -50,8 +50,12 @@ SETTLE_S = 0.15    # let the agent's queue drain between events
 
 
 def load_registry():
-    # Bundled upstream mocks also work without a separate benchmark clone.
-    sys.path.insert(0, str(FDB_REPO if FDB_REPO.is_dir() else ROOT / "livekit_agent"))
+    # Bundled upstream mocks also work without a separate benchmark clone. APPEND (never insert at 0):
+    # the upstream v3/ directory also contains a cascaded_agent.py which must never shadow ours
+    # (the bundled mock_apis.py / latency_injector.py are byte-identical copies anyway).
+    p = str(FDB_REPO if FDB_REPO.is_dir() else ROOT / "livekit_agent")
+    if p not in sys.path:
+        sys.path.append(p)
     import mock_apis  # official, unmodified
     return mock_apis.MockAPIRegistry(latency_profile="instant", enable_logging=False)
 

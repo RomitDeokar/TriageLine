@@ -98,6 +98,10 @@ class TriageAdapter:
         # own tasks so a slow tool NEVER blocks filler speech, cancel_tool or new
         # tool calls (audit B-05: previously the pump awaited the executor inline).
         self._tool_tasks: Dict[str, asyncio.Task] = {}
+        # call_ids whose executor has started running (i.e. the request may have reached the backend).
+        # The executor's path from task start to the backend call is synchronous, so a call that is
+        # NOT in this set has provably not been dispatched and can be cancelled with no side effect.
+        self._started: set = set()
         # Utterance settling (audit B-09): LiveKit endpointing can split one spoken
         # request with a long hesitation into several finals. Finals arriving within
         # `settle_s` of each other are merged before they are routed, so the second
@@ -166,9 +170,12 @@ class TriageAdapter:
         if self._closed:
             return
         # A new speech segment owns the floor; do not commit the preceding fragment
-        # while the caller is still speaking. The next final restarts settling.
-        if self._settle_task and not self._settle_task.done():
-            self._settle_task.cancel()
+        # while the caller is still speaking. The timer is RE-ARMED with the long wait, never
+        # just cancelled: onset without a following transcript (a breath, a click, an STT that
+        # returns "" for noise) must not strand a finished request in the buffer forever.
+        # The next final (or the end of this speech segment) restarts settling normally.
+        if self._pending_final:
+            self._arm_settle(self.max_settle_s)
         if self._interrupt_speech is not None:
             try:
                 await self._interrupt_speech()
@@ -183,20 +190,36 @@ class TriageAdapter:
         if text and self.busy() and _CORRECTION_CUE.search(text):
             await self.on_user_speech_start()
 
+    async def on_user_speech_end(self):
+        """VAD end of a user speech segment. If text is buffered, commit on the normal schedule
+        (an onset may have pushed it to the long wait)."""
+        if self._closed or not self._pending_final:
+            return
+        self._arm_settle()
+
     async def on_user_final(self, text: str):
         """Final STT transcript for a user turn.
 
         With `settle_s > 0` finals are buffered briefly and merged (see B-09);
-        otherwise they are routed immediately (unit tests / offline replay)."""
+        otherwise they are routed immediately (unit tests / offline replay).
+        An EMPTY final (STT heard only noise) still restarts the commit timer for anything buffered."""
         text = (text or "").strip()
-        if not text or self._closed:
+        if self._closed:
+            return
+        if not text:
+            if self._pending_final and self.settle_s > 0:
+                self._arm_settle()
             return
         if self.settle_s <= 0:
             return await self._route_final(text)
         self._pending_final.append(text)
+        self._arm_settle()
+
+    def _arm_settle(self, delay: Optional[float] = None):
+        """(Re)start the single commit timer for the buffered transcript."""
         if self._settle_task and not self._settle_task.done():
             self._settle_task.cancel()
-        self._settle_task = asyncio.create_task(self._settle_then_route())
+        self._settle_task = asyncio.create_task(self._settle_then_route(delay))
 
     async def flush(self):
         """Route any buffered final immediately (end of stream). After close() nothing is routed (B8)."""
@@ -249,9 +272,10 @@ class TriageAdapter:
             pass
         return self.settle_s
 
-    async def _settle_then_route(self):
+    async def _settle_then_route(self, delay: Optional[float] = None):
         try:
-            await asyncio.sleep(self.settle_for(" ".join(self._pending_final)))
+            wait = self.settle_for(" ".join(self._pending_final)) if delay is None else delay
+            await asyncio.sleep(wait)
         except asyncio.CancelledError:
             return
         text, self._pending_final = " ".join(self._pending_final), []
@@ -295,6 +319,7 @@ class TriageAdapter:
     # ------------------------------------------------------ outbound (agent -> LiveKit)
     async def _run_tool(self, cid: str, api: str, args: Dict[str, Any]):
         try:
+            self._started.add(cid)
             await self._tool_executor(cid, api, args)
         except asyncio.CancelledError:
             log.info("tool task cancelled: %s (%s)", cid, api)
@@ -305,6 +330,7 @@ class TriageAdapter:
                                          status="error")
         finally:
             self._tool_tasks.pop(cid, None)
+            self._started.discard(cid)
 
     async def _pump_outputs(self):
         try:
@@ -329,13 +355,21 @@ class TriageAdapter:
                 elif action == "cancel_tool":
                     cid = payload["call_id"]
                     task = self._tool_tasks.get(cid)
-                    if task is not None and self.agent.tools.get(
-                            self._reverse_alias(self._issued.get(cid, "")), {}).get("kind") != "state_modifying":
-                        # read-only work is cancelled for real; a state-modifying call
-                        # is left to finish so its (late) outcome is reconciled by the
-                        # operation ledger instead of being silently lost (R03 / B-10)
+                    state_mod = self.agent.tools.get(
+                        self._reverse_alias(self._issued.get(cid, "")), {}).get("kind") == "state_modifying"
+                    not_dispatched = task is not None and not task.done() and cid not in self._started
+                    if task is not None and (not state_mod or not_dispatched):
+                        # read-only work is cancelled for real. A state-modifying call is cancelled for
+                        # real ONLY if it has not been dispatched yet (no side effect is possible, and it
+                        # never reaches the tool log); once dispatched it is left to finish so its (late)
+                        # outcome is reconciled by the operation ledger instead of being silently lost
+                        # (R03 / B-10). See docs/ARCHITECTURE.md "Cancellation trade-off".
                         task.cancel()
                     await self._tool_canceller(cid)
+                    if state_mod and not_dispatched:
+                        self._tool_tasks.pop(cid, None)
+                        await self.in_q.put({"event_type": "tool_cancelled",
+                                             "payload": {"call_id": cid, "confirmed": True}})
                 else:
                     log.debug("unhandled out_q action: %s", action)
         except asyncio.CancelledError:
@@ -362,16 +396,26 @@ _CORRECTION_CUE = re.compile(
 
 
 # --------------------------------------------------------------------------- LiveKit wiring
-def attach_livekit_session(session, adapter: TriageAdapter, *, room_name: str = "unknown"):
+def attach_livekit_session(session, adapter: TriageAdapter, *, room_name: str = "unknown",
+                           on_transcript: Optional[Callable[[Any], None]] = None,
+                           on_user_state: Optional[Callable[[Any], None]] = None):
     """Optional real-LiveKit wiring. Imports `livekit` lazily so this module
     (and the adapter tests) work without the package installed. Callers that
     already have a `livekit.agents.voice.AgentSession` instance can use this
     instead of hand-rolling the event handlers.
 
+    ONE handler per session event. Telemetry hooks (`on_transcript`, `on_user_state`) run
+    synchronously first, inside the same handler, so the timeline sees the event before routing.
+
     Used by cascaded_agent.py. Event names verified against livekit-agents 1.x.
     """
     @session.on("user_input_transcribed")
     def _on_transcript(msg):
+        if on_transcript is not None:
+            try:
+                on_transcript(msg)
+            except Exception as e:  # noqa: BLE001 - telemetry must never block routing
+                log.warning("transcript hook failed: %s", e)
         text, is_final = msg.transcript, msg.is_final
         if is_final:
             asyncio.create_task(adapter.on_user_final(text))
@@ -382,7 +426,15 @@ def attach_livekit_session(session, adapter: TriageAdapter, *, room_name: str = 
     # `user_state_changed` with new_state == "speaking" when the user starts talking.
     @session.on("user_state_changed")
     def _on_user_state(ev):
-        if getattr(ev, "new_state", None) == "speaking":
+        if on_user_state is not None:
+            try:
+                on_user_state(ev)
+            except Exception as e:  # noqa: BLE001
+                log.warning("user-state hook failed: %s", e)
+        new, old = getattr(ev, "new_state", None), getattr(ev, "old_state", None)
+        if new == "speaking":
             asyncio.create_task(adapter.on_user_speech_start())
+        elif old == "speaking":
+            asyncio.create_task(adapter.on_user_speech_end())
 
     return session

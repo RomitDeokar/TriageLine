@@ -39,13 +39,22 @@ const view = {
 async function credentials() {
   if (!window.isSecureContext) throw new Error('Use HTTPS or localhost for microphone access');
   await window.TriageAuth.ensure();
+  // Call flow: the general voice assistant, or the Triage Line extension (roadside / incident triage).
+  // A closed choice; the server maps it to an allow-listed worker, the client never names an agent.
+  const pick = $('flow') ? $('flow').value : 'assistant';
+  const flow = pick === 'triage' ? 'triage' : 'assistant';
   const response = await fetch('/api/rtc/token', { method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(15000) });
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ flow }),
+    signal: AbortSignal.timeout(15000) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'RTC token service unavailable; run ui.api, not ui/server.py');
   return data; // Short-lived participant token stays in memory only.
 }
 const client = createVoiceClient({ Room, RoomEvent, Track, ParticipantKind }, view, credentials);
+if ($('flow')) {
+  const q = new URLSearchParams(location.search).get('flow');
+  if (q === 'triage' || q === 'assistant') $('flow').value = q;
+}
 $('connect').onclick = () => { $('transcript').replaceChildren(); lines.clear(); void client.join(); };
 $('hangup').onclick = () => void client.leave();
 $('mute').onclick = async () => { $('mute').disabled = true; await client.toggleMic(); };

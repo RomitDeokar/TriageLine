@@ -1,0 +1,49 @@
+{
+  "example_id": "finance_01",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... i'm trying to figure out how much 500 US dollars would be if I converted it to euros. Could you check that for me?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 500,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      },
+      "timestamp_start": 0.012,
+      "timestamp_end": 0.013
+    }
+  ],
+  "transcript": "Checking the USD to EUR rate. Here's what I found: converted amount 450.0, rate 0.9.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Checking the USD to EUR rate.",
+      "t": 0.012
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 450.0, rate 0.9.",
+      "t": 0.013
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 500,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      }
+    }
+  ]
+}

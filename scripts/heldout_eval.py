@@ -55,12 +55,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--set", default=str(ROOT / "scenarios_heldout/heldout_v1.json"))
     ap.add_argument("--json")
-    ap.add_argument("--settle", type=float, default=float(os.environ.get("TRIAGELINE_SETTLE_S", "1.6")))
+    ap.add_argument("--settle", type=float, default=float(os.environ.get("TRIAGELINE_SETTLE_S", "1.0")))
     a = ap.parse_args()
     data = json.loads(Path(a.set).read_text())
     rows, by = [], defaultdict(lambda: [0, 0])
     for it in data["items"]:
-        # the live worker commit gate (cascaded_agent SETTLE_S, benchmark default 1.6 s) merges paused fragments
+        # the live worker commit gate (cascaded_agent SETTLE_S, benchmark default 1.0 s) merges paused fragments
         calls, spoken = run([(t, 0.3) for t in it["turns"]], tail=1.5, settle_s=a.settle)
         ok, why = score(it, calls)
         rows.append({"id": it["id"], "domain": it["domain"], "feature": it["feature"], "pass": ok, "why": why,
