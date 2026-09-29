@@ -85,15 +85,18 @@ def main() -> int:
             import asyncio
 
             async def synth():
-                engine = sp.build_tts(cfg)
-                t0 = time.monotonic()
-                first = None
-                samples = 0
-                async with engine.synthesize("Okay, checking that now.") as stream:
-                    async for ev in stream:
-                        first = first or time.monotonic()
-                        samples += ev.frame.samples_per_channel
-                await engine.aclose()
+                async with _http_ctx():
+                    engine = sp.build_tts(cfg)
+                    t0 = time.monotonic()
+                    first = None
+                    samples = 0
+                    async with engine.synthesize("Okay, checking that now.") as stream:
+                        async for ev in stream:
+                            first = first or time.monotonic()
+                            samples += ev.frame.samples_per_channel
+                    await engine.aclose()
+                if first is None:
+                    raise RuntimeError("TTS produced no audio")
                 print(f"  TTS OK: first audio {1000 * (first - t0):.0f} ms, {samples / 24000:.2f} s of audio")
             try:
                 asyncio.run(synth())
@@ -109,6 +112,18 @@ def main() -> int:
     return 0 if (any(ok) and speech_ok) else 1
 
 
+def _http_ctx():
+    """livekit.agents.utils.http_context.open() when available (livekit-agents >= 1.x), else a no-op."""
+    import contextlib
+    try:
+        from livekit.agents.utils import http_context
+        if hasattr(http_context, "open"):
+            return http_context.open()
+    except ImportError:
+        pass
+    return contextlib.nullcontext()
+
+
 def speech_roundtrip(sp, cfg) -> bool:
     """Synthesise a short sentence with the selected TTS, feed the audio to the selected STT, and require
     a non-empty transcript. Exercises the exact model names, keys and quota the worker will use."""
@@ -119,22 +134,25 @@ def speech_roundtrip(sp, cfg) -> bool:
     async def go():
         from livekit import rtc
         from livekit.agents import utils
-        tts = sp.build_tts(cfg)
-        frames = []
-        t0 = time.monotonic()
-        async with tts.synthesize(phrase) as stream:
-            async for ev in stream:
-                frames.append(ev.frame)
-        await tts.aclose()
-        if not frames:
-            raise RuntimeError("TTS produced no audio")
-        t_tts = time.monotonic() - t0
-        audio = rtc.combine_audio_frames(frames) if hasattr(rtc, "combine_audio_frames") else utils.merge_frames(frames)
-        stt = sp.build_stt(cfg, tools={})
-        t1 = time.monotonic()
-        ev = await stt.recognize(audio)
-        text = " ".join(a.text for a in (ev.alternatives or [])).strip()
-        await stt.aclose()
+        # Plugins call utils.http_session(), which only exists inside a worker job; outside one
+        # (this script) it raises "Attempted to use an http session outside of a job context".
+        async with _http_ctx():
+            tts = sp.build_tts(cfg)
+            frames = []
+            t0 = time.monotonic()
+            async with tts.synthesize(phrase) as stream:
+                async for ev in stream:
+                    frames.append(ev.frame)
+            await tts.aclose()
+            if not frames:
+                raise RuntimeError("TTS produced no audio")
+            t_tts = time.monotonic() - t0
+            audio = rtc.combine_audio_frames(frames) if hasattr(rtc, "combine_audio_frames") else utils.merge_frames(frames)
+            stt = sp.build_stt(cfg, tools={})
+            t1 = time.monotonic()
+            ev = await stt.recognize(audio)
+            text = " ".join(a.text for a in (ev.alternatives or [])).strip()
+            await stt.aclose()   # close while the shared http session is still open
         print(f"  speech round trip: TTS {cfg['tts_provider']}:{cfg['tts_model']} {1000 * t_tts:.0f} ms -> "
               f"STT {cfg['stt_provider']}:{cfg['stt_model']} {1000 * (time.monotonic() - t1):.0f} ms -> {text[:60]!r}")
         if not text:

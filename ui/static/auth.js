@@ -39,8 +39,14 @@
         try {
           const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ access_code: d.querySelector('input').value }) });
-          const data = await r.json();
-          if (!r.ok) throw new Error(data.error || 'Sign-in failed');
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(r.status === 429 ? 'Too many attempts. Wait a minute and try again.'
+            : (data.error || 'Sign-in failed'));
+          // The server accepted the code; confirm the browser actually kept the session cookie
+          // (a Secure cookie is dropped on plain http://, which otherwise looks like a wrong code).
+          const check = await fetch('/api/auth/me', { credentials: 'same-origin' });
+          if (!check.ok) throw new Error('Code accepted, but the browser did not keep the session cookie. '
+            + 'Open the site over https:// (or localhost), and allow cookies for this site.');
           finish(); resolve();
         } catch (err) { d.querySelector('[role=alert]').textContent = err.message; }
         finally { button.disabled = false; }
