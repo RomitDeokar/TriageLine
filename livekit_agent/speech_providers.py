@@ -5,9 +5,10 @@ legacy triage brain (extension). No LLM is involved. Only the hosted speech endp
 so the agent can run on free tiers (see docs/FREE_API_KEYS.md):
 
     TRIAGELINE_STT_PROVIDER = auto (default) | gemini | openai | groq | deepgram
-        auto = Gemini if GEMINI_API_KEY / GOOGLE_API_KEY is set, else deepgram nova-3 if DEEPGRAM_API_KEY is set, else groq whisper-large-v3-turbo if
-        GROQ_API_KEY is set, else openai whisper-1. The stronger models are the documented default (C1).
-    TRIAGELINE_TTS_PROVIDER = auto (default: Gemini > Deepgram > OpenAI) | gemini | openai | deepgram
+        auto, TRIAGELINE_MODE=benchmark (the scored FDB-v3 worker): Deepgram nova-3 (STREAMING, lowest
+              first-response latency) if DEEPGRAM_API_KEY, else Gemini, else Groq, else OpenAI whisper-1.
+        auto, TRIAGELINE_MODE=assistant (phone assistant): Gemini first, then Deepgram, Groq, OpenAI.
+    TRIAGELINE_TTS_PROVIDER = auto (benchmark: Deepgram > Gemini > OpenAI; assistant: Gemini > Deepgram > OpenAI)
 
     provider   STT model (override: TRIAGELINE_STT_MODEL)   TTS model/voice (TRIAGELINE_TTS_MODEL / _VOICE)
     openai     whisper-1                                     tts-1 / nova
@@ -38,13 +39,17 @@ class ProviderConfigError(RuntimeError):
 def selected() -> dict:
     """Resolve the provider/model choice from the environment (pure function: unit-testable)."""
     from agent.llm_planner import gemini_key
+    benchmark = os.environ.get("TRIAGELINE_MODE", "benchmark").strip().lower() == "benchmark"
+    dg, gm = bool(os.environ.get("DEEPGRAM_API_KEY")), bool(gemini_key())
+    # streaming STT/TTS first for the scored benchmark worker (first-response latency)
+    order = (("deepgram", dg), ("gemini", gm)) if benchmark else (("gemini", gm), ("deepgram", dg))
     stt = os.environ.get("TRIAGELINE_STT_PROVIDER", "auto").strip().lower()
     if stt == "auto":
-        stt = "gemini" if gemini_key() else "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else \
-            "groq" if os.environ.get("GROQ_API_KEY") else "openai"
+        stt = next((p for p, ok in order if ok), None) or \
+            ("groq" if os.environ.get("GROQ_API_KEY") else "openai")
     tts = os.environ.get("TRIAGELINE_TTS_PROVIDER", "auto").strip().lower()
     if tts == "auto":
-        tts = "gemini" if gemini_key() else "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else "openai"
+        tts = next((p for p, ok in order if ok), None) or "openai"
     if stt not in STT_DEFAULTS:
         raise ProviderConfigError(f"TRIAGELINE_STT_PROVIDER={stt!r}; use one of {sorted(STT_DEFAULTS)}")
     if tts not in TTS_DEFAULTS:
@@ -98,8 +103,8 @@ def bias_terms(tools: dict | None = None) -> list:
 
 
 def whisper_prompt(terms: list) -> str:
-    return ("Customer support call. The caller may spell IDs letter by letter, e.g. order ID ABC123, "
-            "item P52, flight DL555. Vocabulary: " + ", ".join(terms)) if terms else ""
+    return ("Customer support call. The caller may spell IDs letter by letter, e.g. order ID QRT417, "
+            "item P52, flight UA318. Vocabulary: " + ", ".join(terms)) if terms else ""
 
 
 def build_stt(cfg: dict, tools: dict | None = None):

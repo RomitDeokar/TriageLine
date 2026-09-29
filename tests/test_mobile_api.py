@@ -130,3 +130,17 @@ def test_same_origin_behind_tls_proxy_and_cross_origin_rejected(monkeypatch):
         fwd = c.post("/api/auth/login", json={}, headers={"Origin": "https://app.example",
                                                           "X-Forwarded-Host": "app.example"})
         assert fwd.status_code == 200
+
+
+def test_triage_flow_dispatches_the_extension_worker(lk, monkeypatch):
+    # the extension (Triage Line) is reachable from the same gateway through a closed flow choice
+    with pytest.raises(mobile.NotConfigured):
+        mobile.issue_token(flow="triage")               # no worker name configured -> refuse, never mis-route
+    monkeypatch.setenv("TRIAGELINE_AGENT_NAME", "triageline-assistant")
+    monkeypatch.setenv("TRIAGELINE_TRIAGE_AGENT_NAME", "triageline-triage")
+    t = mobile.issue_token(flow="triage")
+    assert t["flow"] == "triage"
+    assert _claims(t["token"])["roomConfig"]["agents"][0]["agentName"] == "triageline-triage"
+    assert _claims(mobile.issue_token(flow="bogus")["token"])["roomConfig"]["agents"][0]["agentName"] == \
+        "triageline-assistant"                            # unknown flow falls back to the assistant, never a free name
+    assert mobile.flows() == {"assistant": True, "triage": True}

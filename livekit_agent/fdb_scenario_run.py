@@ -56,7 +56,7 @@ async def scenario_single_call_per_domain():
         ("search flights to Denver tomorrow", "search_flights"),
         ("what are the benefits of my gold card", "get_card_benefits"),
         ("find a 3 bedroom apartment in Austin under 3000", "search_apartments"),
-        ("track order BOB12", "track_order"),
+        ("track order KAT73", "track_order"),
         ("search for headphones under 50 dollars", "search_products"),
     ]
     for utter, expect_api in cases:

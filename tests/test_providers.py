@@ -21,12 +21,12 @@ def _http_error(code, retry_after=None):
 
 
 def _gemini_ok(name=TOOL, args=None):
-    args = args if args is not None else ({REQ_ARG: "ABC123"} if REQ_ARG else {})
+    args = args if args is not None else ({REQ_ARG: "QRT417"} if REQ_ARG else {})
     return {"candidates": [{"content": {"parts": [{"functionCall": {"name": name, "args": args}}]}}]}
 
 
 def _openai_ok(name=TOOL, args=None, text=None):
-    args = args if args is not None else ({REQ_ARG: "ABC123"} if REQ_ARG else {})
+    args = args if args is not None else ({REQ_ARG: "QRT417"} if REQ_ARG else {})
     msg = {"content": text} if text is not None else \
         {"content": None, "tool_calls": [{"type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}
     return {"choices": [{"message": msg}]}
@@ -69,14 +69,14 @@ def test_unknown_provider_is_a_config_error(monkeypatch):
     monkeypatch.setenv("TRIAGELINE_LLM_CHAIN", "gemini,nope")
     with pytest.raises(ValueError):
         providers.chain()
-    assert planner.plan("track order ABC123", TRACK) == []
+    assert planner.plan("track order QRT417", TRACK) == []
     assert not planner.enabled()
 
 
 def test_429_retries_same_provider_then_succeeds(two_providers, monkeypatch):
     t = Transport([("generativelanguage", _http_error(429, 0.1)), ("generativelanguage", _gemini_ok())])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    calls = planner.plan("track order ABC123", TRACK)
+    calls = planner.plan("track order QRT417", TRACK)
     assert calls and calls[0]["name"] == TOOL and len(t.seen) == 2
 
 
@@ -84,7 +84,7 @@ def test_repeated_5xx_fails_over_to_next_provider(two_providers, monkeypatch):
     t = Transport([("generativelanguage", _http_error(503)), ("generativelanguage", _http_error(503)),
                    ("api.cerebras.ai", _openai_ok())])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    calls = planner.plan("track order ABC123", TRACK)
+    calls = planner.plan("track order QRT417", TRACK)
     assert calls and calls[0]["name"] == TOOL
     url, body, headers = t.seen[-1]
     assert body["tools"][0]["type"] == "function" and body["tool_choice"] == "auto"
@@ -95,9 +95,9 @@ def test_fatal_401_skips_retry_and_cools_down(two_providers, monkeypatch):
     t = Transport([("generativelanguage", _http_error(401)), ("api.cerebras.ai", _openai_ok()),
                    ("api.cerebras.ai", _openai_ok())])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    assert planner.plan("track order ABC123", TRACK)
+    assert planner.plan("track order QRT417", TRACK)
     # second request: gemini is cooling down, cerebras is called directly (no wasted round trip)
-    assert planner.plan("track order ABC123", TRACK)
+    assert planner.plan("track order QRT417", TRACK)
     assert [u for u, _, _ in t.seen].count(next(u for u, _, _ in t.seen if "generativelanguage" in u)) == 1
     st = providers.status()
     assert st["chain"][0]["cooling_down"] and st["chain"][0]["last"]["status"] == 401
@@ -107,7 +107,7 @@ def test_all_providers_fail_returns_empty_and_reply_degrades(two_providers, monk
     def boom(req, timeout):
         raise TimeoutError()
     monkeypatch.setattr("urllib.request.urlopen", boom)
-    assert planner.plan("track order ABC123", TRACK) == []
+    assert planner.plan("track order QRT417", TRACK) == []
     assert planner.reply("hello") == planner.UNAVAILABLE
 
 
@@ -116,7 +116,7 @@ def test_malformed_and_invalid_calls_are_rejected(two_providers, monkeypatch):
                                                    {"function": {"name": "rm_rf", "arguments": "{}"}}]}}]}
     t = Transport([("generativelanguage", _http_error(400)), ("api.cerebras.ai", bad)])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    assert planner.plan("track order ABC123", TRACK) == []
+    assert planner.plan("track order QRT417", TRACK) == []
 
 
 def test_reply_uses_chain_and_gemini_thinking_config(monkeypatch):
@@ -149,7 +149,7 @@ def test_history_is_truncated(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     t = Transport([("generativelanguage", _gemini_ok())])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    planner.plan("track order ABC123", TRACK, history=["x" * 10000] * 20)
+    planner.plan("track order QRT417", TRACK, history=["x" * 10000] * 20)
     payload = json.loads(t.seen[0][1]["contents"][0]["parts"][0]["text"])
     assert len(payload["previous_context"]) == 6
     assert all(len(h) <= planner.HISTORY_ITEM_CHARS for h in payload["previous_context"])
@@ -172,7 +172,7 @@ def test_custom_openai_compatible_endpoint(monkeypatch):
     monkeypatch.setenv("TRIAGELINE_LLM_MODEL_CUSTOM", "qwen3:8b")
     t = Transport([("localhost:11434", _openai_ok())])
     monkeypatch.setattr("urllib.request.urlopen", t)
-    assert planner.enabled() and planner.plan("track order ABC123", TRACK)
+    assert planner.enabled() and planner.plan("track order QRT417", TRACK)
     assert t.seen[0][1]["model"] == "qwen3:8b"
 
 

@@ -1,0 +1,71 @@
+{
+  "example_id": "ecommerce_10",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... like... like... hmm... first, can you track my order? The ID is 1-2-3-A-B-C. And then while we're at it, could you also search for winter jackets under 150 dollars?... um, I need one for my trip.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "123ABC"
+      },
+      "timestamp_start": 0.029,
+      "timestamp_end": 0.03
+    },
+    {
+      "function": "search_products",
+      "args": {
+        "query": "winter jackets",
+        "max_price": 150
+      },
+      "timestamp_start": 0.04,
+      "timestamp_end": 0.041
+    }
+  ],
+  "transcript": "Checking order 123ABC now. Here's what I found: ref 123ABC, Out for delivery. Searching for winter jackets under 150. Here's what I found: ref PROD1, winter jackets Premium, $140.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Checking order 123ABC now.",
+      "t": 0.029
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref 123ABC, Out for delivery.",
+      "t": 0.04
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Searching for winter jackets under 150.",
+      "t": 0.04
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: ref PROD1, winter jackets Premium, $140.",
+      "t": 0.041
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "track_order",
+      "args": {
+        "order_id": "123ABC"
+      }
+    },
+    {
+      "function": "search_products",
+      "args": {
+        "query": "winter jackets",
+        "max_price": 150
+      }
+    }
+  ]
+}

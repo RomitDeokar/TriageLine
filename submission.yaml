@@ -1,28 +1,36 @@
 team: "TriageLine"
-entry_point: "livekit_agent/cascaded_agent.py"   # official FDB-v3 agent: VAD -> STT -> ParticipantAgent (rules + optional schema-validated LLM chain) -> TTS
-reproduce: "./run_fdb_v3.sh --require-judge"      # fails on runner error, missing/errored/stale results
+entry_point: "livekit_agent/cascaded_agent.py"   # custom LiveKit agent: Silero VAD -> STT -> ParticipantAgent (rules first) -> TTS
+reproduce: "PYTHON=python3.12 ./run_fdb_v3.sh --require-judge"   # fails on runner error, non-'completed' / missing / stale results, unjudged items, failed speech preflight
 provider_name: "triageline"
-python: "3.12"                                     # 3.10-3.12 supported by the script; pass PYTHON=python3.12
+python: "3.12"                                     # 3.10-3.12 enforced by the script (NeMo ASR used by the official runner)
 requirements: "requirements-fdb.txt"
 fdb_commit: "3e799c45a045256f47d5f1c9cda90157e2d2ec9e"
-worker_mode: "TRIAGELINE_MODE=benchmark (default; assistant for phone users)"
+worker_mode: "TRIAGELINE_MODE=benchmark (pinned by run_fdb_v3.sh)"
 
-llm_planner:
-  enabled_by: "TRIAGELINE_LLM_PLANNER=auto (on when any chain key is set; 0 = rules only)"
-  chain: "gemini -> cerebras -> openrouter -> mistral (agent/providers.py; bounded retry + failover)"
-  default_models: { gemini: "gemini-3.5-flash-lite" }
-  temperature: 0
-  seed: 7
-speech_defaults: { stt: "gemini-3.5-flash-lite (or deepgram nova-3, streaming)", tts: "gemini-3.8-flash-lite-tts (or deepgram aura-2)" }
+scored_configuration:                              # exactly what run_fdb_v3.sh pins (also written to results/<stamp>/run_config.json)
+  llm_planner: "OFF (TRIAGELINE_LLM_PLANNER=0). Rules-only ParticipantAgent: deterministic given the transcript."
+  llm_mode: "fallback (rules first)"
+  vad: "Silero + livekit-plugins-turn-detector (weights fetched by `python -m livekit.agents download-files`)"
+  stt: "auto: Deepgram nova-3 (streaming) if DEEPGRAM_API_KEY, else Gemini gemini-3.5-flash-lite"
+  tts: "auto: Deepgram aura-2 if DEEPGRAM_API_KEY, else Gemini gemini-3.8-flash-lite-tts"
+  commit_gate: "TRIAGELINE_SETTLE_S=1.0 / TRIAGELINE_MAX_SETTLE_S=2.0"
+  judge: "official evaluators, OpenAI gpt-4o (coverage asserted by scripts/judge_coverage.py)"
 
-extension: "Mobile voice assistant: /rtc.html LiveKit WebRTC client + authenticated gateway (ui/api.py); SIMULATED tools"
+extension:
+  name: "Triage Line - roadside / incident triage"
+  entry_point: "livekit_agent/triage_livekit_agent.py (brain: livekit_agent/triage_brain.py + legacy/core/)"
+  how_to_run: "TRIAGELINE_AGENT_NAME=triageline-triage python livekit_agent/triage_livekit_agent.py dev; gateway with TRIAGELINE_TRIAGE_AGENT_NAME=triageline-triage; open /rtc.html?flow=triage"
+  behaviour: "deliberates before any consequential action; two-phase commit (PROPOSED -> PENDING_CONFIRMATION -> FINALIZED/ABORTED); corrections abort stale proposals; nothing finalizes without an explicit yes"
+  actions: "SIMULATED (in-memory dispatch log)"
+
+supporting:
+  phone_assistant: "Same worker with TRIAGELINE_MODE=assistant via /rtc.html (flow=assistant); LLM chain gemini -> cerebras -> openrouter -> mistral, T=0, seed 7, schema-validated, confirmation before state changes"
 
 # Every number states its mode. Only the live judged run is the scored benchmark result.
 reported_scores:
-  live_livekit_judged: "NOT YET RUN - required before submission: ./run_fdb_v3.sh --limit 5 --require-judge, then full run"
-  offline_text_replay_diagnostic: "85/100 exact-match, judge off, commit e019ea9 (stale; diagnostic only, not a live score)"
-  audio_replay_diagnostic: "not re-measured on this commit"
-  independent_heldout_rules_only: "26/30 (86.7%) scenarios_heldout/heldout_v1.json via scripts/heldout_eval.py"
+  live_livekit_judged: "NOT YET RUN on this commit - needs team keys: ./run_fdb_v3.sh --limit 5 --require-judge, then the full run"
+  offline_text_replay_diagnostic: "91/100 strict (official evaluator, judge off, exact match = lower bound); see results/results.md"
+  independent_heldout_rules_only: "29/30 (96.7%) scenarios_heldout/heldout_v1.json via scripts/heldout_eval.py"
 integrity:
-  audit: "python3 scripts/integrity_audit.py -> PASS (0 unreviewed benchmark overlaps in decision code)"
-  note: "Rules were developed against the public set; the hash split in fdb_split.py is NOT an independent holdout."
+  audit: "python3 scripts/integrity_audit.py --strict-comments -> PASS (decision code, comments, docstrings, test fixtures)"
+  note: "Before 2026-09-29 the audit parsed 0 utterances (wrong metadata field), so its earlier PASS was vacuous; fixed. Rules were developed against the public set, so the text replay is optimistic; the held-out set was never used to tune rules."

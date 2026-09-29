@@ -1,0 +1,47 @@
+{
+  "example_id": "travel_07",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh,... um... the new driver license number is D-L-5-5-5. Could you swap out the old one and put this new one in there?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL555"
+      },
+      "timestamp_start": 0.024,
+      "timestamp_end": 0.025
+    }
+  ],
+  "transcript": "Okay — updating that now (driver_license). Done — your document details are updated.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (driver_license).",
+      "t": 0.024
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your document details are updated.",
+      "t": 0.025
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_identity_doc",
+      "args": {
+        "doc_type": "driver_license",
+        "doc_number": "DL555"
+      }
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "example_id": "finance_18",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Um... so alright, so first,... um, I need to know how much 1000 US dollars would be in euros. Then I want to change my credit card autopay so it pulls from savings instead. And finally, can you tell me what kind of benefits the premium card has?",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      },
+      "timestamp_start": 0.026,
+      "timestamp_end": 0.027
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      },
+      "timestamp_start": 0.035,
+      "timestamp_end": 0.035
+    },
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "premium"
+      },
+      "timestamp_start": 0.04,
+      "timestamp_end": 0.041
+    }
+  ],
+  "transcript": "Checking the USD to EUR rate. Here's what I found: converted amount 900.0, rate 0.9. Okay — updating that now (credit_card). Done — your autopay settings are updated. Here's what I found: premium, 2% Cashback, No Foreign Transaction Fee.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Checking the USD to EUR rate.",
+      "t": 0.026
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 900.0, rate 0.9.",
+      "t": 0.035
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (credit_card).",
+      "t": 0.035
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — your autopay settings are updated.",
+      "t": 0.04
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: premium, 2% Cashback, No Foreign Transaction Fee.",
+      "t": 0.041
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 1000,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      }
+    },
+    {
+      "function": "modify_autopay",
+      "args": {
+        "bill_type": "credit_card",
+        "source_account": "savings"
+      }
+    },
+    {
+      "function": "get_card_benefits",
+      "args": {
+        "card_type": "premium"
+      }
+    }
+  ]
+}

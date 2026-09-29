@@ -1,0 +1,73 @@
+{
+  "example_id": "housing_13",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "You know... you know... like... you know... let's raise the max price to 3000 per month... and also bump up the minimum bedrooms to 3.... um, I think I need more space than I originally thought.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 3000
+      },
+      "timestamp_start": 0.013,
+      "timestamp_end": 0.176
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "min_bedrooms",
+        "value": 3
+      },
+      "timestamp_start": 0.185,
+      "timestamp_end": 0.261
+    }
+  ],
+  "transcript": "Okay — updating that now (max_price). Done — max_price is now 3000. Okay — updating that now (min_bedrooms). Done — min_bedrooms is now 3.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (max_price).",
+      "t": 0.013
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — max_price is now 3000.",
+      "t": 0.185
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Okay — updating that now (min_bedrooms).",
+      "t": 0.185
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — min_bedrooms is now 3.",
+      "t": 0.261
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 3000
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "min_bedrooms",
+        "value": 3
+      }
+    }
+  ]
+}

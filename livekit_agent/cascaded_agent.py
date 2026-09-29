@@ -44,7 +44,8 @@ Environment (.env.local next to this file, or exported):
     + the key of the chosen speech provider(s): OPENAI_API_KEY | GROQ_API_KEY | DEEPGRAM_API_KEY
     optional: TRIAGELINE_STT_PROVIDER / TRIAGELINE_TTS_PROVIDER (default openai),
               TRIAGELINE_STT_MODEL / TRIAGELINE_TTS_MODEL / TRIAGELINE_TTS_VOICE,
-              TRIAGELINE_SETTLE_S (default 0.9), TRIAGELINE_BACKCHANNEL (default 1)
+              TRIAGELINE_SETTLE_S (default 1.0 benchmark, 0.9 assistant), TRIAGELINE_MAX_SETTLE_S (default 2.0),
+              TRIAGELINE_BACKCHANNEL (default 1: one "Mm-hm." per substantive turn, not counted as the response)
 """
 
 from __future__ import annotations
@@ -91,9 +92,12 @@ if MODE not in ("benchmark", "assistant"):
 # The official runner reads these fixed paths; overridable for containers / assistant deployments.
 HEARTBEAT = os.environ.get("TRIAGELINE_HEARTBEAT_LOG", "/tmp/agent_heartbeat.log")
 TOOL_LOG = os.environ.get("TRIAGELINE_TOOL_LOG", "/tmp/agent_tool_calls.log")
-_default_settle = "1.6" if MODE == "benchmark" else "0.9"
-SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", _default_settle))    # commit gate (C2)
-MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.5"))     # unfinished-looking turns
+# Commit gate (C2). VAD endpointing (0.5 s) + the semantic turn detector already decide end-of-turn;
+# this gate only merges endpointer-split fragments, so it is kept short. Turns that still look
+# unfinished (dangling connective, a ranked tool missing a required argument) wait MAX_SETTLE_S.
+_default_settle = "1.0" if MODE == "benchmark" else "0.9"
+SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", _default_settle))
+MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.0"))
 # FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4).
 # Assistant mode asks and confirms instead.
 os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1" if MODE == "benchmark" else "0")
@@ -104,7 +108,8 @@ AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
 
 
 def should_backchannel(transcript: str, busy: bool, already: bool) -> bool:
-    """One short acknowledgement per room, only for substantive turns while nothing else is speaking."""
+    """One short acknowledgement per substantive user TURN (``already`` = this turn was already
+    acknowledged), only while nothing else is speaking. Short turns get none (no excessive fillers)."""
     return BACKCHANNEL and not busy and not already and len((transcript or "").split()) >= BACKCHANNEL_MIN_WORDS
 
 
@@ -145,10 +150,12 @@ class LatencyTracker:
         first = self.calls[0] if self.calls else None
         tool_start = first["start"] if first else 0.0
         tool_end = max((c["end"] for c in self.calls if c["end"]), default=0.0)
-        reasoning = (tool_start - self.user_done_at) if tool_start else 0.0
-        execution = (tool_end - tool_start) if tool_start and tool_end else 0.0
-        synthesis = self.agent_start_at - (tool_end or self.user_done_at)
-        total = self.agent_start_at - self.user_done_at
+        reasoning = max(0.0, tool_start - self.user_done_at) if tool_start else 0.0
+        execution = max(0.0, tool_end - tool_start) if tool_start and tool_end else 0.0
+        # the spoken acknowledgement can start BEFORE the tool returns (fast path): synthesis is then
+        # 0 by definition (speech was not waiting on the tool), never a negative number
+        synthesis = max(0.0, self.agent_start_at - (tool_end or self.user_done_at))
+        total = max(0.0, self.agent_start_at - self.user_done_at)
         tool_name = ",".join(c["tool"] for c in self.calls) or "none"
         report = (f"\nLATENCY BREAKDOWN ({tool_name}) for room {room_name}:\n"
                   f"  - Reasoning (ASR -> tool decision): {reasoning:.2f}s\n"
@@ -166,32 +173,38 @@ class TurnTimeline:
     """Per-turn and barge-in timing (every turn, not only the first; the official record is unchanged).
 
     Writes one ``TURN_LATENCY_JSON`` line per event to the heartbeat log:
-      * ``turn``      final transcript -> first agent audio (``response_s``)
+      * ``turn``      final transcript -> first agent audio of ANY kind (``first_audio_s``, a backchannel
+                      counts) and -> first SUBSTANTIVE audio (``substantive_s`` = ``response_s``;
+                      the "Mm-hm." backchannel never counts as the response)
       * ``barge_in``  user speech onset while the agent speaks -> agent audio stopped (``stop_s``)
     """
     def __init__(self, room: str):
         self.room = room
         self.turn_at = 0.0
+        self.first_audio_s: float | None = None
         self.turn_text = ""
         self.agent_speaking = False
         self.barge_at = 0.0
         self.records: list[dict] = []
 
     def final_transcript(self, text: str) -> None:
-        self.turn_at, self.turn_text = time.time(), (text or "")[:120]
+        self.turn_at, self.turn_text, self.first_audio_s = time.time(), (text or "")[:120], None
 
     def user_started(self) -> None:
         if self.agent_speaking and not self.barge_at:
             self.barge_at = time.time()
 
-    def agent_state(self, new: str) -> dict | None:
+    def agent_state(self, new: str, backchannel: bool = False) -> dict | None:
         now, rec = time.time(), None
         if new == "speaking":
             self.agent_speaking = True
-            if self.turn_at:
-                rec = {"type": "turn", "room": self.room, "response_s": round(now - self.turn_at, 3),
-                       "text": self.turn_text, "at": now}
-                self.turn_at = 0.0
+            if self.turn_at and self.first_audio_s is None:
+                self.first_audio_s = round(now - self.turn_at, 3)
+            if self.turn_at and not backchannel:
+                sub = round(now - self.turn_at, 3)
+                rec = {"type": "turn", "room": self.room, "first_audio_s": self.first_audio_s,
+                       "substantive_s": sub, "response_s": sub, "text": self.turn_text, "at": now}
+                self.turn_at, self.first_audio_s = 0.0, None
         else:
             if self.agent_speaking and self.barge_at:
                 rec = {"type": "barge_in", "room": self.room, "stop_s": round(now - self.barge_at, 3), "at": now}
@@ -242,6 +255,12 @@ server = AgentServer(setup_fnc=prewarm)
 async def entrypoint(ctx: agents.JobContext):
     registry = MockAPIRegistry(latency_profile=LATENCY_PROFILE)
     room_name = ctx.room.name
+    # no state crosses conversations: provider cooldowns / last-status from a previous room are reset
+    try:
+        from agent import providers as _providers
+        _providers.reset_state()
+    except Exception:  # noqa: BLE001 - planner optional
+        pass
     await append_async(HEARTBEAT, f"!!! CASCADED AGENT JOINING ROOM: {room_name} at {time.ctime()} !!!")
     print(f"!!! CASCADED AGENT JOINING ROOM: {room_name} !!!")
 
@@ -289,38 +308,44 @@ async def entrypoint(ctx: agents.JobContext):
     adapter = TriageAdapter(tool_executor=tool_executor, tool_canceller=tool_canceller, speak=speak,
                             settle_s=SETTLE_S, max_settle_s=MAX_SETTLE_S, interrupt_speech=interrupt_speech)
     await adapter.start(FDB_TOOLS)
-    attach_livekit_session(session, adapter, room_name=room_name)
 
-    @session.on("user_input_transcribed")
-    def on_user_input(msg: agents.voice.UserInputTranscribedEvent):
+    # per-turn backchannel state: one "Mm-hm." per substantive user turn, never counted as the response
+    turn_state = {"acknowledged": False, "backchannel_pending": False}
+
+    def on_transcript(msg) -> None:
+        """Telemetry + fast-path acknowledgement; runs inside the adapter's single transcript handler."""
         logging.info("STT TRANSCRIPT: '%s' (is_final=%s)", msg.transcript, msg.is_final)
-        if msg.is_final:
-            timeline.final_transcript(msg.transcript)
-        if msg.is_final and not tracker.query_received:
+        if not msg.is_final or not (msg.transcript or "").strip():
+            return
+        timeline.final_transcript(msg.transcript)
+        if not tracker.query_received:
             tracker.user_done_at = time.time()    # same anchor as the upstream template
             tracker.query_received = True
-            if should_backchannel(msg.transcript, adapter.busy(), getattr(tracker, "backchannelled", False)):
-                tracker.backchannelled = True
-                # immediate acknowledgement while the utterance settles (fast path). It is NOT counted
-                # as the first response (B17): latency is stamped on the first substantive line.
-                tracker.backchannel_pending = True
-                session.say("Mm-hm.", allow_interruptions=True, add_to_chat_ctx=False)
+        if should_backchannel(msg.transcript, adapter.busy(), turn_state["acknowledged"]):
+            turn_state["acknowledged"] = True
+            # immediate acknowledgement while the utterance settles (fast path). It is NOT counted
+            # as the first response (B17): latency is stamped on the first substantive line.
+            turn_state["backchannel_pending"] = True
+            session.say("Mm-hm.", allow_interruptions=True, add_to_chat_ctx=False)
 
-    @session.on("user_state_changed")
-    def on_user_state(ev):
+    def on_user_state(ev) -> None:
         if getattr(ev, "new_state", None) == "speaking":
             timeline.user_started()
+            turn_state["acknowledged"] = False    # a new user turn may be acknowledged again
+
+    attach_livekit_session(session, adapter, room_name=room_name,
+                           on_transcript=on_transcript, on_user_state=on_user_state)
 
     @session.on("agent_state_changed")
     def on_agent_state(ev: agents.voice.AgentStateChangedEvent):
-        rec = timeline.agent_state(ev.new_state)
+        is_bc = ev.new_state == "speaking" and turn_state["backchannel_pending"]
+        if is_bc:
+            turn_state["backchannel_pending"] = False     # the "Mm-hm." itself: not a substantive reply
+        rec = timeline.agent_state(ev.new_state, backchannel=is_bc)
         if rec:
             asyncio.create_task(append_async(HEARTBEAT, "TURN_LATENCY_JSON: " + json.dumps(rec)))
         # stamp the moment audio actually starts, not when speech was queued (audit B-07)
-        if ev.new_state == "speaking" and tracker.query_received and not tracker.agent_start_at:
-            if getattr(tracker, "backchannel_pending", False):
-                tracker.backchannel_pending = False     # the "Mm-hm." itself: not a substantive reply
-                return
+        if ev.new_state == "speaking" and not is_bc and tracker.query_received and not tracker.agent_start_at:
             tracker.agent_start_at = time.time()
 
     async def _flush_latency():
@@ -358,8 +383,11 @@ async def entrypoint(ctx: agents.JobContext):
 
     await session.start(room=ctx.room, agent=CascadedVoiceAgent())
     from livekit_agent.speech_providers import describe
-    print(f"!!! TRIAGELINE CASCADED AGENT STARTED [{MODE}{', agent_name=' + AGENT_NAME if AGENT_NAME else ''}]: "
-          f"{describe()} !!!")
+    banner = (f"!!! TRIAGELINE CASCADED AGENT STARTED [{MODE}{', agent_name=' + AGENT_NAME if AGENT_NAME else ''}; "
+              f"settle={SETTLE_S}s/{MAX_SETTLE_S}s; llm_mode={os.environ.get('TRIAGELINE_LLM_MODE', 'fallback')}]: "
+              f"{describe()} !!!")
+    print(banner)
+    await append_async(HEARTBEAT, banner)
 
 
 if __name__ == "__main__":

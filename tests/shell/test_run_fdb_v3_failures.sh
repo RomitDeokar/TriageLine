@@ -17,4 +17,6 @@ expect() { local mode=$1 want=$2 got; rm -f data/*/result_*; [ "$mode" = stale ]
   got=$(STUB=$([ "$mode" = stale ] && echo partial || echo "$mode") bash harness.sh 2>&1 | tail -1)
   case "$got" in "$want"*) echo "ok   $mode";; *) echo "FAIL $mode: $got"; exit 1;; esac; }
 expect ok PASSED; expect crash FAIL; expect partial FAIL; expect bad FAIL; expect stale FAIL
+# official runner failure statuses and a result with no status must never be scored as valid
+expect inference_failed FAIL; expect no_output FAIL; expect nostatus FAIL
 echo "all run_fdb_v3.sh failure-detection checks passed"

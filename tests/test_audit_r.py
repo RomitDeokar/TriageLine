@@ -1,4 +1,4 @@
-"""Regression tests for the independent audit, findings R01–R22 (docs/audit/AUDIT_R01-R22.md).
+"""Regression tests for the independent audit, findings R01–R22 (docs/archive/audit/AUDIT_R01-R22.md).
 
 Every test drives the real ParticipantAgent through its two queues and injects tool results by hand,
 so each race is deterministic. Each test is named after the finding it pins.

@@ -52,7 +52,7 @@ def test_primary_planner_handles_complete_request(monkeypatch):
     from tests._probe import run
     monkeypatch.setenv("TRIAGELINE_LLM_PLANNER", "1")
     with patch.object(planner, "plan", return_value=[{"name": "track_order", "args": {"order_id": "REPAIRED9"}}]) as plan:
-        calls, _ = run(["Track order ABC123"], tail=0.2)
+        calls, _ = run(["Track order QRT417"], tail=0.2)
     assert plan.called
     assert calls == [("track_order", {"order_id": "REPAIRED9"})]
 
@@ -61,9 +61,9 @@ def test_failed_planner_falls_back_without_loop(monkeypatch):
     from tests._probe import run
     monkeypatch.setenv("TRIAGELINE_LLM_PLANNER", "1")
     with patch.object(planner, "plan", return_value=[]) as plan:
-        calls, _ = run(["Track order ABC123"], tail=0.2)
+        calls, _ = run(["Track order QRT417"], tail=0.2)
     assert plan.call_count == 1
-    assert calls == [("track_order", {"order_id": "ABC123"})]
+    assert calls == [("track_order", {"order_id": "QRT417"})]
 
 
 def test_multiple_slots_in_clarification_answer():
@@ -89,7 +89,7 @@ def test_browser_chain_and_dedup():
     from ui.live import LiveSession
     session = LiveSession("test-chain")
     try:
-        session.user_text("Search for a desk under 200 dollars then add it to my cart", False)
+        session.user_text("Search for a desk under 200 dollars then put it in the basket", False)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if any(e.get("api") == "add_to_cart" and e.get("status") == "done" for e in session.log):
@@ -115,10 +115,10 @@ def test_browser_gemini_audio_uses_container_and_no_fake_confidence(tmp_path, mo
     captured = []
     def request(req, timeout):
         captured.append(json.loads(req.data))
-        return io.BytesIO(json.dumps({"candidates": [{"content": {"parts": [{"text": "Track order ABC123"}]}}]}).encode())
+        return io.BytesIO(json.dumps({"candidates": [{"content": {"parts": [{"text": "Track order QRT417"}]}}]}).encode())
     with patch("urllib.request.urlopen", request), patch.object(perception, "load_asr", side_effect=AssertionError("local ASR must not load")):
         result = perception.transcribe(str(audio))
-    assert result["text"] == "Track order ABC123"
+    assert result["text"] == "Track order QRT417"
     assert result["words"] == [] and result["confidence_available"] is False
     assert captured[0]["contents"][0]["parts"][1]["inlineData"]["mimeType"] == "audio/wav"
 
@@ -143,13 +143,13 @@ def test_real_livekit_gemini_stt_and_tts():
                 return {"candidates": [{"content": {"parts": [{"inlineData": {
                     "mimeType": "audio/L16;codec=pcm;rate=24000", "data": base64.b64encode(b"\0" * 9600).decode()}}]}}]}
             assert body["contents"][0]["parts"][1]["inlineData"]["mimeType"] == "audio/wav"
-            return {"candidates": [{"content": {"parts": [{"text": "Track order ABC123"}]}}]}
+            return {"candidates": [{"content": {"parts": [{"text": "Track order QRT417"}]}}]}
         with patch.object(speech, "generate", generated):
             frame = rtc.AudioFrame(data=b"\0" * 3200, sample_rate=16000, num_channels=1, samples_per_channel=1600)
             recognizer = speech.GeminiSTT()
             event = await recognizer.recognize(frame)
             assert event.type == stt.SpeechEventType.FINAL_TRANSCRIPT
-            assert event.alternatives[0].text == "Track order ABC123"
+            assert event.alternatives[0].text == "Track order QRT417"
             engine = speech.GeminiTTS(model="gemini-2.5-flash-preview-tts")  # unary generateContent path
             async with engine.synthesize("Done") as stream:
                 frames = [e.frame async for e in stream]
@@ -204,22 +204,22 @@ def test_missing_hosted_speech_key_is_explicit(monkeypatch):
 
 
 def test_new_request_supersedes_unrelated_clarification():
-    """'what amount?' followed by 'track my order ABC123' must track, not convert 123 USD."""
+    """'what amount?' followed by 'track my order QRT417' must track, not convert 123 USD."""
     from ui import live
 
     sess = live.SESSIONS.start()
     try:
         sess.user_text("what's the exchange rate from USD to EUR", False)
         time.sleep(0.6)
-        sess.user_text("track my order ABC123", False)
+        sess.user_text("track my order QRT417", False)
         deadline = time.time() + 5
         while time.time() < deadline and not any(
                 e.get("kind") == "task" and e.get("status") == "done" for e in sess.log):
             time.sleep(0.1)
         calls = [(e["api"], e.get("args")) for e in sess.log if e.get("kind") == "task" and e.get("status") == "running"]
-        assert calls == [("track_order", {"order_id": "ABC123"})]
+        assert calls == [("track_order", {"order_id": "QRT417"})]
         final = [e["text"] for e in sess.log if e.get("action") == "final_response"][-1]
-        assert "Chicago" not in final and "ABC123" in final
+        assert "Chicago" not in final and "QRT417" in final
     finally:
         live.SESSIONS.end(sess.sid)
 

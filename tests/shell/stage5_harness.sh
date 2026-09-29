@@ -10,7 +10,9 @@ d = pathlib.Path(sys.argv[sys.argv.index("--data")+1]); p = sys.argv[sys.argv.in
 mode = os.environ.get("STUB", "ok")
 for i, e in enumerate(sorted(d.iterdir())):
     if mode == "partial" and i == 1: continue
-    (e / f"result_{p}.json").write_text(json.dumps({"status": "timeout" if mode == "bad" and i == 0 else "completed"}))
+    bad = {"bad": "timeout", "inference_failed": "inference_failed", "no_output": "no_output", "nostatus": None}
+    st = bad[mode] if mode in bad and i == 0 else "completed"
+    (e / f"result_{p}.json").write_text(json.dumps({"status": st} if st else {"actual_tool_calls": []}))
 sys.exit(3 if mode == "crash" else 0)
 PYX
 cat > evaluate_tool_calls.py <<PYX

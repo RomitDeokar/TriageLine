@@ -1,0 +1,49 @@
+{
+  "example_id": "housing_02",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Hmm... uh... like, could you tell me how long it would take to drive from 101 Main Street to the Downtown Office during a normal day?... um...... um, I want to make sure it's reasonable.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "101 Main Street",
+        "destination_address": "Downtown Office",
+        "mode": "driving"
+      },
+      "timestamp_start": 0.016,
+      "timestamp_end": 0.667
+    }
+  ],
+  "transcript": "Working out the commute from 101 Main Street to Downtown Office. Here's what I found: duration mins 25, driving.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Working out the commute from 101 Main Street to Downtown Office.",
+      "t": 0.016
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, driving.",
+      "t": 0.667
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "101 Main Street",
+        "destination_address": "Downtown Office",
+        "mode": "driving"
+      }
+    }
+  ]
+}

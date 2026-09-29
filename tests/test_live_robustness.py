@@ -9,7 +9,7 @@ import pytest
 from tests._probe import drive, run
 from agent import nlu
 
-SPLIT = ["Hi, I want to track my order.", "Let me find the order number here.", "It's X Y Z eight eight."]
+SPLIT = ["Hi, I want to track my order.", "Let me find the order number here.", "It's M N V six four."]
 
 
 @pytest.fixture(autouse=True)
@@ -26,12 +26,12 @@ def calls_of(calls, api):
 def test_split_utterance_with_settle_gate(gap):
     # settle window (scaled 10x down) longer than the inter-fragment gap -> one merged, committed turn
     c, _ = run([(f, gap) for f in SPLIT], settle_s=0.3, tail=0.5)
-    assert c == [("track_order", {"order_id": "XYZ88"})], c
+    assert c == [("track_order", {"order_id": "MNV64"})], c
 
 
 def test_split_utterance_no_settle_never_uses_sentence_as_id():
-    c, _ = run(["Hi, I want to track my order.", "Could you track it for me?", "It's B O B one two"])
-    assert c == [("track_order", {"order_id": "BOB12"})], c
+    c, _ = run(["Hi, I want to track my order.", "Would you look that up for me?", "It's K A T seven three"])
+    assert c == [("track_order", {"order_id": "KAT73"})], c
 
 
 def test_split_into_five_fragments():
@@ -44,7 +44,7 @@ def test_unfinished_turn_waits_longer():
     from livekit_agent.adapter import turn_looks_unfinished
     assert turn_looks_unfinished("Could you track my order and")
     assert turn_looks_unfinished("Let me find the order number, um")
-    assert not turn_looks_unfinished("Track order BOB12.")
+    assert not turn_looks_unfinished("Track order KAT73.")
 
 
 # ---------------------------------------------------------------- corrections (B3, C3)
@@ -62,8 +62,8 @@ def test_correction_after_completed_read_redoes_it():
 
 
 def test_same_read_twice_is_logged_once():
-    c, _ = run([("Track order BOB12", 0.3), ("Track order BOB12", 0.3)])
-    assert calls_of(c, "track_order") == [{"order_id": "BOB12"}], c
+    c, _ = run([("Track order KAT73", 0.3), ("Track order KAT73", 0.3)])
+    assert calls_of(c, "track_order") == [{"order_id": "KAT73"}], c
 
 
 def test_same_state_change_twice_is_logged_once():
@@ -72,32 +72,32 @@ def test_same_state_change_twice_is_logged_once():
 
 
 # ---------------------------------------------------------------- clarification answers (B1, B2)
-@pytest.mark.parametrize("answer", ["A-B-C-1-2-3", "The order ID is A-B-C-1-2-3", "it's A B C one two three"])
+@pytest.mark.parametrize("answer", ["Q-R-T-4-1-7", "The order ID is Q-R-T-4-1-7", "it's Q R T four one seven"])
 def test_clarification_answered_bare_or_sentence(answer, monkeypatch):
     monkeypatch.setenv("TRIAGELINE_BENCHMARK_POLICY", "0")
-    c, _ = run([("Can you track my order", 0.2), (answer, 0.2)])
-    assert c == [("track_order", {"order_id": "ABC123"})], c
+    c, _ = run([("Please check on my parcel", 0.2), (answer, 0.2)])
+    assert c == [("track_order", {"order_id": "QRT417"})], c
 
 
 def test_clarification_answered_with_new_intent(monkeypatch):
     monkeypatch.setenv("TRIAGELINE_BENCHMARK_POLICY", "0")
-    c, _ = run([("Can you track my order", 0.2), ("Actually, search for headphones under 100", 0.3)])
+    c, _ = run([("Please check on my parcel", 0.2), ("Actually, search for headphones under 100", 0.3)])
     assert calls_of(c, "search_products") and not calls_of(c, "track_order"), c
 
 
 # ---------------------------------------------------------------- spoken ids / ASR confusions (C1, B6)
 @pytest.mark.parametrize("spoken,want", [
-    ("order number is x, y, z, eight, eight", "XYZ88"), ("item P five two", "P52"),
-    ("flight DL double five five", "DL555"), ("item Kilo two", "K2"), ("order ID B O B one two", "BOB12")])
+    ("order number is m, n, v, six, four", "MNV64"), ("item P five two", "P52"),
+    ("flight U A three one eight", "UA318"), ("item Kilo two", "K2"), ("order ID K A T seven three", "KAT73")])
 def test_spoken_alphanumerics(spoken, want):
     assert want in nlu.normalize_asr(spoken)
 
 
 @pytest.mark.parametrize("heard,api,args", [
-    ("add two of item P five two to my card", "add_to_cart", {"product_id": "P52", "quantity": 2}),
-    ("the idea is 1, 2, 3, ABC, where's my package", "track_order", {"order_id": "123ABC"}),
+    ("add two of item R eight four to my card", "add_to_cart", {"product_id": "R84", "quantity": 2}),
+    ("the idea is 4, 1, 7, QRT, where's my package", "track_order", {"order_id": "417QRT"}),
     ("where is it? the origin number is x, y, c, eight, eight", "track_order", {"order_id": "XYC88"}),
-    ("add, like, 2 of item P-5-2", "add_to_cart", {"product_id": "P52", "quantity": 2}),
+    ("put, like, 3 of product R-8-4 in the basket", "add_to_cart", {"product_id": "R84", "quantity": 3}),
 ])
 def test_asr_confusions(heard, api, args):
     c, _ = run([heard])
@@ -121,8 +121,8 @@ def test_greeting_reply_is_short():
 
 
 def test_greeting_then_request():
-    c, _ = run(["Hi! Track order BOB12 please."])
-    assert c == [("track_order", {"order_id": "BOB12"})]
+    c, _ = run(["Hi! Track order KAT73 please."])
+    assert c == [("track_order", {"order_id": "KAT73"})]
 
 
 def test_unknown_domain_makes_no_call():
@@ -172,11 +172,11 @@ def test_close_drops_buffered_text_no_late_call():
             pass
         ad = TriageAdapter(tool_executor=ex, tool_canceller=noop, speak=noop, settle_s=0.5)
         await ad.start(FDB_TOOLS)
-        await ad.on_user_final("Track order BOB12")
+        await ad.on_user_final("Track order KAT73")
         ad.close()
         ad.close()                       # idempotent
         await ad.flush()
-        await ad.on_user_final("Track order XYZ88")
+        await ad.on_user_final("Track order MNV64")
         await asyncio.sleep(0.7)
         await ad.stop()
         return calls

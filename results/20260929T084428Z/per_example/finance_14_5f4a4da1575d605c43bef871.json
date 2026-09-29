@@ -1,0 +1,77 @@
+{
+  "example_id": "finance_14",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Like... first, can you tell me how much 50 US dollars would be in euros? And then also, how much would 100 Canadian dollars be in US dollars?... um, I need both numbers.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 50,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      },
+      "timestamp_start": 0.024,
+      "timestamp_end": 0.025
+    },
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 100,
+        "from_currency": "CAD",
+        "to_currency": "USD"
+      },
+      "timestamp_start": 0.034,
+      "timestamp_end": 0.035
+    }
+  ],
+  "transcript": "Checking the USD to EUR rate. Here's what I found: converted amount 45.0, rate 0.9. Checking the CAD to USD rate. Here's what I found: converted amount 90.0, rate 0.9.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Checking the USD to EUR rate.",
+      "t": 0.024
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 45.0, rate 0.9.",
+      "t": 0.034
+    },
+    {
+      "kind": "filler_speech",
+      "text": "Checking the CAD to USD rate.",
+      "t": 0.034
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: converted amount 90.0, rate 0.9.",
+      "t": 0.036
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 50,
+        "from_currency": "USD",
+        "to_currency": "EUR"
+      }
+    },
+    {
+      "function": "get_exchange_rate",
+      "args": {
+        "amount": 100,
+        "from_currency": "CAD",
+        "to_currency": "USD"
+      }
+    }
+  ]
+}

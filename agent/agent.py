@@ -59,6 +59,18 @@ class _Policy:
 BENCHMARK_POLICY = _Policy()
 
 
+def llm_mode() -> str:
+    """How an ENABLED planner is used (TRIAGELINE_LLM_MODE):
+      fallback  rules first; the planner is consulted only when the rules cannot build a complete call.
+                Default under the benchmark policy (FDB-v3 worker, offline replay).
+      primary   planner first for every tool task, rules as the fallback. Default for interactive
+                (phone-assistant) sessions, where open-ended phrasing matters more than determinism.
+    With the planner disabled (TRIAGELINE_LLM_PLANNER=0, as run_fdb_v3.sh pins it) both are rules-only."""
+    default = "fallback" if _benchmark_policy() else "primary"
+    m = os.environ.get("TRIAGELINE_LLM_MODE", default).strip().lower()
+    return m if m in ("fallback", "primary") else default
+
+
 def _canon(v: Any) -> Any:
     """Canonical form for idempotency keys: recursive, whitespace/case-insensitive for free
     text, but ids (FL-/BK-/TK- …) keep their exact case."""
@@ -143,10 +155,15 @@ class ParticipantAgent:
         self.chat_history: list[str] = []                 # bounded user/assistant dialogue memory
         self.pending_confirm: Optional[Dict[str, Any]] = None  # LLM-proposed side effect awaiting "yes"
         self._planner_skip = False
+        self.llm_queue: List[Dict[str, Any]] = []         # remaining validated planner calls (in order)
+        self.llm_queue_version = -1
         self.answered = False
         self.tasks: set = set()
         self.read_results: dict = {}
         self.read_keys: set = set()                       # op keys of read-only calls already issued (C3)
+        self.filters: Dict[str, Any] = {}                 # search filters committed this session (by name)
+        self.last_failed: Optional[Dict[str, Any]] = None  # last read-only call that returned an error
+        self._chained = False                             # executing a later clause of one spoken request
         self.last_done: Optional[Dict[str, Any]] = None   # last completed read-only call (B3)
         # vision: bounded, latest-frame-wins
         self.frame: Optional[Dict[str, Any]] = None
@@ -264,6 +281,27 @@ class ParticipantAgent:
         elif et == INTERNAL:
             await self.on_internal(p)
 
+    async def _exec_planned(self, call: Dict[str, Any], turn: Optional[str]) -> None:
+        """Execute ONE schema-validated planner call through the same gates as rule-built calls."""
+        api, args = call["name"], call["args"]
+        if self.needs_confirmation(api):
+            # Interactive policy: an LLM-proposed real-effect action is never executed on the
+            # model's word alone. Read the complete, validated arguments back and wait for "yes".
+            self.pending_confirm = {"api": api, "args": args, "version": self.version}
+            self.state["intent"] = api
+            self._remember(turn, None)
+            return await self.say("clarification_request", self.confirm_prompt(api, args))
+        self.last_api = api
+        self.state["intent"] = api
+        self.state["slots"].update(args)
+        await self.say("filler_speech", self.ack(api, args))
+        if api == "book_flight":
+            # A model recommendation must not bypass the replacement/unknown-outcome gate.
+            await self.issue_booking(args, dict(args))
+        else:
+            await self.call(api, args, deps=dict(args))
+        self.note("llm_planner_used", api)
+
     async def on_internal(self, p: Dict[str, Any]):
         kind = p.get("kind")
         if kind == "planner_done":
@@ -283,25 +321,12 @@ class ParticipantAgent:
                 finally:
                     self._planner_skip = False
                 return
-            call = calls[0]
-            api, args = call["name"], call["args"]
-            if self.needs_confirmation(api):
-                # Interactive policy: an LLM-proposed real-effect action is never executed on the
-                # model's word alone. Read the complete, validated arguments back and wait for "yes".
-                self.pending_confirm = {"api": api, "args": args, "version": self.version}
-                self.state["intent"] = api
-                self._remember(pending["turn"], None)
-                return await self.say("clarification_request", self.confirm_prompt(api, args))
-            self.last_api = api
-            self.state["intent"] = api
-            self.state["slots"].update(args)
-            await self.say("filler_speech", self.ack(api, args))
-            if api == "book_flight":
-                # A model recommendation must not bypass the replacement/unknown-outcome gate.
-                await self.issue_booking(args, dict(args))
-            else:
-                await self.call(api, args, deps=dict(args))
-            self.note("llm_planner_used", api)
+            # a validated multi-step plan is executed IN ORDER, one call at a time (never dropped):
+            # the remaining calls are queued under the current epoch and drained by _drain_compound
+            # once the previous call has completed; an interruption (epoch bump) discards them
+            self.llm_queue = [dict(c) for c in calls[1:]]
+            self.llm_queue_version = self.version
+            await self._exec_planned(calls[0], pending["turn"])
         elif kind == "asr_done":
             if p["version"] != self.version:
                 return self.note("stale_asr_dropped")
@@ -702,8 +727,8 @@ class ParticipantAgent:
     # ------------------------------------------------------------------ compound requests
     # a hesitation ellipsis ("I need... uh, a lamp") is a pause, not a sentence end: only a
     # single terminal punctuation mark (or a clause connective) separates independent requests
-    # the terminal punctuation is KEPT on the clause (lookbehind), so "...name Robin. Then" never
-    # glues "Skyler Then" into one name and "P-O-9? I've" never extends a spelled id
+    # the terminal punctuation is KEPT on the clause (lookbehind), so a proper noun that ends one sentence
+    # is never merged with the next clause's connective, and a spelled id is never extended by it
     _SPLIT = re.compile(r"(?:(?<=[?!])\s+|(?<=[^.]\.)\s+|\s+(?=\b(?:and then|then|and also|also|oh and|and while you'?re at it|"
                         r"while you'?re at it|after that|once you find|once that'?s done|plus)\b))", re.I)
     _ANAPHORA = re.compile(r"\b(it|that one|them|whatever you find|what you find|something|the first one|"
@@ -761,8 +786,8 @@ class ParticipantAgent:
                     a1, m1 = nlu.build_args(self.tools.get(tool, {}), ptext, {})
                     a2, m2 = nlu.build_args(self.tools.get(tool, {}), text, {})
                     # two requests are independent only if EACH is complete on its own and they differ;
-                    # "check that one. The reference is X" is one request whose slot arrives later
-                    # and neither is a refinement of the other ("a kettle! ... a kettle under 40")
+                    # a request whose argument arrives in a later sentence is ONE request, and a repeat
+                    # that only adds a constraint (same object, plus a budget) is a refinement
                     refine = all(a2.get(k) == v for k, v in a1.items()) or all(a1.get(k) == v for k, v in a2.items())
                     independent = not m1 and not m2 and a1 != a2 and not refine
                 if same_family and not independent:
@@ -776,8 +801,8 @@ class ParticipantAgent:
                        r"update|set|change|calculate|track|search|find|get|modify|turn|cancel)\b))(.*)$")
 
     def _split_more(self, parts: List[str]) -> List[str]:
-        """B7: split ", and <action>" / "if ..." clauses and multi-filter lists ("parking to true and
-        laundry to in-unit") into their own clause groups, inheriting the verb prefix of the previous one."""
+        """B7: split ", and <action>" / "if ..." clauses and lists of <target> to <value> pairs for the same
+        action into their own clause groups, each inheriting the verb prefix of the previous one."""
         out: List[str] = []
         for p in parts:
             pieces = [x.strip(" ,") for x in self._AND_SPLIT.split(p) if x and x.strip(" ,.")]
@@ -789,7 +814,11 @@ class ParticipantAgent:
                 prev_tool = self._clause_tool(acc) or (self._clause_tool(out[-1]) if out else None)
                 x_tool = self._clause_tool(x)
                 cond = self._COND.match(x)
-                if cond:
+                # a politeness hedge ("if possible", "if you can", "if that's ok") is not a condition
+                # step: only a conditional carrying an action or a checkable comparison is split off
+                if cond and (self._clause_tool(x) or re.search(
+                        r"(?i)\b(under|below|less than|cheaper|over|above|more than|at least|at most|longer|"
+                        r"shorter|\d)", x)):
                     out.append(acc)
                     acc = x
                     continue
@@ -800,13 +829,23 @@ class ParticipantAgent:
                 if not x_tool and prev_tool:
                     spec = self.tools.get(prev_tool, {})
                     a1, m1 = nlu.build_args(spec, acc, {})
-                    first = next((str(v) for v in a1.values() if isinstance(v, str) and v in acc), None)
-                    if first and not m1:
-                        prefix = acc[:acc.find(first)]
+                    first_key = next((k for k, v in a1.items() if isinstance(v, str) and v in acc), None)
+                    if first_key and not m1:
+                        # 1) a fragment that only ADDS arguments to the same request (a trailing budget,
+                        #    a mode, a count) refines it: merge, never a second call of the same tool
+                        am, _ = nlu.build_args(spec, acc + " and " + x, {})
+                        extends = all(am.get(k) == v for k, v in a1.items()) and set(am) > set(a1)
+                        # 2) split only when the fragment, read with the previous clause's verb prefix,
+                        #    supplies a NEW value for that clause's main argument (a list of targets
+                        #    for the same action, e.g. two different filters each with its own value)
+                        prefix = acc[:acc.find(str(a1[first_key]))]
                         a2, m2 = nlu.build_args(spec, prefix + x, {})
-                        if not m2 and a2 != a1:
+                        nv = a2.get(first_key)
+                        new_main = nv not in (None, "", a1[first_key]) and \
+                            (not isinstance(nv, str) or nv.casefold() in x.casefold())
+                        if not extends and not m2 and new_main and a2 != a1:
                             out.append(acc)
-                            acc = prefix + x          # "laundry to in-unit" -> "set the filter for laundry to in-unit"
+                            acc = prefix + x          # the fragment inherits the verb prefix of its sibling
                             continue
                 acc = acc + " and " + x
             out.append(acc)
@@ -829,6 +868,15 @@ class ParticipantAgent:
             val <= lim if m.group(1).lower() == "at most" else val >= lim if m.group(1).lower() == "at least" else val > lim
 
     async def _drain_compound(self):
+        if self.llm_queue:
+            if self.version != self.llm_queue_version:
+                self.llm_queue = []          # superseded by an interruption / revision
+            elif not (self.inflight or self.planner_pending or self.pending_clarify is not None
+                      or self.pending_confirm or self.held is not None):
+                nxt = self.llm_queue.pop(0)
+                await self._exec_planned(nxt, None)
+                self.llm_queue_version = self.version
+            return
         if not self.compound:
             return
         if self.version != self.compound_version and self.compound_version >= 0:
@@ -846,29 +894,66 @@ class ParticipantAgent:
                                                  f"so I haven't done the next step.")
                 return await self._drain_compound()
             nxt = cm.group(2).strip(" ,") or nxt
-        await self.on_turn(nxt, _clause=True)
+        # a later clause of the same spoken request: its missing ids / addresses refer to what the
+        # previous step produced, even without an explicit "it" / "that one"
+        self._chained = True
+        try:
+            await self.on_turn(nxt, _clause=True)
+        finally:
+            self._chained = False
         self.compound_version = self.version
 
     def bind_from_results(self, spec: Dict[str, Any], missing: List[str], args: Dict[str, Any], turn: str) -> List[str]:
-        """Resolve "put that one in the basket" / "from whatever you find" against the most recent tool result."""
-        if not missing or not self.results or not self._ANAPHORA.search(turn or ""):
+        """Resolve a reference to earlier output ("put that one in the basket", "from whatever you find",
+        or simply the next step of the same spoken request) against the most recent tool results.
+
+        Only reference-like fields are bound: ids (``*_id``) and places (``*address`` / ``location`` /
+        ``origin``). A field is taken from the newest result that has a same-named or same-role key; a
+        result that identifies an entity only by its id (a listing without an address) binds that id.
+        If the step that should have produced the entity FAILED, a place field falls back to the area
+        that step searched (its ``city`` argument) - never to an invented value."""
+        chained = getattr(self, "_chained", False)
+        if not missing or not (chained or self._ANAPHORA.search(turn or "")):
             return missing
         still = []
         for f in missing:
             leaf = f.split(".")[-1]
-            want = [leaf] + (["address", "location"] if leaf.endswith("address") else []) + \
-                   ([leaf.split("_")[0] + "_id", "id"] if leaf.endswith("_id") else [])
+            place = leaf.endswith("address") or leaf in ("location", "origin")
+            ident = leaf.endswith("_id")
+            if "." in f or not (place or ident):
+                still.append(f)
+                continue
+            want = [leaf] + (["address", "location"] if place else []) + \
+                   ([leaf.split("_")[0] + "_id", "id"] if ident else [])
             val = None
             for _api, res in reversed(self.results[-5:]):
                 val = _find_key(res, want)
-                if val is None and leaf.endswith("address"):
-                    # a listing without an address field: the commute starts at that listing, which
-                    # the backend identifies by its id ("from there" -> the first result found)
+                if val is None and place:
+                    # an entity without an address field is identified by its id: the commute starts there
                     val = _find_key(res, ["id", "listing_id", "apartment_id", "name"])
                 if val is not None:
                     break
-            if val is not None and "." not in f:
+            if val is None and place and chained and self.last_failed is not None:
+                area = self.last_failed["args"].get("city") or self.last_failed["args"].get("location")
+                if isinstance(area, str) and area:
+                    val = area
+            if val is not None:
                 args[f] = val
+                self.note("bound_from_result", f)
+            else:
+                still.append(f)
+        return still
+
+    def fill_from_filters(self, spec: Dict[str, Any], missing: List[str], args: Dict[str, Any]) -> List[str]:
+        """A search filter the user set earlier in this session (update_*_filter) applies to later
+        searches: a missing argument with exactly the filter's name takes the committed filter value."""
+        if not missing or not self.filters:
+            return missing
+        still = []
+        for f in missing:
+            if "." not in f and f in self.filters:
+                args[f] = self.filters[f]
+                self.note("filled_from_filter", f)
             else:
                 still.append(f)
         return still
@@ -993,8 +1078,8 @@ class ParticipantAgent:
             return True
         cands = pc.get("candidates") or []
         value = None
-        # A reply that clearly names a DIFFERENT tool is a new request, not the answer we
-        # asked for ("what amount?" -> "check order QRS765" must not become amount=765).
+        # A reply that clearly names a DIFFERENT tool is a new request, not the answer we asked for:
+        # the digits inside a new request's id must never be read as the requested numeric field.
         _api = pc.get("api")
         _top = (nlu.score_tools(turn, self.tools) or [(0, None)])[0]
         if _api and not cands and _top[0] >= 2.5 and _top[1] not in (None, _api) and \
@@ -1155,7 +1240,11 @@ class ParticipantAgent:
 
         # Hosted mode must understand complete requests too, not only repair
         # missing regex slots. The same validation/epoch/ledger gates still apply.
-        if os.environ.get("TRIAGELINE_LLM_MODE", "primary") == "primary" and await self.llm_fallback(turn, prefer=api):
+        # TRIAGELINE_LLM_MODE (see llm_mode()): "fallback" = RULES FIRST, the planner is consulted only
+        # below, when the rules cannot build a complete call; "primary" = planner first for every tool
+        # task. The same validation/epoch/ledger gates apply either way, and a planner that returns
+        # nothing falls back to the rules.
+        if llm_mode() == "primary" and await self.llm_fallback(turn, prefer=api):
             return
         ctx = dict(slots)
         ctx.update(extra or {})
@@ -1173,6 +1262,7 @@ class ParticipantAgent:
         # stall a chained plan (search -> book) on a slot the user never
         # considered. State-modifying tools are NEVER defaulted.
         missing = self.bind_from_results(spec, missing, args, turn)
+        missing = self.fill_from_filters(spec, missing, args)
         assumed = []
         if missing and spec.get("kind", "read_only") == "read_only":
             for f in list(missing):
@@ -1182,10 +1272,13 @@ class ParticipantAgent:
                     assumed.append(f)
         if missing and await self.llm_fallback(turn, prefer=api):
             return
-        if missing and BENCHMARK_POLICY and (args or not spec.get("args")):
+        if missing and BENCHMARK_POLICY and (args or not spec.get("args")) and \
+                spec.get("kind", "read_only") != "state_modifying":
             # benchmark policy (C4): the official template never asks clarifying questions and the scorer
-            # only checks expected arguments, so call with what is known; a missing-arg error is logged
-            # by the executor and reported back as a precise follow-up question
+            # only checks expected arguments, so a READ-ONLY lookup is issued with what is known; a
+            # missing-arg error is logged by the executor. A STATE-MODIFYING call is never sent with a
+            # required argument missing (it could only fail, or act on a guessed target): it falls
+            # through to a precise clarification question below.
             self.note("benchmark_policy_call", api, missing=missing)
             missing = []
         if missing:
@@ -1245,8 +1338,15 @@ class ParticipantAgent:
         return True
 
     def device_word(self) -> str:
-        return {"QN90": "TV", "S24": "phone", "WF45": "washer", "GENERIC": "device"}.get(
-            self.state["slots"].get("device_model"), "device")
+        """Spoken noun for the device, from the manifest's own device descriptions when it has them
+        (lookup_manual.device_model enum + description); otherwise just "device"."""
+        dm = self.state["slots"].get("device_model")
+        spec = (self.tools.get("lookup_manual", {}).get("args") or {}).get("device_model") or {}
+        names = spec.get("names") if isinstance(spec.get("names"), dict) else {}
+        if names.get(dm):
+            return str(names[dm])
+        # practice-kit manual tool: DEVICE_CLASS maps each model to its spoken class noun (data, not logic)
+        return nlu.DEVICE_CLASS.get(dm or "", "device")
 
     def ack(self, api: str, args: Dict[str, Any]) -> str:
         if api == "flight_search":
@@ -1602,6 +1702,9 @@ class ParticipantAgent:
         is_err = p.get("status") == "error"
         if is_err and kind == "read_only":
             self.read_keys.discard(self.op_key(api, c["args"]))
+            self.last_failed = {"api": api, "args": dict(c["args"])}
+        elif kind == "read_only":
+            self.last_failed = None
 
         # ---- state-modifying outcome bookkeeping (R03/R04/R16) happens before any validity check
         if op is not None:
@@ -1649,6 +1752,13 @@ class ParticipantAgent:
                 await self.call(api, c["args"], retries=c["retries"] + 1, deps=c["deps"])
                 return
             need = re.findall(r"'([a-z_]+)'", str(res.get("message", ""))) if err == "invalid_args" else []
+            if need and BENCHMARK_POLICY and kind == "read_only" and self.compound:
+                # benchmark policy: a lookup inside a multi-step request that the backend rejected for a
+                # missing argument must not stall the remaining steps behind a question (C4)
+                self.note("chain_step_failed_continue", api, need=need[:2])
+                return await self.say("filler_speech", f"The {self.what(api)} needs more details "
+                                                       f"({' and '.join(n.replace('_', ' ') for n in need[:2])}) "
+                                                       f"- continuing with the next step.")
             if need:
                 # the backend says exactly which argument it needs: ask for that instead of "rephrase"
                 what = " and ".join(n.replace("_", " ") for n in need[:2])
@@ -1673,6 +1783,9 @@ class ParticipantAgent:
             self.state["slots"]["booking_id"] = _booking_ref(res)
         if api == "create_support_ticket":
             self.state["slots"]["ticket_id"] = res.get("ticket_id")
+        if kind == "state_modifying" and "filter_name" in c["args"] and "value" in c["args"] and \
+                isinstance(c["args"]["filter_name"], str):
+            self.filters[c["args"]["filter_name"]] = c["args"]["value"]   # committed filter (session state)
         if api == "cancel_booking":
             bid = res.get("cancelled") or res.get("cancelled_booking_id") or c["args"].get("booking_id")
             prior = self.ledger.find_committed("book_flight", "booking_id", bid)

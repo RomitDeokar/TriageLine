@@ -68,6 +68,11 @@ class Start(Body):
     request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{8,80}$")
 
 
+class RtcStart(Body):
+    request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{8,80}$")
+    flow: str | None = Field(default=None, pattern=r"^(assistant|triage)$")   # closed choice, server maps to a worker
+
+
 class RateLimit:
     """Bounded single-process fixed windows. Edge limits still required in deployment."""
     def __init__(self):
@@ -261,7 +266,7 @@ def create_app() -> FastAPI:
             except Exception as exc:  # noqa: BLE001
                 rtc_probe.update(ok=False, error=type(exc).__name__)
         return {"configured": True, "reachable": rtc_probe["ok"], "error": rtc_probe["error"],
-                "agent_name": mobile.agent_name() or None}
+                "agent_name": mobile.agent_name() or None, "flows": mobile.flows()}
 
     @app.get("/api/health")
     async def health():
@@ -447,13 +452,16 @@ def create_app() -> FastAPI:
                                  headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"})
 
     @app.post("/api/rtc/token")
-    async def rtc_token(body: Start, owner=Depends(authenticate)):
+    async def rtc_token(body: RtcStart, owner=Depends(authenticate)):
         limiter.check(("rtc", owner), 10)
         try:
-            # Client cannot choose room/identity or gain admin grants. Fresh room per call (A1).
-            return mobile.issue_token(owner)
-        except mobile.NotConfigured:
-            raise HTTPException(503, "Voice calls are not configured on this server (LiveKit credentials missing)")
+            # Client cannot choose room/identity/agent or gain admin grants. Fresh room per call (A1).
+            # `flow` is a closed choice (assistant | triage) mapped to an allow-listed worker name.
+            return mobile.issue_token(owner, flow=body.flow)
+        except mobile.NotConfigured as exc:
+            msg = str(exc) if body.flow == "triage" and mobile.configured() else \
+                "Voice calls are not configured on this server (LiveKit credentials missing)"
+            raise HTTPException(503, msg)
 
     @app.post("/api/mobile/token", status_code=201, dependencies=[Depends(backend)])
     async def mobile_token(request: Request):

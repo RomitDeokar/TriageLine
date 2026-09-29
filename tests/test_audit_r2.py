@@ -1,4 +1,4 @@
-"""Regression tests for audit findings R06–R15, R17, R21 (docs/audit/AUDIT_R01-R22.md), Phase 2.
+"""Regression tests for audit findings R06–R15, R17, R21 (docs/archive/audit/AUDIT_R01-R22.md), Phase 2.
 
     python -m pytest -q tests/test_audit_r2.py
 """

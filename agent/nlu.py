@@ -104,8 +104,8 @@ CONCEPTS = {
     "cart": {"cart", "basket", "bag"},
     "apartment": {"apartment", "apartments", "flat", "rental", "rent", "bedroom", "bedrooms", "studio",
                   "lease", "housing", "condo", "place", "places", "home", "homes", "listing", "listings"},
-    "commute": {"commute", "drive", "driving", "transit", "walk", "walking", "bike", "cycling", "far", "distance",
-                "long", "duration"},
+    "commute": {"commute", "drive", "driving", "transit", "walk", "walking", "bike", "biking", "bicycle", "cycle",
+                "cycling", "far", "distance", "long", "duration"},
     "exchange": {"exchange", "convert", "conversion", "currency", "euro", "euros", "dollar", "dollars", "usd",
                  "eur", "gbp", "pound", "pounds", "yen", "rupee", "rupees", "rate", "fx"},
     "benefit": {"benefit", "benefits", "perk", "perks", "reward", "rewards", "cashback", "lounge", "privilege"},
@@ -143,6 +143,8 @@ DEVICE_ALIASES = {"QN90": ["qn90", "tv", "television", "neo qled"],
                   "S24": ["s24", "galaxy", "phone"],
                   "WF45": ["wf45", "washer", "washing machine"],
                   "GENERIC": ["laptop", "notebook", "pc", "computer"]}
+# spoken class noun per device model of the practice-kit manual tool (harness/mock_env.py enum)
+DEVICE_CLASS = {"QN90": "TV", "S24": "phone", "WF45": "washer"}
 
 
 def norm(s: str) -> str:
@@ -180,9 +182,10 @@ def settled_mention(text: str, options: List[str]) -> Optional[str]:
 
 
 _QUERY_CUE = re.compile(
-    r"(?i)\b(?:search(?:ing)? (?:for|the catalog for)|look(?:ing)? for|find(?: me)?|shop(?:ping)? for|need(?: a| an| some)?|"
+    r"(?i)\b(?:search(?:ing)? (?:for|the catalog for)|look(?:ing)? for|look up|hunt(?:ing)? for|i'?m after(?: some| a| an)?|"
+    r"find(?: me)?|shop(?:ping)? for|need(?: a| an| some)?|"
     r"want(?: a| an| some| to buy)?|buy(?: a| an| some)?|get(?: me)?(?: a| an| some)?|called|a new|an new|recommend(?: a| an)?|"
-    r"interested in|show me|browse)\s+")
+    r"interested in|show me|browse),?\s+")
 _QUERY_END = re.compile(r"(?i)\s*(?:\b(?:under|below|less than|for (?:less|under)|within|around|that|which|with a budget|"
                         r"because|so that|so|if|since|to my|and then|then|and also|and|but|or|first|instead|"
                         r"please|for me|for my|from|in the|on the)\b|[?.!,;:\u2014]).*$")
@@ -425,7 +428,7 @@ _SPELLED_RE = re.compile(r"(?<![A-Za-z0-9])((?:[A-Za-z0-9][\-\s]){1,15}[A-Za-z0-
 
 
 def spelled_ids(text: str) -> List[str]:
-    """Spoken, character-by-character ids: "Q-R-S-7-6-5" -> QRS765, "K-2" -> K2, "M-N-O-P" -> MNOP."""
+    """Spoken, character-by-character ids: "T-L-W-3-8-2" -> TLW382, "K-2" -> K2, "M-N-O-P" -> MNOP."""
     out = []
     for m in _SPELLED_RE.finditer(text or ""):
         raw = m.group(1)
@@ -497,12 +500,13 @@ def severity_of(text: str) -> str:
 # Generic action verbs that appear in tool NAMES (verb_object / object_verb conventions) with the
 # everyday phrasings users say for them. Language-level knowledge, not per-tool/per-test rules.
 _VERB_SYNONYMS = {
-    "search": r"search|find|look(?:ing)? (?:for|up)|looking|show me|browse|recommend|shop(?:ping)? for",
+    "search": r"search|find|look(?:ing)? (?:for|up)|looking|show me|browse|recommend|shop(?:ping)? for|"
+              r"hunt(?:ing)? for|(?:i'?m|i am) after",
     "book": r"book|reserve",
     "update": r"update|change|set|raise|lower|bump|increase|decrease|switch|make (?:it|that|the)",
     "calculate": r"calculate|how long|how far|commute|travel time|(?:walking|driving|transit|biking|cycling) time",
     "add": r"add|put|throw",
-    "track": r"track|where(?:'s| is) my",
+    "track": r"track|where(?:'s| is) my|check (?:on|up on) (?:my|the|a)",
     "modify": r"modify|set(?: up)?|enable|turn on|switch|change|move|pull from|come from",
     "get": r"get|what are|tell me|check|show",
     "cancel": r"cancel|call off",
@@ -521,7 +525,8 @@ def _verb_spoken(verb_stem: str, text: str) -> bool:
     return bool(pat and re.search(r"\b(?:" + pat + r")\b", _RESULT_REF.sub(" ", text or ""), re.I))
 
 
-_SHOP_CUE = re.compile(r"(?i)\b(?:looking for|look for|i want an?|i need an?(?: new)?|shopping for|buy an?|"
+_SHOP_CUE = re.compile(r"(?i)\b(?:looking for|look for|look up|hunting for|hunt for|i'?m after|i want an?|i want some|"
+                       r"i need an?(?: new)?|shopping for|buy an?|"
                        r"search(?:ing)? for|find me|recommend|something (?:under|below|for less than)|"
                        r"do you have|in the \w+ section)\b")
 
@@ -550,6 +555,7 @@ def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
     raw = tokens(text)
     toks = {_stem(t) for t in raw}
     tev = _concept_evidence(raw)
+    has_city = bool(cities_in(text or ""))
     ranked = []
     for name, spec in tools.items():
         name_words = tokens(name.replace("_", " "))
@@ -577,7 +583,14 @@ def score_tools(text: str, tools: Dict[str, Any]) -> List[Tuple[float, str]]:
         nbonus = 1.0 if any(c in tev and c not in uev for c in nconc) and head == 0.0 else 0.0
         # an open-vocabulary shopping request ("looking for a desk") is evidence for a product tool
         pbonus = 1.5 if "product" in nconc and _shopping_request(text) else 0.0
+        # a named city is evidence for a tool that takes a place argument (schema-driven, any manifest)
+        place_arg = any(any(k in a.lower() for k in ("city", "destination", "location", "origin"))
+                        for a in (spec.get("args") or {}))
         overlap = len(toks & vocab) + cscore + head + vbonus + nbonus + pbonus
+        # only as a tie-breaker between tools that already have lexical evidence: a bare place
+        # ("actually make it X") is a slot value, never evidence of a new action on its own
+        cbonus = 1.0 if place_arg and has_city and overlap >= 2.0 else 0.0
+        overlap += cbonus
         prior = len(toks & {_stem(w) for w in TOOL_PRIORS.get(name, ())})
         s = overlap + 1.5 * prior
         if s > 0:  # bonus if every required arg is fillable from this utterance
@@ -725,11 +738,22 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
     if lname.endswith("_type") and lname not in ("doc_type", "document_type", "bill_type"):
         noun = lname[:-5].split("_")[-1]                       # card_type -> card
         examples = re.findall(r"'([^']+)'", str(spec.get("description", "")))
+        bad = STOP | {"which", "new", "credit", "debit", "rewards", "reward", "this", "that", "the", "my", "one"}
+        noun_rx = r"\b([a-z]+)(?:\s+(?:credit|debit|rewards?))?\s+" + noun + r"s?\b"
+        # self-repair first: the value the user settled on, after the last correction marker, wins
+        # over a schema example mentioned before it ("the X card, sorry, I mean the Y card" -> Y)
+        last_marker = max((mm.end() for mm in REPAIR_MARKERS.finditer(low)), default=-1)
+        if last_marker >= 0:
+            tail_m = [mm for mm in re.finditer(noun_rx, low[last_marker:]) if mm.group(1) not in bad]
+            if tail_m:
+                return tail_m[-1].group(1)
+            tail_ex = [ex for ex in examples if re.search(r"\b" + re.escape(ex.lower()) + r"\b", low[last_marker:])]
+            if tail_ex:
+                return tail_ex[-1]
         for ex in examples:                                     # schema examples first ('platinum', 'gold')
             if re.search(r"\b" + re.escape(ex.lower()) + r"\b", low):
                 return ex
-        m = re.search(r"\b([a-z]+)(?:\s+(?:credit|debit|rewards?))?\s+" + noun + r"s?\b", low)
-        bad = STOP | {"which", "new", "credit", "debit", "rewards", "reward", "this", "that", "the", "my", "one"}
+        m = re.search(noun_rx, low)
         if m and m.group(1) not in bad:
             return m.group(1)
         return None
@@ -797,7 +821,7 @@ def extract_filters(text: str) -> List[Tuple[str, Any]]:
             if key not in found:
                 order.append(key)
             found[key] = (m.start(), val)         # later mention (a correction) wins
-    # generic "<key> to <value>" pairs after a filter cue ("... and laundry to in-unit") — B7
+    # generic "<key> to <value>" pairs after a filter cue ("... and <key> to <value>") — B7
     if re.search(r"\bfilters?\b|\bset\b|\bupdate\b|\bchange\b", low):
         for m in re.finditer(r"\b([a-z][a-z_\- ]{1,20}?)\s+(?:to|=|as)\s+([a-z0-9][a-z0-9_\-]*)", low):
             k = re.sub(r"^(?:.*\b(?:for|filter|the|set|update|change|and|my)\s+)", "", m.group(1)).strip().replace(" ", "_")
@@ -979,7 +1003,7 @@ def extract_mode(text: str, enum: List[Any]) -> Any:
             pat = pat + "|" + _MODE_WORDS["cycling"]
         for m in re.finditer(r"\b(?:" + pat + r")\b", low):
             if str(e).lower() == "transit" and m.group() == "train" and re.search(r"\bstation\b", low[m.end():m.end() + 9]):
-                continue                          # "the train station" is a place, not a mode
+                continue                          # a station noun after "the" is a place, not a transport mode
             if re.search(r"\b(?:not|no|never|instead of|rather than)\s+(?:\w+\s+)?$", low[max(0, m.start() - 18):m.start()]):
                 continue
             hits.append((m.start(), e))
@@ -1190,7 +1214,16 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
         if m:
             return _num(m.group(1) or m.group(2), integer)
     if lname in ("quantity", "qty", "count", "number_of_items"):
-        m = _settled_match(_QTY_RE, t)
+        # a per-recipient breakdown after the order ("<n> for <person> and <n> for <person>") apportions the
+        # requested quantity; it is not a new quantity.
+        # Drop "<n> for <someone>" apportioning phrases unless a self-repair follows them.
+        last_marker = max((m.end() for m in REPAIR_MARKERS.finditer(t)), default=-1)
+        tq = t
+        for m in reversed(list(re.finditer(r"(?i)\b(?:get|buy|keep)?\s*\d+\s+(?:for|as)\s+(?:my|him|her|them|a|an|"
+                                           r"the|me|us)\w*\b", t))):
+            if m.start() > last_marker and _QTY_RE.search(t[:m.start()]):
+                tq = tq[:m.start()] + " " + tq[m.end():]
+        m = _settled_match(_QTY_RE, tq)
         if m:
             return _num(next(g for g in m.groups() if g), integer)
         return None                                  # never guess a quantity from an unrelated number
@@ -1297,7 +1330,7 @@ _LETTER_NAMES = {"ay": "A", "bee": "B", "see": "C", "cee": "C", "dee": "D", "ee"
                  "queue": "Q", "ar": "R", "ess": "S", "tee": "T", "you": "U", "vee": "V", "ex": "X", "why": "Y",
                  "zee": "Z", "zed": "Z"}
 _ID_CUE = r"(?:order|item|product|sku|booking|flight|ticket|confirmation|reference|tracking|passport|document|" \
-          r"card|account|id|number|code)"
+          r"card|account|id|number|code|parcel|package|delivery|shipment|license|licence)"
 _ASR_CONFUSIONS = [
     # (pattern, replacement) — each rewrite needs its disambiguating context in the same clause
     (re.compile(r"\b(?:the\s+)?idea\s+(?:is|was|number)\b", re.I), "the ID is"),
@@ -1363,7 +1396,8 @@ def normalize_spoken_ids(text: str) -> str:
         if re.fullmatch(_ID_CUE, w) or (cue_seen and w in ("it's", "its", "it", "that's", "is", "was")):
             j = i + 1
             while j < len(words) and words[j].lower().strip(".,;:!?") in ("is", "was", "it's", "its", "number",
-                                                                          "id", "code", "of", "the", "#", "uh", "um"):
+                                                                          "id", "code", "of", "the", "#", "uh", "um",
+                                                                          "to", "now", "will", "be", "should"):
                 j += 1
             best = None
             for k in range(min(len(words), j + 14), j + 1, -1):

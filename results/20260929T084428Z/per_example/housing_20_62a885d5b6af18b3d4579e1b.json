@@ -1,0 +1,92 @@
+{
+  "example_id": "housing_20",
+  "provider": "triageline_text",
+  "status": "completed",
+  "mode": "offline_replay_official_data",
+  "user_turns_asr": [
+    {
+      "text": "Uh... hmm... you know... um... so here's what I'm thinking. Search for places in Austin under 2000. Then check the commute to my office. If it's under 15 minutes, that's perfect. But if it's longer, then raise my budget to 2500 so... um, I can look at places closer to work.",
+      "start": 0,
+      "end": 0
+    }
+  ],
+  "asr_seconds": 0.0,
+  "actual_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "max_price": 2000
+      },
+      "timestamp_start": 0.045,
+      "timestamp_end": 0.725
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "destination_address": "my office",
+        "mode": "driving",
+        "origin_address": "Austin"
+      },
+      "timestamp_start": 0.733,
+      "timestamp_end": 1.455
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 2500
+      },
+      "timestamp_start": 1.459,
+      "timestamp_end": 1.601
+    }
+  ],
+  "transcript": "Looking for apartments in Austin under 2000. The search apartments needs more details (bedrooms) - continuing with the next step. Here's what I found: duration mins 25, driving. Done — max_price is now 2500.",
+  "agent_actions": [
+    {
+      "kind": "filler_speech",
+      "text": "Looking for apartments in Austin under 2000.",
+      "t": 0.045
+    },
+    {
+      "kind": "filler_speech",
+      "text": "The search apartments needs more details (bedrooms) - continuing with the next step.",
+      "t": 0.733
+    },
+    {
+      "kind": "final_response",
+      "text": "Here's what I found: duration mins 25, driving.",
+      "t": 1.459
+    },
+    {
+      "kind": "final_response",
+      "text": "Done — max_price is now 2500.",
+      "t": 1.602
+    }
+  ],
+  "expected_tool_calls": [
+    {
+      "function": "search_apartments",
+      "args": {
+        "city": "Austin",
+        "max_price": 2000
+      }
+    },
+    {
+      "function": "calculate_commute",
+      "args": {
+        "origin_address": "$RESULT_0.apartments[0].address",
+        "destination_address": "my office",
+        "mode": "driving"
+      }
+    },
+    {
+      "function": "update_search_filter",
+      "args": {
+        "filter_name": "max_price",
+        "value": 2500
+      },
+      "note": "Only if commute > 15 min"
+    }
+  ]
+}

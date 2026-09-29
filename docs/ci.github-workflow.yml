@@ -9,7 +9,7 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r requirements-app.txt -r requirements-fdb.txt pytest httpx pyflakes
       - run: python -m pytest tests livekit_agent/adapter_tests -q
-      - run: python scripts/integrity_audit.py
+      - run: python scripts/integrity_audit.py --strict-comments   # uses committed results/*/per_example if no data
       - run: python scripts/heldout_eval.py
       - run: bash tests/shell/test_run_fdb_v3_failures.sh
   js:
