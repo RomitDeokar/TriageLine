@@ -31,6 +31,27 @@ def start(c):
     return r.json()['sid']
 
 
+def test_gateway_login_uses_root_env_before_worker_env(tmp_path, monkeypatch):
+    worker = tmp_path / 'livekit_agent'
+    worker.mkdir()
+    (tmp_path / '.env').write_text('TRIAGELINE_ACCESS_CODE=root-invite-code\n')
+    (worker / '.env.local').write_text('TRIAGELINE_ACCESS_CODE=stale-worker-code\n')
+    monkeypatch.delenv('TRIAGELINE_ACCESS_CODE', raising=False)
+    monkeypatch.setenv('TRIAGELINE_OFFLINE', '1')
+    monkeypatch.setenv('ALLOWED_HOSTS', 'testserver')
+
+    api.load_gateway_env(tmp_path)
+    with TestClient(api.create_app()) as c:
+        assert c.post('/api/auth/login', json={'access_code': 'root-invite-code'}).status_code == 200
+        assert c.post('/api/auth/login', json={'access_code': 'stale-worker-code'}).status_code == 401
+
+    monkeypatch.setenv('TRIAGELINE_ACCESS_CODE', 'exported-invite-code')
+    api.load_gateway_env(tmp_path)
+    with TestClient(api.create_app()) as c:
+        assert c.post('/api/auth/login', json={'access_code': 'exported-invite-code'}).status_code == 200
+        assert c.post('/api/auth/login', json={'access_code': 'root-invite-code'}).status_code == 401
+
+
 def test_auth_ownership_and_bearer(client):
     assert client.post('/api/live/start', json={}).status_code == 401
     token = login(client)

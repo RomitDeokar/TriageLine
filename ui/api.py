@@ -38,11 +38,18 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
-# load_dotenv never overrides a variable that is already set: a value exported in the shell /
-# Windows "setx" / the container wins over BOTH files, and livekit_agent/.env.local wins over .env.
+# Exported process values override both files; the gateway's root .env takes priority over
+# worker-only settings in livekit_agent/.env.local (same order as scripts/check_providers.py).
 _PRESET_ACCESS_CODE = "TRIAGELINE_ACCESS_CODE" in os.environ
-load_dotenv(ROOT / "livekit_agent/.env.local")
-load_dotenv(ROOT / ".env")
+
+
+def load_gateway_env(root: Path = ROOT) -> None:
+    """Load gateway settings first, then use worker settings only as fallback."""
+    load_dotenv(root / ".env")
+    load_dotenv(root / "livekit_agent/.env.local")
+
+
+load_gateway_env()
 from ui import live, mobile  # noqa: E402
 
 log = logging.getLogger("triageline.api")
