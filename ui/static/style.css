@@ -1,121 +1,92 @@
-/* ==========================================================================
-   TriageLine — Production Clinical AI Design System
-   Evaluation Console Styling (Light & Dark Workstation Themes)
-   ========================================================================== */
-
+/* TriageLine evaluation console — warm paper (light) / charcoal (dark), one terracotta accent. */
 :root {
-  /* Neutral Color Scale (Clinical Slate Light) */
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --surface-subtle: #f1f5f9;
-  --surface-hover: #f8fafc;
-  --surface-active: #e2e8f0;
-  
-  --ink: #0f172a;
-  --ink-secondary: #334155;
-  --ink-tertiary: #475569;
-  --muted: #64748b;
-  --muted-light: #94a3b8;
-  
-  --line: #e2e8f0;
-  --line-strong: #cbd5e1;
-  --line-subtle: #f1f5f9;
-
-  /* Clinical Semantic Accents */
-  --brand: #0284c7;
-  --brand-dark: #0369a1;
-  --brand-light: #e0f2fe;
-  
-  --user: #1d4ed8;
-  --user-light: #eff6ff;
-  --user-border: #bfdbfe;
-  
-  --fast: #0284c7;
-  --fast-light: #f0f9ff;
-  --fast-border: #bae6fd;
-  
-  --slow: #059669;
-  --slow-light: #ecfdf5;
-  --slow-border: #a7f3d0;
-  
-  --cancel: #dc2626;
-  --cancel-light: #fef2f2;
-  --cancel-border: #fecaca;
-  
-  --clar: #7c3aed;
-  --clar-light: #f5f3ff;
-  --clar-border: #ddd6fe;
-  
-  --warn: #d97706;
-  --warn-light: #fffbeb;
-  --warn-border: #fde68a;
-
-  /* Metrics & Elevation */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --bg: #f4efe6;
+  --surface: #fbf8f2;
+  --surface-subtle: #efe8dc;
+  --surface-hover: #f1ebe0;
+  --surface-active: #e6ddcd;
+  --ink: #1d1a16;
+  --ink-secondary: #3b352e;
+  --ink-tertiary: #5a5248;
+  --muted: #7d7467;
+  --muted-light: #a0978a;
+  --line: #e2d9ca;
+  --line-strong: #cfc3b0;
+  --line-subtle: #ece5d8;
+  --brand: #c4552f;
+  --brand-dark: #a4441f;
+  --brand-light: #f6e3d9;
+  --user: #2f2a24;
+  --user-light: #ece5d8;
+  --user-border: #d5cab8;
+  --fast: #c4552f;
+  --fast-light: #f8ebe3;
+  --fast-border: #ebc7b6;
+  --slow: #5f7d4d;
+  --slow-light: #edf2e6;
+  --slow-border: #c9d8bb;
+  --cancel: #b8433a;
+  --cancel-light: #f8e7e4;
+  --cancel-border: #ebc3bd;
+  --clar: #7d5fa6;
+  --clar-light: #f1ebf7;
+  --clar-border: #d8cae9;
+  --warn: #a8761d;
+  --warn-light: #f7eedb;
+  --warn-border: #e8d3a6;
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
   --radius-full: 9999px;
-  
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
-  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04);
-  
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-xs: none;
+  --shadow-sm: 0 1px 0 rgba(29, 26, 22, 0.04);
+  --shadow-md: 0 1px 0 rgba(29, 26, 22, 0.05), 0 6px 16px -10px rgba(29, 26, 22, 0.18);
+  --shadow-lg: 0 18px 40px -20px rgba(29, 26, 22, 0.35);
+  --font-sans: "Inter Tight", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: "Fraunces", "Iowan Old Style", Georgia, serif;
 }
 
-/* Dark Clinical Workstation Mode */
 [data-theme="dark"] {
-  --bg: #090d16;
-  --surface: #0f172a;
-  --surface-subtle: #141d2e;
-  --surface-hover: #1e293b;
-  --surface-active: #27354a;
-  
-  --ink: #f8fafc;
-  --ink-secondary: #cbd5e1;
-  --ink-tertiary: #94a3b8;
-  --muted: #64748b;
-  --muted-light: #475569;
-  
-  --line: #1e293b;
-  --line-strong: #334155;
-  --line-subtle: #141d2e;
-
-  --brand: #38bdf8;
-  --brand-dark: #0284c7;
-  --brand-light: rgba(56, 189, 248, 0.12);
-  
-  --user: #3b82f6;
-  --user-light: rgba(59, 130, 246, 0.15);
-  --user-border: rgba(59, 130, 246, 0.35);
-  
-  --fast: #38bdf8;
-  --fast-light: rgba(56, 189, 248, 0.12);
-  --fast-border: rgba(56, 189, 248, 0.3);
-  
-  --slow: #34d399;
-  --slow-light: rgba(52, 211, 153, 0.12);
-  --slow-border: rgba(52, 211, 153, 0.3);
-  
-  --cancel: #f87171;
-  --cancel-light: rgba(248, 113, 113, 0.15);
-  --cancel-border: rgba(248, 113, 113, 0.3);
-  
-  --clar: #a78bfa;
-  --clar-light: rgba(167, 139, 250, 0.12);
-  --clar-border: rgba(167, 139, 250, 0.3);
-  
-  --warn: #fbbf24;
-  --warn-light: rgba(251, 191, 36, 0.12);
-  --warn-border: rgba(251, 191, 36, 0.3);
-
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6);
+  --bg: #121110;
+  --surface: #181614;
+  --surface-subtle: #1d1a17;
+  --surface-hover: #221f1b;
+  --surface-active: #2a2622;
+  --ink: #efe8dc;
+  --ink-secondary: #cfc6b8;
+  --ink-tertiary: #a89f92;
+  --muted: #847b6f;
+  --muted-light: #6c655c;
+  --line: #2a2622;
+  --line-strong: #413b35;
+  --line-subtle: #1f1c19;
+  --brand: #e0714a;
+  --brand-dark: #c4552f;
+  --brand-light: rgba(224, 113, 74, 0.13);
+  --user: #efe8dc;
+  --user-light: rgba(239, 232, 220, 0.06);
+  --user-border: rgba(239, 232, 220, 0.16);
+  --fast: #e0714a;
+  --fast-light: rgba(224, 113, 74, 0.11);
+  --fast-border: rgba(224, 113, 74, 0.32);
+  --slow: #9bb58a;
+  --slow-light: rgba(155, 181, 138, 0.11);
+  --slow-border: rgba(155, 181, 138, 0.3);
+  --cancel: #d9695f;
+  --cancel-light: rgba(217, 105, 95, 0.12);
+  --cancel-border: rgba(217, 105, 95, 0.32);
+  --clar: #b7a2d6;
+  --clar-light: rgba(183, 162, 214, 0.11);
+  --clar-border: rgba(183, 162, 214, 0.3);
+  --warn: #d9a441;
+  --warn-light: rgba(217, 164, 65, 0.11);
+  --warn-border: rgba(217, 164, 65, 0.3);
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: 0 12px 28px -18px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 24px 48px -20px rgba(0, 0, 0, 0.85);
 }
 
 *, *::before, *::after {
@@ -321,7 +292,7 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  background-color: #0f172a;
+  background-color: var(--ink);
   color: #ffffff !important;
   font-family: var(--font-sans);
   font-size: 12px;
@@ -338,7 +309,7 @@ code {
 }
 
 .live-link:hover {
-  background-color: #1e293b;
+  background-color: var(--surface-active);
   transform: translateY(-0.5px);
 }
 
@@ -595,7 +566,7 @@ main {
 .slist .tag.mod-text { background-color: var(--surface-subtle); color: var(--muted); }
 .slist .tag.mod-audio { background-color: var(--clar-light); color: var(--clar); }
 .slist .tag.mod-visual { background-color: var(--slow-light); color: var(--slow); }
-.slist .tag.diff-l1 { color: #0284c7; }
+.slist .tag.diff-l1 { color: var(--brand-dark); }
 .slist .tag.diff-l2 { color: #d97706; }
 .slist .tag.diff-l3 { color: #dc2626; }
 
@@ -753,7 +724,7 @@ select {
 }
 
 button.primary {
-  background-color: #0f172a;
+  background-color: var(--ink);
   color: #ffffff;
   border: 0;
   padding: 9px 18px;
@@ -771,19 +742,19 @@ button.primary {
 }
 
 [data-theme="dark"] button.primary {
-  background-color: #1e293b;
+  background-color: var(--surface-active);
   border: 1px solid var(--line-strong);
   color: #ffffff;
 }
 
 button.primary:hover:not(:disabled) {
-  background-color: #1e293b;
+  background-color: var(--surface-active);
   transform: translateY(-0.5px);
   box-shadow: var(--shadow-md);
 }
 
 [data-theme="dark"] button.primary:hover:not(:disabled) {
-  background-color: #334155;
+  background-color: var(--line-strong);
 }
 
 button.primary:disabled {
@@ -1762,7 +1733,7 @@ input:focus {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
-  color: #38bdf8;
+  color: var(--brand);
 }
 
 .defs {
@@ -1925,3 +1896,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .playback-controls .timeline-slider { flex: 1 1 100%; order: 3; }
   input, select, textarea { font-size: 16px; }
 }
+
+
+/* ---- editorial touches ---- */
+.brand-name, .scenario-title, h1, .panel-title, .card-title { font-family: var(--font-serif); font-weight: 500; letter-spacing: -0.01em; }
+.brand-badge { background: none !important; border: 0 !important; color: var(--muted) !important; font: 500 11px var(--font-mono) !important; padding: 0 !important; }
+h2 { font-family: var(--font-serif); font-weight: 500; }
+.brand-icon { display: grid; place-items: center; width: 20px; }
+.brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-light); }

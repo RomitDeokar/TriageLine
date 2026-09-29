@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="theme-color" content="#0b0f17">
+<meta name="theme-color" content="#16140f">
 <meta name="color-scheme" content="dark">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,7 +16,7 @@
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,560&family=Inter+Tight:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="live.css">
 </head>
 <body>
@@ -24,16 +24,14 @@
 <div class="app-shell" id="app">
   <header class="bar">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M3 12h4l2.5-6 4 12 3-8 2 2H21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </div>
+      <span class="brand-mark" aria-hidden="true"></span>
       <div class="brand-titles">
         <span class="brand-name">TriageLine</span>
         <span class="brand-sub" id="conn-label">Connecting…</span>
       </div>
     </div>
     <div class="bar-actions">
-      <span id="mode" class="badge" title="Bookings, tickets and actions run against simulated tools">MOCK TOOLS</span>
+      <span id="mode" class="badge" title="Bookings, tickets and actions run against simulated tools">Simulated tools</span>
       <button id="menu" class="icon-btn" aria-label="Open session menu" aria-haspopup="dialog" aria-expanded="false">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
       </button>
@@ -41,10 +39,10 @@
   </header>
 
   <div class="metrics" id="metrics" aria-label="Live latency metrics">
-    <div class="metric"><span class="m-k">First reply</span><span class="m-v" id="m-first">—</span></div>
-    <div class="metric"><span class="m-k">Tools</span><span class="m-v" id="m-tools">0</span></div>
-    <div class="metric"><span class="m-k">Barge-ins</span><span class="m-v" id="m-barge">0</span></div>
-    <div class="metric"><span class="m-k">Cancelled</span><span class="m-v" id="m-cancel">0</span></div>
+    <span class="metric"><span class="m-k">first reply</span> <span class="m-v" id="m-first">—</span></span>
+    <span class="metric"><span class="m-k">tools</span> <span class="m-v" id="m-tools">0</span></span>
+    <span class="metric"><span class="m-k">barge-ins</span> <span class="m-v" id="m-barge">0</span></span>
+    <span class="metric"><span class="m-k">cancelled</span> <span class="m-v" id="m-cancel">0</span></span>
   </div>
 
   <div id="memory-deck" class="memory-deck hidden" aria-label="Current request slots">
@@ -54,21 +52,16 @@
 
   <main id="chat" aria-live="polite" aria-label="Conversation" tabindex="-1">
     <section class="hello" id="welcome-card">
-      <div class="hello-badge"><span class="pulse-dot"></span><span>Interruptible assistant</span></div>
-      <h1>How can I help?</h1>
-      <p class="hello-note">Action tools are simulated. No real bookings, payments or emergency dispatch. <a href="/rtc.html">Open continuous LiveKit voice</a>.</p>
-      <p class="hello-intro">Speak or type. Interrupt at any time — the assistant stops talking, cancels stale work and re-plans.</p>
-      <div class="sample-prompts" role="list">
-        <button class="sample-chip" role="listitem" data-sample="Find a flight to Denver and book the 8 AM one for Alice.">
-          <span class="chip-ic">✈</span><span>Find a flight to Denver and book the 8 AM one for Alice</span></button>
-        <button class="sample-chip" role="listitem" data-sample="Check the laptop manual for HDMI ports.">
-          <span class="chip-ic">📘</span><span>Check the laptop manual for HDMI ports</span></button>
-        <button class="sample-chip" role="listitem" data-sample="My monitor is blinking amber, open a support ticket.">
-          <span class="chip-ic">🎫</span><span>My monitor is blinking amber, open a support ticket</span></button>
-        <button class="sample-chip" role="listitem" data-sample="What's the weather in Seattle tomorrow?">
-          <span class="chip-ic">☁</span><span>What's the weather in Seattle tomorrow?</span></button>
-      </div>
-      <div class="hello-note"><strong>Try a barge-in:</strong> while it's working, tap the mic and say <em>"wait, make it Seattle instead"</em> or <em>"never mind"</em>.</div>
+      <p class="hello-kicker">Voice assistant · talk over it any time</p>
+      <h1>Say what you need.<br><em>Change your mind halfway.</em></h1>
+      <p class="hello-intro">It answers while it works, drops what you take back, and never books the same thing twice. Try one of these, then interrupt it.</p>
+      <ol class="sample-prompts">
+        <li><button class="sample-chip" data-sample="Find a flight to Denver and book the 8 AM one for Alice.">Find a flight to Denver and book the 8&nbsp;AM one for Alice</button></li>
+        <li><button class="sample-chip" data-sample="Check the laptop manual for HDMI ports.">Check the laptop manual for HDMI ports</button></li>
+        <li><button class="sample-chip" data-sample="My monitor is blinking amber, open a support ticket.">My monitor is blinking amber — open a support ticket</button></li>
+        <li><button class="sample-chip" data-sample="What's the weather in Seattle tomorrow?">What's the weather in Seattle tomorrow?</button></li>
+      </ol>
+      <p class="hello-note">While it's busy, tap the mic and say <em>“wait, make it Seattle”</em> or <em>“never mind”</em>. Bookings, payments and dispatch here are simulated — nothing real happens. For a continuous phone-style call, open <a href="/rtc.html">voice mode</a>.</p>
     </section>
   </main>
 
@@ -85,7 +78,7 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
       </button>
       <form id="form" class="text-form" autocomplete="off">
-        <input id="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" maxlength="500" placeholder="Message or tap mic…" aria-label="Message">
+        <input id="text" enterkeyhint="send" autocomplete="off" autocapitalize="sentences" maxlength="500" placeholder="Type, or hold the mic" aria-label="Message">
         <button type="submit" id="send-btn" class="send-btn" aria-label="Send message" disabled>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
@@ -115,7 +108,7 @@
     <div class="grabber" aria-hidden="true"></div>
     <div class="sheet-head">
       <div class="sheet-title" id="sheet-title">Session</div>
-      <button id="sheet-close" class="icon-btn-sm" aria-label="Close menu">✕</button>
+      <button id="sheet-close" class="icon-btn-sm" aria-label="Close menu"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="sheet-toggles">
       <label class="toggle-row"><span>Speak replies aloud</span><input type="checkbox" id="m-tts" class="switch" checked></label>
@@ -124,10 +117,10 @@
       <label class="toggle-row"><span>Haptic feedback</span><input type="checkbox" id="m-haptics" class="switch" checked></label>
     </div>
     <div class="sheet-actions">
-      <button id="m-ready" class="menu-action-btn"><span class="mi">✓</span><span>Device &amp; model readiness check</span></button>
-      <button id="m-export" class="menu-action-btn"><span class="mi">⤓</span><span>Export session audit (JSON)</span></button>
-      <button id="m-new" class="menu-action-btn danger"><span class="mi">↺</span><span>Reset &amp; start new session</span></button>
-      <a href="/rtc.html" class="menu-action-btn neutral"><span>Continuous LiveKit voice</span></a>
+      <button id="m-ready" class="menu-action-btn"><span>Check device &amp; server</span></button>
+      <button id="m-export" class="menu-action-btn"><span>Download session log</span></button>
+      <button id="m-new" class="menu-action-btn danger"><span>Start over</span></button>
+      <a href="/rtc.html" class="menu-action-btn neutral"><span>Voice call mode</span></a>
     </div>
     <div id="ready" class="ready"></div>
     <div class="sheet-foot" id="sid-label"></div>
@@ -136,8 +129,8 @@
   <!-- Camera -->
   <div id="cam" class="cam hidden" role="dialog" aria-modal="true" aria-label="Camera">
     <div class="cam-header">
-      <div class="cam-title">Visual inspection</div>
-      <div class="cam-instruction">Align the port or label inside the frame</div>
+      <div class="cam-title">Show me</div>
+      <div class="cam-instruction">Fill the frame with the port, light or label</div>
     </div>
     <div class="cam-viewport">
       <video id="video" playsinline muted autoplay></video>

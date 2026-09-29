@@ -3,32 +3,102 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b0f17">
-<title>TriageLine — Continuous voice</title>
+<meta name="theme-color" content="#121110">
+<title>TriageLine — Voice call</title>
 <link rel="icon" href="/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;1,9..144,400&family=Inter+Tight:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b0f17;color:#e8edf6}*{box-sizing:border-box}body{margin:0;padding:max(24px,env(safe-area-inset-top)) 20px}main{max-width:760px;margin:5vh auto}a{color:#88c9ff}h1{font-size:clamp(2rem,6vw,3.5rem);margin:.5em 0}p{line-height:1.65;color:#bcc8db}.tag{font-size:.8rem;letter-spacing:.14em;color:#a5d4fc}.panel{background:#141c2a;border:1px solid #2c3b54;border-radius:20px;padding:24px;margin:24px 0}.controls{display:flex;gap:12px;flex-wrap:wrap}button{font:inherit;min-height:48px;padding:12px 20px;border:1px solid #577398;border-radius:10px;background:#253b59;color:white;cursor:pointer}button.primary{background:#74baff;color:#0b1729;font-weight:700}button:disabled{opacity:.45;cursor:not-allowed}button:focus-visible,a:focus-visible{outline:3px solid #eac477;outline-offset:4px}#voice-status{min-height:3em;color:white}#transcript{max-height:40vh;overflow:auto;overflow-wrap:anywhere}small{color:#aab8cf}audio{display:none}.warning{border-left:3px solid #eac477;padding-left:16px}
+:root{color-scheme:dark;--bg:#121110;--raise:#211e1b;--rule:#2d2925;--rule-2:#413b35;--ink:#efe8dc;--ink-2:#cfc6b8;--mut:#968d80;--mut-2:#6c655c;--accent:#e0714a;--accent-ink:#1a0f0a;--amber:#d9a441;--sage:#9bb58a;
+  --serif:Fraunces,Georgia,serif;--sans:"Inter Tight",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:16px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+body{padding:max(20px,env(safe-area-inset-top)) 22px max(28px,env(safe-area-inset-bottom))}
+main{max-width:1040px;margin:0 auto;display:grid;gap:36px}
+@media(min-width:860px){main{grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:72px;align-items:start;padding-top:6vh}}
+a{color:var(--ink);text-decoration-color:var(--accent);text-underline-offset:3px}
+a:hover{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:4px}
+.top{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;font:500 12px var(--mono);color:var(--mut)}
+.top b{font:560 19px var(--serif);color:var(--ink);display:inline-flex;align-items:center;gap:10px}
+.top b::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(224,113,74,.12)}
+.kicker{font:500 12px var(--mono);color:var(--accent);margin:0 0 20px}
+h1{font:400 clamp(40px,7vw,68px)/1.02 var(--serif);letter-spacing:-.025em;margin:0 0 22px}
+h1 em{color:var(--ink-2)}
+.lede{color:var(--mut);max-width:40ch;margin:0 0 28px;font-size:17px}
+.note{font-size:13.5px;color:var(--mut);max-width:46ch;margin:0;padding-top:18px;border-top:1px solid var(--rule)}
+.note strong{color:var(--amber);font-weight:500}
+.call{display:grid;gap:26px}
+.orb-row{display:flex;align-items:center;gap:22px}
+.orb{position:relative;width:132px;height:132px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 35% 30%,#3a332d,#1b1917 70%);box-shadow:inset 0 0 0 1px var(--rule-2)}
+.orb::before,.orb::after{content:"";position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--accent);opacity:0}
+.orb i{width:22px;height:22px;border-radius:50%;background:var(--mut-2);transition:background .3s,transform .3s}
+body[data-call="live"] .orb i{background:var(--accent);transform:scale(1.15)}
+body[data-call="live"] .orb::before{animation:ring 2.4s infinite cubic-bezier(.2,.7,.2,1)}
+body[data-call="live"] .orb::after{animation:ring 2.4s 1.2s infinite cubic-bezier(.2,.7,.2,1)}
+body[data-call="joining"] .orb i{background:var(--amber);animation:blink 1s infinite}
+@keyframes ring{from{transform:scale(1);opacity:.7}to{transform:scale(1.55);opacity:0}}
+@keyframes blink{50%{opacity:.35}}
+#voice-status{margin:0;font:400 20px/1.35 var(--serif);color:var(--ink);min-height:2.7em}
+.controls{display:flex;gap:10px;flex-wrap:wrap}
+button{font:inherit;font-weight:600;font-size:15px;min-height:50px;padding:0 24px;border-radius:999px;border:1px solid var(--rule-2);background:none;color:var(--ink);cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
+button:hover:not(:disabled){background:var(--raise)}
+button:active:not(:disabled){transform:scale(.97)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.primary:hover:not(:disabled){background:#e8805b}
+#hangup:not(:disabled){border-color:#d9695f;color:#d9695f}
+button:disabled{opacity:.38;cursor:not-allowed}
+.log{border-top:1px solid var(--rule)}
+.log h2{font:500 12px var(--mono);color:var(--mut);margin:14px 0 4px;display:flex;justify-content:space-between}
+.log h2 small{font:inherit;color:var(--mut-2)}
+#transcript{max-height:42vh;overflow:auto;overflow-wrap:anywhere}
+#transcript:empty::before{content:"Nothing said yet.";display:block;padding:14px 0;color:var(--mut-2);font:italic 400 15px var(--serif)}
+#transcript p{margin:0;padding:12px 0;border-bottom:1px solid var(--rule);font-size:15.5px;color:var(--ink)}
+#transcript p[data-who="You"]{color:var(--ink-2)}
+#transcript p::before{content:attr(data-who);display:block;font:500 11px var(--mono);color:var(--mut-2);margin-bottom:2px}
+#transcript p[data-who="Assistant"]::before{color:var(--accent)}
+.fine{font-size:12.5px;color:var(--mut-2);margin:0}
+audio{display:none}
+@media(max-width:560px){.orb{width:88px;height:88px}#voice-status{font-size:17px}.controls button{flex:1 1 auto}.lede{font-size:16px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
-<body><main>
-<a href="/live.html">Back to text, clips and camera</a>
-<p class="tag">TRIAGELINE / LIVEKIT WEBRTC</p>
-<h1>A conversation you can interrupt.</h1>
-<p>Continuous microphone audio connects directly to your LiveKit voice worker. Speak naturally, pause, or correct yourself while the assistant is talking.</p>
-<p class="warning"><strong>Simulated actions only.</strong> No real bookings, payments or emergency dispatch. Audio is processed by the configured speech providers. Do not share sensitive information on an unreviewed free-tier setup.</p>
-<section class="panel" aria-label="Voice controls">
-<p id="voice-status" role="status" aria-live="polite">Ready. Start the voice worker, then connect and allow your microphone.</p>
-<div class="controls">
-<button id="connect" class="primary">Connect voice</button>
-<button id="mute" disabled aria-pressed="true">Enable microphone</button>
-<button id="hangup" disabled>End call</button>
-<button id="play-audio" hidden>Enable speaker audio</button>
-</div>
+<body data-call="idle"><main>
+<div class="top"><b>TriageLine</b><a href="/live.html">Text, clips &amp; camera →</a></div>
+<section>
+  <p class="kicker">Voice call · LiveKit WebRTC</p>
+  <h1>Talk over it.<br><em>It will stop and listen.</em></h1>
+  <p class="lede">Your microphone streams straight to the voice worker. Pause, restart a sentence, or correct yourself while it's still talking — it drops the stale answer and keeps going with the new one.</p>
+  <p class="note"><strong>Simulated actions only.</strong> No real bookings, payments or emergency dispatch. Audio goes to the speech providers configured on the server, so don't share anything sensitive on a free-tier setup.</p>
 </section>
-<section class="panel" aria-label="Live transcription"><h2>Conversation</h2><small>Transcripts appear when the worker publishes them. They stay on this page, not in browser storage.</small><div id="transcript" role="log" aria-live="polite"></div></section>
-<p><small>HTTPS is required on a phone. Backgrounding this page pauses the microphone (the call ends after 3 minutes away); closing it ends the call. Native apps should use the LiveKit SDK with the same token API. A connected room does not prove that a voice worker has joined.</small></p>
+<section class="call" aria-label="Voice controls">
+  <div class="orb-row">
+    <div class="orb" aria-hidden="true"><i></i></div>
+    <p id="voice-status" role="status" aria-live="polite">Ready. Start the voice worker, then connect and allow your microphone.</p>
+  </div>
+  <div class="controls">
+    <button id="connect" class="primary">Start call</button>
+    <button id="mute" disabled aria-pressed="true">Enable microphone</button>
+    <button id="hangup" disabled>End call</button>
+    <button id="play-audio" hidden>Turn on speaker</button>
+  </div>
+  <div class="log" aria-label="Live transcription">
+    <h2>Transcript <small>kept on this page only</small></h2>
+    <div id="transcript" role="log" aria-live="polite"></div>
+  </div>
+  <p class="fine">Phones need HTTPS. Backgrounding the page pauses the microphone; the call ends after three minutes away or when you close the tab. Native apps can use the LiveKit SDK with the same token API.</p>
+</section>
 <div id="remote-audio"></div>
-<noscript>JavaScript is required for continuous voice.</noscript>
+<noscript>JavaScript is required for voice calls.</noscript>
+</main>
+<script>
+// Reflect call state on <body> for the orb (reads the controller's button state; no coupling to its internals).
+(() => { const b = document.body, c = document.getElementById('connect'), h = document.getElementById('hangup');
+  new MutationObserver(() => { b.dataset.call = !h.disabled ? (c.disabled && !document.getElementById('mute').disabled ? 'live' : 'joining') : 'idle'; })
+    .observe(document.querySelector('.controls'), { subtree: true, attributes: true, attributeFilter: ['disabled'] }); })();
+</script>
 <script src="/auth.js"></script>
 <script type="module" src="/rtc.bundle.js"></script>
-</main></body></html>
+</body></html>

@@ -10,7 +10,7 @@ const lastScores = {};
 let currentTrace = null, currentTraceEnd = 0, currentPlayTimer = null, currentPlaySpeed = 1;
 
 // ---------------------------------------------------------------- Theme Switcher
-const savedTheme = localStorage.getItem("tl_theme") || "dark";
+const savedTheme = localStorage.getItem("tl_theme") || "light";
 document.documentElement.setAttribute("data-theme", savedTheme);
 updateThemeUI(savedTheme);
 
