@@ -290,7 +290,7 @@ class TriageAdapter:
             break
         text, self._pending_final = " ".join(self._pending_final), []
         if text:
-            log.info("COMMIT TURN (%d chars): %r", len(text), text)
+            log.debug("commit turn (%d chars): %r", len(text), text)
             await self._route_final(text)
 
     async def _route_final(self, text: str):
