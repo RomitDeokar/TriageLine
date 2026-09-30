@@ -122,9 +122,15 @@ def test_rate_limits(client):
 
 def test_session_capacity(client):
     login(client)
-    for _ in range(2):
-        assert client.post('/api/live/start', json={}).status_code == 200
-    assert client.post('/api/live/start', json={}).status_code == 429
+    first = client.post('/api/live/start', json={})
+    second = client.post('/api/live/start', json={})
+    third = client.post('/api/live/start', json={})
+    assert first.status_code == second.status_code == third.status_code == 200
+    # a third start retires the owner's oldest session instead of refusing (Reconnect must always work);
+    # two live sessions (e.g. two tabs) are still allowed
+    live = [sid for sid in (first.json()['sid'], second.json()['sid'], third.json()['sid'])
+            if client.app.state.sessions.get(sid)]
+    assert live == [second.json()['sid'], third.json()['sid']]
 
 
 def test_stream_cursor_validation(client):

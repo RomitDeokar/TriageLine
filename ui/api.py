@@ -386,9 +386,13 @@ def create_app() -> FastAPI:
             if body.request_id and key in starts and manager.get(starts[key]):
                 s = owned(starts[key], owner)
             else:
-                limiter.check(("start", owner), 6)
-                if sum(getattr(s, "owner", None) == owner for s in manager.by_id.values()) >= 2:
-                    raise HTTPException(429, "End an existing session before starting another")
+                limiter.check(("start", owner), 20)
+                # A new start supersedes this owner's oldest sessions (page reload, Reconnect, a second
+                # tab): refusing would strand the user behind sessions whose client is already gone.
+                mine = sorted((x for x in manager.by_id.values() if getattr(x, "owner", None) == owner),
+                              key=lambda x: x.created)
+                for stale in mine[:max(0, len(mine) - 1)]:
+                    manager.end(stale.sid)
                 try:
                     s = await asyncio.to_thread(manager.start)
                 except OverflowError:
