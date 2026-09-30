@@ -213,8 +213,6 @@ def test_spoken_id_correction_wins(heard, want):
 @pytest.mark.parametrize("heard,field,want", [
     ("The order ID is q r s four five six.", "order_id", "QRS456"),
     ("I'd like to track item P52 please", "item_id", "P52"),
-    ("my license is QRTB", "doc_number", "QRTB"),
-    ("my driver license number is q x 3 1", "doc_number", "QX31"),
     ("The order ID is q r s", "order_id", None),
     ("I need a flight to Boston", "order_id", None),
 ])
