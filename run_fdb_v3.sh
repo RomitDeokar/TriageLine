@@ -217,6 +217,10 @@ stage_4_agent() {
     cp "$V3/mock_apis.py" "$V3/latency_injector.py" "$LK_DIR/"      # official backend, unmodified
     write_v3_env
     : > /tmp/agent_heartbeat.log; : > /tmp/agent_tool_calls.log     # same fixed paths as upstream
+    # The official runner mints plain participant tokens (automatic dispatch). A worker registered
+    # with an explicit agent_name (set in .env for the gateway UI flows) never receives those rooms.
+    # The scored run therefore ALWAYS forces the empty name here, whatever .env carries.
+    export TRIAGELINE_AGENT_NAME=""
     ( cd "$LK_DIR" && exec "$PY" cascaded_agent.py start --latency "$LATENCY" ) >"$AGENT_LOG" 2>&1 &
     AGENT_PID=$!
     local waited=0
