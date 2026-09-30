@@ -55,6 +55,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from agent.agent import ParticipantAgent
@@ -112,6 +113,7 @@ class TriageAdapter:
         # whose required args are not all present yet) waits up to `max_settle_s` before committing.
         self.max_settle_s = max(self.settle_s, float(max_settle_s if max_settle_s is not None else self.settle_s * 2))
         self._pending_final: list = []
+        self._last_route_at: float = 0.0
         self._closed = False
         self._settle_task: Optional[asyncio.Task] = None
         self._interrupt_speech = interrupt_speech
@@ -303,6 +305,14 @@ class TriageAdapter:
         if self.busy():
             await self.on_barge_in(text)
             return
+        # a late fragment that only adds arguments ("on August 20", "under 200") amends the call
+        # just made instead of starting a second request (audit: duplicate search_flights calls)
+        if (self._last_route_at and (time.time() - self._last_route_at) < 8.0
+                and _is_arg_continuation(text)):
+            log.info("late arg continuation, amending instead of re-issuing: %r", text)
+            await self.on_barge_in(text)
+            return
+        self._last_route_at = time.time()
         await self.in_q.put({"event_type": "user_speech_chunk",
                               "payload": {"text": text, "end_of_turn": True}})
 
@@ -393,6 +403,22 @@ class TriageAdapter:
 
 _UNFINISHED = re.compile(r"(?i)(?:\b(?:and|or|but|then|so|to|for|of|the|a|an|my|with|is|was|um+|uh+|like|"
                          r"actually|wait|i mean|let me (?:see|find|check)|hold on)\s*[,.…]*|\.{2,}|…|,)\s*$")
+
+
+_ARG_CONTINUATION = re.compile(
+    r"(?i)^\s*(?:(?:and|also|then|plus|uh|um|okay|ok|so)\s+)*"
+    r"(?:on\s+(?:the\s+)?(?:\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
+    r"mon|tue|wed|thu|fri|sat|sun|today|tonight|tomorrow)|"
+    r"(?:under|below|less than|at most|up to|no more than)\s|"
+    r"for\s+(?:\w+\s+)?(?:nights?|days?|people|guests)|\d+\s+(?:nights?|days?|people|guests)|"
+    r"keep it\s|make it\s|(?:with\s+(?:a\s+)?)?(?:budget|max(?:imum)?)\s|"
+    r"(?:the\s+)?(?:name|passenger)\s+is\s|in\s+(?:economy|business|first)\b)")
+
+
+def _is_arg_continuation(text: str) -> bool:
+    """A late fragment that only supplies ARGUMENTS for the call just made ("on August 20",
+    "under 200", "for two nights", "keep it under 50") — amending, not a new request."""
+    return bool(_ARG_CONTINUATION.match((text or "").strip()))
 
 
 def turn_looks_unfinished(text: str) -> bool:

@@ -412,6 +412,10 @@ class ParticipantAgent:
             self.state["intent"] = "chitchat"
             await self.say("final_response", "Okay — I won't do that. What would you like instead?")
             return True
+        if nlu.YES_RE.search(turn):
+            # "Yes, but make it three instead": affirmative WITH new facts must never confirm the
+            # old proposal — re-plan with the correction and ask again (audit BUG 5).
+            await self.say("filler_speech", "Got it — let me update that first.")
         return False                                    # a new request: handle it normally
 
     def _remember(self, user: Optional[str], assistant: Optional[str]) -> None:
@@ -888,10 +892,13 @@ class ParticipantAgent:
         cm = self._COND.match(nxt)
         if cm:
             ok = self.condition_holds(cm.group(1))
-            if ok is False:
+            if ok is not True:
+                # True executes; False and UNKNOWN both stop safely — a missing price/duration
+                # must never authorize a conditional state change (audit BUG 7).
                 self.compound_version = self.version
-                await self.say("final_response", f"That doesn't meet your condition ({nlu.norm(cm.group(1))}), "
-                                                 f"so I haven't done the next step.")
+                reason = ("That doesn't meet your condition" if ok is False
+                          else "I couldn't confirm that condition from the result")
+                await self.say("final_response", f"{reason} ({nlu.norm(cm.group(1))}), so I haven't done the next step.")
                 return await self._drain_compound()
             nxt = cm.group(2).strip(" ,") or nxt
         # a later clause of the same spoken request: its missing ids / addresses refer to what the

@@ -103,7 +103,7 @@ MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.0"))
 os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1" if MODE == "benchmark" else "0")
 BACKCHANNEL = os.environ.get("TRIAGELINE_BACKCHANNEL", "1") == "1"
 # Only backchannel on turns long enough to need processing time (guide penalises excessive fillers).
-BACKCHANNEL_MIN_WORDS = int(os.environ.get("TRIAGELINE_BACKCHANNEL_MIN_WORDS", "6"))
+BACKCHANNEL_MIN_WORDS = int(os.environ.get("TRIAGELINE_BACKCHANNEL_MIN_WORDS", "3"))
 AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
 
 
@@ -280,26 +280,33 @@ async def entrypoint(ctx: agents.JobContext):
         # Progress narration: injected mock latency can run 10s+ per call (travel chains).
         # A short non-committal line keeps the floor alive ("no dead air", Theme-05 floor
         # management) — it never claims completion and is fully interruptible.
-        narration_state = {"n": 0}
+        narrator_state = {"spoken": 0}
 
         async def _progress_narrator() -> None:
-            for delay, line in ((3.5, "Still working on that."), (11.0, "One moment, this is taking a second.")):
-                await asyncio.sleep(delay)
-                if narration_state["n"] == 0:
-                    session.say(line, allow_interruptions=True, add_to_chat_ctx=False)
-                    narration_state["n"] += 1
+            lines = ("Still working on that.", "One moment, this is taking a second.")
+            for i, line in enumerate(lines):
+                await asyncio.sleep(3.5 if i == 0 else 7.5)
+                narrator_state["spoken"] += 1
+                session.say(line, allow_interruptions=True, add_to_chat_ctx=False)
 
         narrator = asyncio.create_task(_progress_narrator())
-        if registry is None:
-            result = {"status": "error", "error": "unavailable", "message": "mock_apis registry unavailable"}
-        else:
+        try:
+            if registry is None:
+                result = {"status": "error", "error": "unavailable", "message": "mock_apis registry unavailable"}
+            else:
+                try:
+                    result = await asyncio.to_thread(registry.call, api_name, **args)
+                except TypeError as e:          # official mocks raise on missing/extra kwargs
+                    result = {"status": "error", "error": "invalid_args", "message": str(e)}
+                except Exception as e:  # noqa: BLE001 - never let one bad tool call kill the session
+                    result = {"status": "error", "error": "error", "message": str(e)}
+        finally:
+            # cancellation must never leak a narrator that later says "still working on that"
+            narrator.cancel()
             try:
-                result = await asyncio.to_thread(registry.call, api_name, **args)
-            except TypeError as e:          # official mocks raise on missing/extra kwargs
-                result = {"status": "error", "error": "invalid_args", "message": str(e)}
-            except Exception as e:  # noqa: BLE001 - never let one bad tool call kill the session
-                result = {"status": "error", "error": "error", "message": str(e)}
-        narrator.cancel()
+                await narrator
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         rec["end"] = time.time()
         await append_async(TOOL_LOG, json.dumps({"room": room_name, "call": {
             "function": api_name, "args": args, "timestamp_start": rec["start"], "timestamp_end": rec["end"]}}))

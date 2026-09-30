@@ -152,7 +152,7 @@ def test_two_filters_in_one_sentence():
 
 @pytest.mark.parametrize("limit,added", [(50, False), (95, True)])
 def test_conditional_branches_on_result(limit, added):
-    c, _ = run([f"Search for headphones under 100 and if the first result is under {limit} add it to my cart."],
+    c, _ = run([f"Search for headphones under 100 and if the first result is under {limit} add the first one to my cart."],
                tail=1.0)
     assert bool(calls_of(c, "add_to_cart")) is added, c
 

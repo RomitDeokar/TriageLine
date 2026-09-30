@@ -197,7 +197,15 @@ def extract_query(text: str) -> Optional[str]:
     """Free-text search term = the noun phrase after the search verb, from the clause the user settled
     on (after the last correction), with disfluencies removed (A-02). Falls back to None so a search
     is never issued with the whole rambling utterance as its query."""
-    for seg in (_repaired_tail(text), text):
+    tail = _repaired_tail(text)
+    segs = [tail]
+    # "hiking boots instead": the corrected value PRECEDES the trailing marker, so also try the
+    # span between the last two repair markers.
+    ms = list(REPAIR_MARKERS.finditer(text or ""))
+    if ms:
+        prev = ms[-2].end() if len(ms) >= 2 else 0
+        segs.append(text[prev:ms[-1].start()])
+    for seg in segs + [text]:
         clean = strip_fillers(seg)
         cands = []
         for m in _QUERY_CUE.finditer(clean):
@@ -212,6 +220,18 @@ def extract_query(text: str) -> Optional[str]:
             cands.append(phrase)
         if cands:
             return cands[-1]
+        # a correction with no search verb in the settled span ("...never mind, hiking boots instead"):
+        # the span itself is the settled query
+        if seg is not text and seg.strip():
+            cand = strip_fillers(seg)
+            cand = re.sub(r"(?i)^[\s,;:.-]*(?:no|wait|actually|instead|please|then|and|also|make it|just|"
+                          r"never\s?mind|forget it)\b[\s,;:.-]*", "", cand)
+            cand = re.sub(r"(?i)^(?:no|wait|actually|instead|please|then|and|also|never\s?mind)\b[\s,;:.-]*", "", cand)
+            cand = re.sub(r"(?i)\b(?:instead|please|now|then)\b[\s.,!?]*$", "", cand).strip(" ,.")
+            cand = re.sub(r"(?i)^(?:a|an|the|some|any|new|nice|good|cheap)\s+", "", cand).strip(" ,.")
+            words = cand.split()
+            if words and len(words) <= 4 and not all(w.lower() in _QUERY_BAD | STOP for w in words):
+                return cand
     return None
 
 
@@ -302,9 +322,34 @@ def extract_origin(text: str) -> Optional[str]:
 _ORDINAL_SUFFIX = re.compile(r"(\d)(?:st|nd|rd|th)\b", re.I)
 
 
+_ORD_WORDS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
+              "eighth": 8, "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13,
+              "fourteenth": 14, "fifteenth": 15, "sixteenth": 16, "seventeenth": 17, "eighteenth": 18,
+              "nineteenth": 19, "twentieth": 20, "twenty first": 21, "twenty-first": 21,
+              "twenty second": 22, "twenty-second": 22, "twenty third": 23, "twenty-third": 23,
+              "twenty fourth": 24, "twenty-fourth": 24, "twenty fifth": 25, "twenty-fifth": 25,
+              "twenty sixth": 26, "twenty-sixth": 26, "twenty seventh": 27, "twenty-seventh": 27,
+              "twenty eighth": 28, "twenty-eighth": 28, "twenty ninth": 29, "twenty-ninth": 29,
+              "thirtieth": 30, "thirty first": 31, "thirty-first": 31}
+_ORD_ALT = "|".join(sorted(_ORD_WORDS, key=len, reverse=True))
+_MONTH_ALT = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+
+
+def _spoken_dates_to_digits(text: str) -> str:
+    """"August twentieth" -> "August 20", "the 20th of August" -> "August 20" so DATE_RE matches
+    the canonical spoken form the schemas expect (verified against the benchmark's own expected args)."""
+    t = text or ""
+    t = re.sub(r"(?i)\b(" + _MONTH_ALT + r")\s+(" + _ORD_ALT + r")\b",
+               lambda m: f"{m.group(1)} {_ORD_WORDS[m.group(2).lower()]}", t)
+    t = re.sub(r"(?i)\b(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\s+of\s+(" + _MONTH_ALT + r")\b",
+               lambda m: f"{m.group(2)} {m.group(1)}", t)
+    return t
+
+
 def extract_date(text: str) -> Optional[str]:
     """Last date mention (repair-aware by position); calendar dates are returned without the spoken
     ordinal suffix ("March 3rd" -> "March 3"), the canonical form tool schemas expect (A-11)."""
+    text = _spoken_dates_to_digits(text)
     m = list(DATE_RE.finditer(text or ""))
     if not m:
         return None
@@ -442,22 +487,39 @@ def spelled_ids(text: str) -> List[str]:
 
 _ID_CUE_NOUN = {"order": r"order", "product": r"item|product|sku", "item": r"item|product|sku",
                 "sku": r"item|product|sku", "ticket": r"ticket|support",
-                "booking": r"booking|reservation", "flight": r"flight"}
+                "booking": r"booking|reservation", "flight": r"flight",
+                "doc": r"(?:driver'?s?\s+)?licen[cs]e|passport|visa|id\s*card|document",
+                "document": r"(?:driver'?s?\s+)?licen[cs]e|passport|visa|id\s*card|document"}
+
+
+_LETTER_ID_BLOCK = {"the", "this", "that", "number", "details", "information", "status", "is", "was",
+                    "please", "document", "documents", "card", "code", "name", "order", "item", "product",
+                    "license", "licence", "passport", "visa", "mine", "my", "your", "new", "old", "same",
+                    "here", "there", "where", "now", "then", "again", "back", "up", "down", "out", "in",
+                    "on", "off", "left", "right", "one", "two", "three", "four", "five", "six", "seven",
+                    "eight", "nine", "ten", "for", "with", "and", "but", "you", "have", "want", "need",
+                    "find", "look", "check", "track", "update", "see", "know", "think", "like", "just"}
 
 
 def _cue_undashed_id(text: str, field: str = "") -> Optional[str]:
     """Undashed spoken ids that STT delivers in mixed case right after the field's own noun:
-    "order ID is ABC123" -> ABC123, "track order 456" -> 456, "item P52" -> P52 (C1)."""
+    "order ID is ZX48" -> ZX48, "track order 456" -> 456, "item P52" -> P52 (C1)."""
     noun = (field or "").split("_")[0]
     cue = _ID_CUE_NOUN.get(noun, "") or (r"(?:id|number|code)" if (field or "").endswith("_id") or field == "id" else "")
     if not cue:
         return None
+    text = normalize_spoken_ids(text or "")      # "d l 8 8" -> "DL88" before matching
     m = re.search(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*"
                   r"([A-Za-z]{1,6}\d{1,8}|\d{2,8}|[A-Za-z]\d[A-Za-z0-9]{0,6})\b", text or "", re.I)
     if m:
         v = m.group(1).upper()
         if plausible_id(v):
             return v
+    # letter-only ids right after the cue ("license DELIV") — never ordinary prose words
+    m = re.search(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*([A-Za-z]{3,8})\b",
+                  text or "", re.I)
+    if m and m.group(1).lower() not in _LETTER_ID_BLOCK:
+        return m.group(1).upper()
     return None
 
 
@@ -473,7 +535,7 @@ def extract_id(text: str, field: str = "") -> Optional[str]:
                 if near:
                     return near[-1]
             return sp[-1][1]
-        # STT collapses spelled ids into one undashed token ("ABC123") — cue-anchored, case-insensitive
+        # STT collapses spelled ids into one undashed token ("ZX48") — cue-anchored, case-insensitive
         und = _cue_undashed_id(text, field)
         if und:
             return und
@@ -757,6 +819,10 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
         sp = spelled_ids(text)
         if sp:
             return sp[-1]
+        # cue-anchored, including the field's own noun ("driver license D L 8 8" -> DL88)
+        m = _cue_undashed_id(text, lname)
+        if m:
+            return m
         m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
             re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
         return m.group(1) if m else None
@@ -1002,7 +1068,7 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     m = re.search(re.escape(words) + r"\s+(?:is|to|as|=|:)?\s*([\w][\w\-./]*(?:\s+[\w][\w\-./]*){0,2})", text, re.I)
     if m:
         cand = norm(m.group(1)).strip(" .,")
-        # an id-shaped field must look like an id ("ABC123"), never multi-word STT debris ("a b c")
+        # an id-shaped field must look like an id ("ZX48"), never multi-word STT debris ("a b c")
         if lname.endswith("_id") or lname == "id":
             return cand if plausible_id(cand) else None
         return cand
@@ -1198,33 +1264,17 @@ _TEEN_WORDS = {"eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fift
                "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19}
 _MAGNITUDE_WORDS = {"hundred": 100, "thousand": 1000}
 
-# Compound spoken amounts STT leaves as words: "two hundred", "fifteen hundred", "one thousand five hundred"
-def _compound_normalize(text: str) -> str:
-    """Replace maximal runs of spoken number words with their value: "two hundred fifty" -> 250,
-    "fifteen hundred" -> 1500, "two hundred" -> 200. Single words map through WORD_NUM."""
-    out, buf = [], []
-
-    def flush():
-        if buf:
-            v = _compound_value(buf)
-            out.append(str(v) if v is not None else " ".join(buf))
-            buf.clear()
-
-    for w in re.findall(r"[A-Za-z]+|\d+", text or ""):
-        wl = w.lower()
-        if wl in WORD_NUM or wl in _TENS_WORDS or wl in _TEEN_WORDS or wl in _MAGNITUDE_WORDS:
-            buf.append(wl)
-        else:
-            flush()
-            out.append(w)
-    flush()
-    return " ".join(out)
-
 
 def _compound_value(words: List[str]) -> Optional[int]:
-    total, cur = 0, 0
+    """Compose a spoken number: "two hundred fifty" -> 250, "fifteen hundred" -> 1500.
+    A bare "and" is only skipped right after a magnitude ("one hundred and fifty")."""
+    total, cur, prev_mag = 0, 0, False
     for w in words:
         w = w.lower().strip(".,")
+        if w == "and" and prev_mag:
+            prev_mag = False
+            continue
+        prev_mag = w in _MAGNITUDE_WORDS
         if w in WORD_NUM:
             cur += WORD_NUM[w]
         elif w in _TENS_WORDS:
@@ -1237,6 +1287,49 @@ def _compound_value(words: List[str]) -> Optional[int]:
             total += cur * _MAGNITUDE_WORDS[w]
             cur = 0
     return (total + cur) or None
+
+
+_K_SUFFIX_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*k\b", re.I)
+
+
+def _compound_normalize(text: str) -> str:
+    """Replace spoken number-word RUNS with their value, leaving every other character
+    (decimals, commas, currency, punctuation) exactly as written: "two hundred fifty" -> 250,
+    "one hundred and fifty" -> 150, "2k" -> 2000. Runs without a magnitude/tens word fall back
+    to per-word digits so "one two three" stays "1 2 3" (spelled ids keep their digit sequence)."""
+    if not text:
+        return text
+    text = _K_SUFFIX_RE.sub(lambda m: str(int(float(m.group(1)) * 1000)), text)
+    runs, buf, start, end = [], [], None, None
+    for m in re.finditer(r"[A-Za-z]+", text):
+        w = m.group().lower()
+        if w in WORD_NUM or w in _TENS_WORDS or w in _TEEN_WORDS or w in _MAGNITUDE_WORDS or w == "and":
+            if start is None:
+                start = m.start()
+            buf.append(w)
+            end = m.end()
+        else:
+            if buf:
+                runs.append((start, end, buf))
+                buf, start, end = [], None, None
+    if buf:
+        runs.append((start, end, buf))
+    if not runs:
+        return text
+    res, pos = [], 0
+    for s, e, words in runs:
+        words = [w for w in words if w != "and"] or words
+        scaled = any(w in _MAGNITUDE_WORDS or w in _TENS_WORDS or w in _TEEN_WORDS for w in words)
+        if scaled:
+            v = _compound_value(words)
+            val = str(v) if v is not None else text[s:e]
+        else:
+            val = " ".join(str(WORD_NUM[w]) for w in words if w in WORD_NUM) or text[s:e]
+        res.append(text[pos:s])
+        res.append(val)
+        pos = e
+    res.append(text[pos:])
+    return "".join(res)
 
 
 _AMOUNT_UNIT = r"(?:(?:us|u\.s\.|canadian|australian|british|swiss|japanese|indian|chinese|mexican|american)\s+)?" \
@@ -1530,7 +1623,8 @@ def tool_vocabulary(tools: Dict[str, Any], limit: int = 80) -> List[str]:
         words += re.findall(r"[A-Za-z]{3,}", str(spec.get("description", "")))
         for arg, a in (spec.get("args") or {}).items():
             words += arg.split("_")
-            words += re.findall(r"'([^']{2,20})'", str(a.get("description", "")))
+            # schema example literals ("FL123", "John Doe", "London") must NOT bias the recognizer:
+            # they are illustrative values, not vocabulary (audit B5)
     seen, out = set(), []
     for w in ["order ID", "cart", "SKU", "passport", "autopay", "exchange rate", "bedroom"] + words:
         k = w.lower()
