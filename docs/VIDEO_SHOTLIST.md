@@ -1,5 +1,7 @@
 # Demo video shot list (3–5 min) — record only what actually ran
 
+> **Published demo video:** <https://drive.google.com/file/d/1GDqNa02lEbf5xl4cgFHxh8mEMuRj_Doh/view?usp=sharing>
+
 Label every simulated action as SIMULATED on screen. Never show a failed or old-kit run as FDB-v3.
 
 1. **0:00–0:30 Problem + architecture.** One slide: VAD → STT → ParticipantAgent (fast path acks, slow path tools, ledger) → TTS over LiveKit.

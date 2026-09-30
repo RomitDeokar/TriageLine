@@ -18,16 +18,29 @@ Canonical documents are this README, `docs/ARCHITECTURE.md`, `docs/SUBMISSION_CH
 
 ## Submission (Samsung PRISM Generative AI Hackathon 2026 — Theme 05)
 
-| item | where |
-|---|---|
-| Working prototype code (public repo) | this repository (Git tag `PRISM_GENAI_HACKATHON_Y2026`) |
-| Python requirements | `requirements.txt` (app), `requirements-fdb.txt` (official FDB-v3 runner), `requirements-app.txt` (gateway + workers) |
-| Presentation (PPT/PDF) | `docs/deck/TriageLine_Submission_PRISM_2026.pptx` and `docs/deck/TriageLine_Theme05.pdf` |
-| Demo video (max 5 min) | **link to be added after recording** (YouTube or Drive — see `docs/VIDEO_SHOTLIST.md` for the shot list) |
-| Existing clip | `docs/video/pwa_interrupt.mp4` (23 s — PWA interruption, part of the demo) |
-| Reproducible setup | "Quick start" above; `docs/DEPLOY.md` for deployment |
-| AI usage disclosure | `docs/Wizards_AI_Disclosure.docx` |
-| Tag | `PRISM_GENAI_HACKATHON_Y2026` |
+**Team Wizards · SRM Institute of Science and Technology (KTR, J1)** — Romit Deokar, Manmohan Singh, Rian K Sinu, Pragalbh Rai
+
+Everything a reviewer needs is linked below. No file lives outside this repository; secrets are never committed.
+
+| # | Required item | Where |
+|---|---|---|
+| 1 | **Working prototype code** (public repo) | <https://github.com/RomitDeokar/TriageLine> — Git tag **`PRISM_GENAI_HACKATHON_Y2026`** |
+| 2 | **Requirements** | [`requirements.txt`](requirements.txt) · [`requirements-app.txt`](requirements-app.txt) (gateway + LiveKit workers) · [`requirements-fdb.txt`](requirements-fdb.txt) (official FDB-v3 runner) |
+| 3 | **Presentation** (PPT) | [`docs/deck/SRM_Wizards_5_Submission.pptx`](docs/deck/SRM_Wizards_5_Submission.pptx) |
+| 4 | **Demo video** (3–5 min, Drive) | <https://drive.google.com/file/d/1GDqNa02lEbf5xl4cgFHxh8mEMuRj_Doh/view?usp=sharing> |
+| 5 | Supplementary clip (PWA interruption, 23 s) | [`docs/video/pwa_interrupt.mp4`](docs/video/pwa_interrupt.mp4) |
+| 6 | **Detailed README** (this file) | setup, one-command reproduction, modes, deployment, results |
+| 7 | Architecture & diagrams | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| 8 | Deployment guide (temporary + permanent) | [`docs/DEPLOY.md`](docs/DEPLOY.md) |
+| 9 | Benchmark evidence (runs, logs, evaluators) | [`results/results.md`](results/results.md) · [`results/20260930_live_run/`](results/20260930_live_run/) · [`results/20260929T084428Z/`](results/20260929T084428Z/) |
+| 10 | One-command reproduction (FDB-v3) | `./run_fdb_v3.sh` (see "Quick start"); diagnostic offline mode `./run_fdb_v3.sh --offline-text` |
+| 11 | Video shot list (what the demo shows) | [`docs/VIDEO_SHOTLIST.md`](docs/VIDEO_SHOTLIST.md) |
+| 12 | AI usage disclosure | [`docs/Wizards_AI_Disclosure.docx`](docs/Wizards_AI_Disclosure.docx) |
+| 13 | Submission checklist (organiser items) | [`docs/SUBMISSION_CHECKLIST.md`](docs/SUBMISSION_CHECKLIST.md) |
+| 14 | Integrity (no benchmark memorisation) | `python scripts/integrity_audit.py --strict-comments` → PASS; held-out set `scenarios_heldout/` 29/30 |
+
+Honest scoping: the scored live FDB-v3 number is produced by the **organisers' common re-run** with their pinned LLM judge; the numbers in this repo are our own runs, each labelled with its mode (live exact-match / offline diagnostic / practice kit).
+
 
 ## Architecture (one diagram)
 
