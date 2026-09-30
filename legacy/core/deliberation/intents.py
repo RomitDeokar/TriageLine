@@ -40,7 +40,18 @@ _LOCATION_HINTS = (
     "rt.",
 )
 _EMERGENCY_HINTS = ("fire", "explosion", "injured", "injury", "unconscious", "smoke")
-_BREAKDOWN_HINTS = ("flat tire", "broke down", "breakdown", "won't start", "engine")
+_BREAKDOWN_HINTS = (
+    "flat tire",
+    "broke down",
+    "breakdown",
+    "won't start",
+    "engine",
+    "crash",
+    "crashed",
+    "accident",
+    "collision",
+    "wrecked",
+)
 _CASE_CLOSURE_HINTS = (
     "that's all",
     "that's it",

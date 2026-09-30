@@ -22,3 +22,4 @@ livekit_agent/.fdb_v3_repo/
 .env
 .env.local
 .env.*.local
+.venv-win/

@@ -39,7 +39,10 @@ import sys
 from dotenv import load_dotenv
 
 from livekit import agents
-from livekit.agents import Agent, AgentServer, AgentSession
+from livekit.agents import Agent, AgentServer, AgentSession, JobProcess
+# Silero registers its LiveKit plugin at import time and requires the process main thread.
+# Keep this eager import here rather than first importing it inside setup_fnc/job code.
+from livekit.plugins import silero as _silero  # noqa: F401
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.dirname(_HERE), _HERE):   # repo root (livekit_agent.*) + this dir (triage_brain)
@@ -141,11 +144,11 @@ class LiveKitAudioIOAdapter(AudioIO):
         self._agent_playing = value
 
 
-def build_triage_pipeline():
+def build_triage_pipeline(vad=None):
     """Same VAD/STT/TTS construction as cascaded_agent.py (shared speech_providers module), so this is
     recognizably the same shell, just with the triage brain instead of the FDB tool agent. No LLM."""
     from livekit_agent.speech_providers import build_pipeline
-    vad, stt, tts, _cfg = build_pipeline()
+    vad, stt, tts, _cfg = build_pipeline(vad)
     return vad, stt, tts
 
 
@@ -157,7 +160,17 @@ class TriageVoiceAgent(Agent):
         super().__init__(instructions="")
 
 
-server = AgentServer()
+def prewarm(proc: JobProcess):
+    """Load Silero in the worker process main thread before room jobs run.
+
+    LiveKit executes room entrypoints on job threads, where importing the Silero plugin
+    for the first time raises "Plugins must be registered on the main thread".
+    """
+    from livekit_agent.speech_providers import load_vad
+    proc.userdata["vad"] = load_vad()
+
+
+server = AgentServer(setup_fnc=prewarm)
 # Explicit dispatch: set TRIAGELINE_AGENT_NAME (e.g. triageline-triage) and the same value on the
 # gateway so its tokens route calls here; empty keeps automatic dispatch (demo only, run one worker).
 AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
@@ -168,7 +181,7 @@ async def entrypoint(ctx: agents.JobContext):
     call_id = ctx.room.name
     print(f"!!! TRIAGE LINE AGENT JOINING ROOM: {call_id} !!!")
 
-    vad, stt, tts = build_triage_pipeline()
+    vad, stt, tts = build_triage_pipeline(getattr(ctx.proc, "userdata", {}).get("vad"))
 
     # AgentSession still owns the real audio I/O (mic in, speaker out) and
     # VAD; what it does NOT own is deciding what to say -- that is
@@ -180,13 +193,42 @@ async def entrypoint(ctx: agents.JobContext):
     audio_io = LiveKitAudioIOAdapter()
     tts_adapter = LiveKitTTSAdapter(session)
     triage = TriageCallSession(call_id=call_id, stt=None, tts=tts_adapter, audio_io=audio_io)
+    final_segments: list[str] = []
+    flush_handle: asyncio.TimerHandle | None = None
+
+    async def flush_final_transcript() -> None:
+        """Coalesce Deepgram final segments; a final segment is not necessarily a whole turn."""
+        try:
+            text = " ".join(s.strip() for s in final_segments if s.strip()).strip()
+            final_segments.clear()
+            if text:
+                log.info("processing caller turn: %s", text)
+                await triage.on_final_transcript(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("failed to process caller transcript for call %s", call_id)
+
+    def schedule_transcript_flush(delay: float) -> None:
+        nonlocal flush_handle
+        if flush_handle is not None:
+            flush_handle.cancel()
+
+        def launch_flush() -> None:
+            nonlocal flush_handle
+            flush_handle = None
+            asyncio.create_task(flush_final_transcript())
+
+        flush_handle = asyncio.get_running_loop().call_later(delay, launch_flush)
 
     @session.on("user_input_transcribed")
     def _on_transcript(msg: agents.voice.UserInputTranscribedEvent):
         print(f"  📝 STT: '{msg.transcript}' (final={msg.is_final})")
         if msg.is_final:
-            audio_io.set_caller_speaking(False)
-            asyncio.create_task(triage.on_final_transcript(msg.transcript))
+            final_segments.append(msg.transcript)
+            # Prefer the user-state transition as the turn boundary; keep a short
+            # debounce fallback in case this LiveKit version omits that transition.
+            schedule_transcript_flush(1.5)
         else:
             audio_io.set_caller_speaking(True)
             asyncio.create_task(triage.on_partial_transcript(msg.transcript))
@@ -201,6 +243,8 @@ async def entrypoint(ctx: agents.JobContext):
         audio_io.set_caller_speaking(speaking)
         if speaking and audio_io.is_agent_playing():
             asyncio.create_task(triage.check_for_barge_in())
+        elif not speaking and final_segments:
+            schedule_transcript_flush(0.35)
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: agents.voice.AgentStateChangedEvent):

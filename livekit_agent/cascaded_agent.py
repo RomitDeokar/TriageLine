@@ -226,6 +226,8 @@ def build_turn_handling() -> dict:
     th: dict = {"endpointing": {"min_delay": 0.5, "max_delay": 5.0}}
     if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1":
         try:
+            from livekit_agent.speech_providers import _allow_plugin_registration_in_subprocess
+            _allow_plugin_registration_in_subprocess()
             from livekit.plugins.turn_detector.multilingual import MultilingualModel
             th["turn_detection"] = MultilingualModel()
         except Exception as e:  # noqa: BLE001 - plugin optional; VAD endpointing + commit gate still apply

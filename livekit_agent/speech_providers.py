@@ -23,8 +23,25 @@ Whisper runs at temperature 0 (B10). Disable biasing with TRIAGELINE_STT_BIAS=0.
 from __future__ import annotations
 
 import os
+import threading
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+
+def _allow_plugin_registration_in_subprocess() -> None:
+    """livekit-agents raises 'Plugins must be registered on the main thread' when a plugin
+    (silero/deepgram/...) is first imported inside a job subprocess (prewarm runs off the
+    main thread there). Registration is only a list append + event emit, so bypass the guard
+    when this module is first imported off the main thread (job subprocess context)."""
+    import livekit.agents.plugin as _plugin_mod
+    if threading.current_thread() is threading.main_thread():
+        return
+
+    def _register(cls, plugin):
+        _plugin_mod.Plugin.registered_plugins.append(plugin)
+        _plugin_mod.Plugin.emitter.emit("plugin_registered", plugin)
+
+    _plugin_mod.Plugin.register_plugin = classmethod(_register)  # type: ignore[method-assign]
 
 # Gemini defaults follow Google's 2026-09 guidance for new projects (3.5 Flash-Lite / 3.8 TTS);
 # override with TRIAGELINE_STT_MODEL / TRIAGELINE_TTS_MODEL (e.g. gemini-2.5-flash on older projects).
@@ -84,7 +101,23 @@ def describe(cfg: dict | None = None) -> str:
             f"-> {c['tts_provider']}:{c['tts_model']}{voice} TTS")
 
 
+def register_plugins(cfg: dict | None = None) -> None:
+    """Import LiveKit plugins on the CLI main thread before job threads are started.
+
+    LiveKit plugin modules register themselves during import and reject registration
+    from a job thread. The agent entrypoints call this from preflight().
+    """
+    import importlib
+
+    cfg = cfg or selected()
+    importlib.import_module("livekit.plugins.silero")
+    for provider in {cfg["stt_provider"], cfg["tts_provider"]}:
+        if provider in {"deepgram", "openai"}:
+            importlib.import_module(f"livekit.plugins.{provider}")
+
+
 def load_vad():
+    _allow_plugin_registration_in_subprocess()
     from livekit.plugins import silero
     return silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
 
@@ -108,6 +141,7 @@ def whisper_prompt(terms: list) -> str:
 
 
 def build_stt(cfg: dict, tools: dict | None = None):
+    _allow_plugin_registration_in_subprocess()
     p, model = cfg["stt_provider"], cfg["stt_model"]
     terms = bias_terms(tools)
     if p == "gemini":
@@ -128,6 +162,7 @@ def build_stt(cfg: dict, tools: dict | None = None):
 
 
 def build_tts(cfg: dict):
+    _allow_plugin_registration_in_subprocess()
     p = cfg["tts_provider"]
     if p == "gemini":
         from livekit_agent.gemini_speech import GeminiTTS
