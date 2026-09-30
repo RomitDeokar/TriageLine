@@ -398,3 +398,23 @@ def test_b27_unclear_support_audio_asks_to_repeat(monkeypatch):
             q = r.spoken("clarification_request")[-1].lower()
             assert "city" not in q and "again" in q
     run(go())
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("text,field,expected", [
+    ("Track order 4471, actually no, order 90210", "order_id", "90210"),
+    ("Track order 4471, no wait, 90210", "order_id", "90210"),
+    ("Track order 4471, sorry I mean 90210", "order_id", "90210"),
+    ("Track order 4471, actually make that 90210", "order_id", "90210"),
+    ("order ID is QW12, sorry I mean QW13", "order_id", "QW13"),
+    ("Check order 111, I mean order 222", "order_id", "222"),
+    ("cancel booking BK-1234, no wait BK-5678", "booking_id", "BK-5678"),
+    # no correction: unchanged behaviour
+    ("track order 456", "order_id", "456"),
+    ("Track order 4471 actually", "order_id", "4471"),
+])
+def test_spoken_id_correction_uses_the_final_id(text, field, expected):
+    from agent.nlu import extract_id
+    assert extract_id(text, field) == expected
