@@ -7,11 +7,15 @@
 - Read-only results grounded on call-time context (`tests/test_grounding.py`); same-turn retraction withdraws the request.
 - Worker: `TRIAGELINE_MODE=benchmark|assistant`, explicit dispatch via `TRIAGELINE_AGENT_NAME`, gated backchannel, per-turn and barge-in timing (`TURN_LATENCY_JSON`), triage never claims real dispatch.
 - Voice client: fresh room per call, mic pause/resume on backgrounding (hang-up after 3 min), robust agent detection, wake lock; `npm test` 10/10.
-- Integrity: `scripts/integrity_audit.py` PASS; independent held-out set `scenarios_heldout/` 29/30 rules-only.
+- Integrity: `scripts/integrity_audit.py --strict-comments` PASS (re-verified 2026-09-30 after
+  reworking three illustrative id examples); independent held-out set `scenarios_heldout/` 29/30 rules-only.
 - Packaging: `Dockerfile` (api/worker targets), `docker-compose.yml`, root `.env.example`; CI workflow template at `docs/ci.github-workflow.yml` (copy to `.github/workflows/ci.yml` yourself — the bot token cannot push workflow files).
 - UI redesigned (warm editorial theme, rules instead of cards, no blue) across `/live.html`, `/rtc.html` and `/console`.
 - Docs: Gemini-first `docs/FREE_API_KEYS.md`, `docs/MOBILE_INTEGRATION.md` (token flow + Flutter snippet), README quick-start/production corrected.
-- Tests: 224 Python + 10 JS passing (Python 3.13 sandbox with livekit-agents 1.8.3 installed).
+- Tests: 215 Python + 10 JS passing on the submission checkout (12 further Python failures are
+  environment-only: the project `.env` sets providers so "defaults" tests differ, and TestClient
+  versions differ; they reproduce identically on the committed code). Re-run and record the exact
+  command + environment before publishing a count.
 - 2026-09-29 readiness pass: settle timer re-armed on speech onset (no stranded requests); trailing budget clauses merge
   (no duplicate search); state-modifying calls never sent with a required arg missing; chained steps bind earlier
   results and committed filters; rules-first LLM mode in benchmark, multi-call plans executed in order; Deepgram-first
@@ -31,3 +35,12 @@
 
 ## Known limits (state them, don't hide them)
 Tools are simulated; access code is pilot access, not user identity; sessions are process-local (one replica); web client, not a native SDK app.
+
+## Audit follow-up (2026-09-30, third-party review)
+Fixed and verified: numeric tokenizer regressions (decimals/commas/k/quantities), spoken ordinal dates,
+repair-aware query extraction, cue-anchored document ids, late-argument continuations, narration
+cancellation, unknown-condition execution, "yes, but" confirmations, STT bias vocabulary, integrity audit.
+Pinned the scored config in the recovery runner (planner OFF) and added run_config/pip_freeze/log artifacts.
+Remaining before submission: full 3-5 min demo video; regenerate the deck from one canonical run; activate
+CI from docs/ci.github-workflow.yml; deep triage-extension hardening (location fact-compare on confirm,
+incident dedupe by canonical location, emergency guidance before location gathering).

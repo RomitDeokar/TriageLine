@@ -89,7 +89,8 @@ hit rate limits, so prefer Deepgram ($200 signup credit) for the scored run.
 
 | Mode | Strict pass | Notes |
 |---|---|---|
-| **Live LiveKit, judged** (what is scored) | **not yet run on this commit** | needs keys; see checklist |
+| **Live LiveKit, exact match, judge off** (100/100 turn-taken) | **13/100** | `results/20260930_live_run/` — turn-take 100/100, tool-sel 75.1%, arg-acc 33.2%, latency 5.34 s; exact match is a harsh lower bound |
+| **Live LiveKit, judged** (what is scored) | **organisers re-run** | no OpenAI key is provided to teams (confirmed by the organisers); their common re-run supplies the pinned judge |
 | Offline text replay (official transcripts → adapter → official evaluator, judge off) | **91/100** | diagnostic upper bound; no audio, no STT |
 | Independent held-out paraphrase set (`scenarios_heldout/`, rules only) | **29/30** | never used to tune rules |
 
@@ -146,7 +147,7 @@ agent. Transcript of a full call: `legacy/docs/EXTENSION_DEMO_TRANSCRIPT.md`.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-fdb.txt -r requirements-app.txt pytest
-.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q      # 224 passed
+.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q      # 215 passed; 12 environment-only failures (project .env sets providers, TestClient version)
 bash tests/shell/test_run_fdb_v3_failures.sh                          # run-script failure detection
 (cd ui && npm ci && npm test)                                         # 10 passed
 .venv/bin/python scripts/heldout_eval.py                              # 29/30

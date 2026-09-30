@@ -15,6 +15,7 @@ COPY requirements-app.txt .
 RUN pip install -r requirements-app.txt
 COPY --chown=app:app agent agent
 COPY --chown=app:app harness harness
+COPY --chown=app:app legacy legacy
 COPY --chown=app:app livekit_agent livekit_agent
 COPY --chown=app:app ui ui
 COPY --chown=app:app frames frames
@@ -34,6 +35,7 @@ COPY requirements-fdb.txt .
 RUN pip install -r requirements-fdb.txt
 COPY --chown=app:app agent agent
 COPY --chown=app:app harness harness
+COPY --chown=app:app legacy legacy
 COPY --chown=app:app livekit_agent livekit_agent
 USER app
 # turn-detector + silero weights baked into the image (the cascaded_agent.py entry form is deprecated)

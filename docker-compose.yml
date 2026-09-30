@@ -17,3 +17,13 @@ services:
       TRIAGELINE_MODE: assistant
       TRIAGELINE_AGENT_NAME: ${TRIAGELINE_AGENT_NAME:-triageline-assistant}
     restart: unless-stopped
+
+  # Extension (Theme 05 "Triage Line"): the incident-triage call flow on the same agent shell.
+  triage-worker:
+    build: { context: ., target: worker }
+    env_file: .env
+    environment:
+      TRIAGELINE_MODE: triage
+      TRIAGELINE_AGENT_NAME: ${TRIAGELINE_TRIAGE_AGENT_NAME:-triageline-triage}
+    command: ["python", "livekit_agent/triage_livekit_agent.py", "start"]
+    restart: unless-stopped
