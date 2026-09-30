@@ -89,9 +89,10 @@ for pass in $(seq 1 40); do
   V=$(valid_count)
   echo "[pass $pass] valid=$V/100 $(date -u +%T)" | tee -a "$LOG"
   if [ "$V" -ge 100 ]; then break; fi
-  powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python" -and $_.CommandLine -match "cascaded_agent" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }' 2>/dev/null
+  # kill only the BENCHMARK worker (bench_worker.py) — never the demo workers (cascaded_agent.py)
+  powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python" -and $_.CommandLine -match "bench_worker" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }' 2>/dev/null
   sleep 2
-  ( cd "$ROOT/livekit_agent" && exec "$PY" cascaded_agent.py dev ) >"$OUT/worker_$pass.log" 2>&1 &
+  ( cd "$ROOT/livekit_agent" && exec "$PY" bench_worker.py dev ) >"$OUT/worker_$pass.log" 2>&1 &
   WORKER=$!
   sleep 20
   if ! kill -0 "$WORKER" 2>/dev/null; then

@@ -305,7 +305,7 @@ class TriageAdapter:
         if self.busy():
             await self.on_barge_in(text)
             return
-        # a late fragment that only adds arguments ("on August 20", "under 200") amends the call
+        # a late fragment that only adds arguments ("on May 12", "under 200") amends the call
         # just made instead of starting a second request (audit: duplicate search_flights calls)
         if (self._last_route_at and (time.time() - self._last_route_at) < 8.0
                 and _is_arg_continuation(text)):
@@ -416,7 +416,7 @@ _ARG_CONTINUATION = re.compile(
 
 
 def _is_arg_continuation(text: str) -> bool:
-    """A late fragment that only supplies ARGUMENTS for the call just made ("on August 20",
+    """A late fragment that only supplies ARGUMENTS for the call just made ("on May 12",
     "under 200", "for two nights", "keep it under 50") — amending, not a new request."""
     return bool(_ARG_CONTINUATION.match((text or "").strip()))
 

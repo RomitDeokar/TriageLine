@@ -92,6 +92,7 @@ hit rate limits, so prefer Deepgram ($200 signup credit) for the scored run.
 | **Live LiveKit, exact match, judge off** (100/100 turn-taken) | **13/100** | `results/20260930_live_run/` — turn-take 100/100, tool-sel 75.1%, arg-acc 33.2%, latency 5.34 s; exact match is a harsh lower bound |
 | **Live LiveKit, judged** (what is scored) | **organisers re-run** | no OpenAI key is provided to teams (confirmed by the organisers); their common re-run supplies the pinned judge |
 | Offline text replay (official transcripts → adapter → official evaluator, judge off) | **91/100** | diagnostic upper bound; no audio, no STT |
+| Practice kit (9 public scenarios, local Whisper ASR, offline by default) | **87/100** | `run_local.py --all`; set `TRIAGELINE_LOCAL_USE_ENV=1` only if you want the live planner |
 | Independent held-out paraphrase set (`scenarios_heldout/`, rules only) | **29/30** | never used to tune rules |
 
 Audio replay with a small offline Whisper model has scored well below the text replay (≈50/100 before the
@@ -139,7 +140,7 @@ agent. Transcript of a full call: `legacy/docs/EXTENSION_DEMO_TRANSCRIPT.md`.
   every LLM-proposed state change before acting. There the planner defaults to `TRIAGELINE_LLM_MODE=primary`
   (Gemini → Cerebras → OpenRouter → Mistral failover, T=0, seed 7, schema-validated).
 - **Internal practice harness** (older Theme-05 kit, not scored under the current guide): `run_local.py`,
-  `harness/`, `scenarios/`. `python run_local.py --all --agent agent.agent:ParticipantAgent` reports ≈89/100
+  `harness/`, `scenarios/`. `python run_local.py --all --agent agent.agent:ParticipantAgent` reports 87/100
   on the 9 practice scenarios (default `--agent` is the kit's baseline).
 - Free keys, step by step: [`docs/FREE_API_KEYS.md`](docs/FREE_API_KEYS.md).
 

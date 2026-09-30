@@ -213,10 +213,14 @@ async def entrypoint(ctx: agents.JobContext):
         nonlocal flush_handle
         if flush_handle is not None:
             flush_handle.cancel()
+        if torn_down:
+            return                                    # never schedule work after teardown (E-07)
 
         def launch_flush() -> None:
             nonlocal flush_handle
             flush_handle = None
+            if torn_down:
+                return
             asyncio.create_task(flush_final_transcript())
 
         flush_handle = asyncio.get_running_loop().call_later(delay, launch_flush)
@@ -262,6 +266,12 @@ async def entrypoint(ctx: agents.JobContext):
         if torn_down:
             return
         torn_down = True
+        # cancel any scheduled transcript flush and drop buffered fragments, so a pending timer
+        # can never process (or speak about) a turn after the call ended (audit E-07)
+        if flush_handle is not None:
+            flush_handle.cancel()
+        flush_handle = None
+        final_segments.clear()
         resolved = await triage.teardown(reason="caller_disconnected")
         if resolved:
             log.info(

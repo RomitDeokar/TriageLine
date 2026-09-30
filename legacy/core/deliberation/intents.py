@@ -81,35 +81,56 @@ def _has_any(text: str, hints: tuple[str, ...]) -> bool:
     return any(hint in lowered for hint in hints)
 
 
+_LOCATION_CUE_RE = re.compile(
+    r"(?i)\b(highway|hwy|route|rte|interstate|freeway|exit|mile\s*marker|milepost|mile|street|st\.?|"
+    r"road|rd\.?|avenue|ave\.?|boulevard|blvd|drive|dr\.?|lane|ln\.?|parking\s+lot|garage|"
+    r"shoulder|off[\s-]?ramp|on[\s-]?ramp|overpass|bridge|tunnel|intersection|junction)\b")
+_LOCATION_SNIP_TAIL = re.compile(
+    r"(?i)^\s*(?:[#-]?\s*[0-9]{1,4}[a-z]?|[a-z]{2,}(?:\s+[a-z]{2,})?)\b")
+
+
 def _has_location(text: str) -> bool:
-    lowered = text.lower()
-    return _has_any(text, _LOCATION_HINTS) or any(ch.isdigit() for ch in lowered)
+    """A real location cue (route/street/exit/mile marker...), not just any digit — "my battery
+    is 12 volts" is NOT a location (audit E-03)."""
+    lowered = (text or "").lower()
+    return bool(_LOCATION_CUE_RE.search(lowered)) or _has_any(text, _LOCATION_HINTS)
+
+
+def _canonical_location(snippet: Optional[str]) -> str:
+    """Stable key for the same place however it was phrased ("Highway 9. My sedan" -> "highway 9")."""
+    s = (snippet or "").lower()
+    m = re.search(r"(highway|hwy|route|rte|interstate|exit|mile\s*marker|milepost|mile)\s*[-#]?\s*(\d+[a-z]?)", s)
+    if m:
+        return f"{m.group(1).split()[0]} {m.group(2)}"
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()[:40]
 
 
 def _extract_location_snippet(raw_text: str) -> Optional[str]:
-    """Best-effort human-readable location snippet, e.g. 'Highway 9 mile 12'.
+    """Human-readable location from the LAST cue in the caller transcript.
 
-    Returns the LAST matching snippet in the text, not the first. Callers
-    of this function (e.g. BreakdownIntent.deliberate) always pass the
-    full, freshly-rejoined caller transcript so that later corrections
-    are visible -- see `_caller_text`'s docstring. Scanning for the last
-    match, rather than the first, is what makes that recency-awareness
-    actually take effect: a caller who says "near Highway 9" and then
-    later corrects with "actually, I'm at Highway 12" must resolve to
-    Highway 12, since a correction always supersedes what it corrects.
+    Cue-anchored (a route/street/exit/mile-marker word or a named place) and sentence-scoped:
+    the snippet stops at sentence punctuation, so unrelated numbers in the next sentence
+    ("... Highway 9. My battery is 12 volts.") can never be absorbed (audit E-03/E-04).
     """
-    if not _has_location(raw_text):
+    if not raw_text:
         return None
-    words = raw_text.split()
-    lowered_words = [w.lower() for w in words]
     last_snippet: Optional[str] = None
-    for i, word in enumerate(lowered_words):
-        if any(hint in word for hint in _LOCATION_HINTS) or any(ch.isdigit() for ch in word):
-            start = max(0, i - 1)
-            end = min(len(words), i + 3)
-            snippet = " ".join(words[start:end]).strip(" .,")
-            if snippet:
-                last_snippet = snippet
+    for sentence in re.split(r"[.;!?]|\bbut\b|\band then\b", raw_text):
+        s = sentence.strip()
+        if not s:
+            continue
+        m = _LOCATION_CUE_RE.search(s)
+        if m:
+            tail = s[m.start():]
+            words = tail.split()
+            snippet = " ".join(words[:5]).strip(" .,")
+            last_snippet = snippet
+            continue
+        for hint in _LOCATION_HINTS:                      # named-place hints, still sentence-scoped
+            if hint in s.lower():
+                i = s.lower().index(hint)
+                last_snippet = " ".join(s[i:].split()[:5]).strip(" .,")
+                break
     return last_snippet
 
 
@@ -136,7 +157,9 @@ def _hazard_mentions(text: str) -> list[tuple[int, str, bool]]:
     lowered = text.lower()
     out = []
     for hint in _EMERGENCY_HINTS:
-        for m in re.finditer(r"\b" + re.escape(hint) + r"\w*", lowered):
+        # an elided 'e' before a suffix must still match ("smoke" -> "smoking", "fire" -> "firing")
+        pat = re.escape(hint[:-1]) + r"e?\w*" if hint.endswith("e") else re.escape(hint) + r"\w*"
+        for m in re.finditer(r"\b" + pat, lowered):
             # negator within the same clause, at most 4 words before the hazard
             window = re.split(r"[.;!?]|\bbut\b", lowered[max(0, m.start() - 40):m.start()])[-1]
             negated = bool(re.search(r"\b" + _NEGATOR + r"(?:\s+\S+){0,4}\s*$", window))
@@ -146,9 +169,16 @@ def _hazard_mentions(text: str) -> list[tuple[int, str, bool]]:
 
 
 def _find_emergency_reason(text: str) -> Optional[str]:
-    """First hazard that is actually asserted (not negated), else None."""
+    """The hazard that is CURRENTLY asserted: a later mention of the same hazard supersedes an
+    earlier one, so "there's a fire ... actually there is no fire" reports no emergency (audit E-05)."""
+    last: dict[str, bool] = {}
+    order: list[str] = []
     for _pos, hint, negated in _hazard_mentions(text):
-        if not negated:
+        if hint not in last:
+            order.append(hint)
+        last[hint] = negated                      # last mention of each hazard wins
+    for hint in order:
+        if not last[hint]:
             return hint
     return None
 
@@ -302,14 +332,10 @@ class CaseClosureIntent(IntentHandler):
     decision_group = "case_management"
 
     def detect(self, context: list[ConversationTurn]) -> Optional[float]:
-        text = _caller_text(context)
-        if _has_any(text, _CASE_CLOSURE_HINTS):
-            # A deliberate closing phrase is an unambiguous signal and should
-            # dominate incidental situational wording earlier in the same
-            # transcript (e.g. an earlier "broke down" mention) -- closing
-            # the case is a distinct decision_group from incident response,
-            # so it must not lose to a stale, already-handled description of
-            # what happened.
+        # Closure is scoped to the CURRENT caller turn: a historical "that's all" must never
+        # keep closing (or block) a later, newly reported incident (audit E-06).
+        turns = [t.text for t in context if t.speaker == "caller"]
+        if turns and _has_any(turns[-1], _CASE_CLOSURE_HINTS):
             return 0.99
         return None
 

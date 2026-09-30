@@ -336,7 +336,7 @@ _MONTH_ALT = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?
 
 
 def _spoken_dates_to_digits(text: str) -> str:
-    """"August twentieth" -> "August 20", "the 20th of August" -> "August 20" so DATE_RE matches
+    """"May twelfth" -> "May 12", "the 3rd of April" -> "April 3" so DATE_RE matches
     the canonical spoken form the schemas expect (verified against the benchmark's own expected args)."""
     t = text or ""
     t = re.sub(r"(?i)\b(" + _MONTH_ALT + r")\s+(" + _ORD_ALT + r")\b",
@@ -508,16 +508,29 @@ def _cue_undashed_id(text: str, field: str = "") -> Optional[str]:
     cue = _ID_CUE_NOUN.get(noun, "") or (r"(?:id|number|code)" if (field or "").endswith("_id") or field == "id" else "")
     if not cue:
         return None
-    text = normalize_spoken_ids(text or "")      # "d l 8 8" -> "DL88" before matching
-    m = re.search(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*"
-                  r"([A-Za-z]{1,6}\d{1,8}|\d{2,8}|[A-Za-z]\d[A-Za-z0-9]{0,6})\b", text or "", re.I)
+    text = normalize_spoken_ids(text or "")      # "q x 3 1" -> "QX31" before matching
+    # A correction may supply the new id WITHOUT repeating the cue ("order 12345, no wait, 99887"):
+    # when a repair marker is present, the id-like token after it wins.
+    last_marker = max((mm.end() for mm in REPAIR_MARKERS.finditer(text)), default=-1)
+    if last_marker >= 0:
+        tail = text[last_marker:]
+        m = re.search(r"\b([A-Za-z]{1,6}\d{1,8}|\d{2,8})\b", tail)
+        if m and plausible_id(m.group(1)):
+            return m.group(1).upper()
+        m = re.search(r"\b([A-Za-z]{3,8})\b", tail)
+        if m and m.group(1).lower() not in _LETTER_ID_BLOCK:
+            return m.group(1).upper()
+    # repair-aware: an id corrected by the caller ("order 12345, actually no, order 99887")
+    # must resolve to the value AFTER the last correction marker, never the stale first one
+    m = _settled_match(re.compile(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*"
+                                  r"([A-Za-z]{1,6}\d{1,8}|\d{2,8}|[A-Za-z]\d[A-Za-z0-9]{0,6})\b", re.I), text)
     if m:
         v = m.group(1).upper()
         if plausible_id(v):
             return v
-    # letter-only ids right after the cue ("license DELIV") — never ordinary prose words
-    m = re.search(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*([A-Za-z]{3,8})\b",
-                  text or "", re.I)
+    # letter-only ids right after the cue ("license QRTB") — never ordinary prose words
+    m = _settled_match(re.compile(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*"
+                                  r"([A-Za-z]{3,8})\b", re.I), text)
     if m and m.group(1).lower() not in _LETTER_ID_BLOCK:
         return m.group(1).upper()
     return None
@@ -819,7 +832,7 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
         sp = spelled_ids(text)
         if sp:
             return sp[-1]
-        # cue-anchored, including the field's own noun ("driver license D L 8 8" -> DL88)
+        # cue-anchored, including the field's own noun ("driver license Q X 3 1" -> QX31)
         m = _cue_undashed_id(text, lname)
         if m:
             return m

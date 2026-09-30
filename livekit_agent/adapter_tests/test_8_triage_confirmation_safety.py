@@ -22,8 +22,34 @@ from providers.mock.mock_stt import MockSTT  # noqa: E402
 from providers.mock.mock_tts import MockTTS  # noqa: E402
 
 
+def _spoken_text(self) -> list[str]:
+    for owner in (getattr(self, "_rec_tts", None),
+                  getattr(getattr(self, "dialogue", None), "tts", None)):
+        if owner is not None and hasattr(owner, "spoken"):
+            return list(owner.spoken or [])
+    return []
+
+
+TriageCallSession._spoken = _spoken_text
+
+
+class _RecordingTTS(MockTTS):
+    """MockTTS that keeps the spoken text, so tests can assert on what the caller hears."""
+
+    def __init__(self):
+        super().__init__()
+        self.spoken: list[str] = []
+
+    async def start_speaking(self, text: str) -> None:
+        self.spoken.append(text or "")
+        await super().start_speaking(text)
+
+
 def new_session(cid="call-safety"):
-    return TriageCallSession(call_id=cid, stt=MockSTT(), tts=MockTTS(), audio_io=MockAudioIO())
+    rec = _RecordingTTS()
+    s = TriageCallSession(call_id=cid, stt=MockSTT(), tts=rec, audio_io=MockAudioIO())
+    s._rec_tts = rec
+    return s
 
 
 async def pending_tow(s, where="Highway 9"):
@@ -120,3 +146,97 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# --------------------------------------------------------------------------- audit regression cases
+# Collected by pytest (the e01_..e07 probes above only run via main()); these cover the
+# third-party audit's reproduced triage defects.
+
+def test_affirmative_with_new_location_never_confirms_stale_proposal():
+    asyncio.run(_t_affirmative_with_new_location())
+
+
+async def _t_affirmative_with_new_location():
+    """'Yes, I am on Highway 12' while a Highway 9 tow is pending -> re-propose, never dispatch."""
+    s = new_session("r1")
+    await pending_tow(s, "Highway 9")
+    await s.on_final_transcript("Yes, I am on Highway 12.")
+    assert not s.dispatch_log, "confirmed the stale Highway 9 proposal"
+    rec = s.commit.get(s.brain.pending_action_id)
+    assert "12" in str(rec.action_payload.get("location")), rec.action_payload
+
+
+def test_affirmative_with_new_hazard_never_confirms_standard_tow():
+    asyncio.run(_t_affirmative_with_new_hazard())
+
+
+async def _t_affirmative_with_new_hazard():
+    """'Okay, the engine is smoking' is not consent for a standard tow."""
+    s = new_session("r2")
+    await pending_tow(s, "Highway 9")
+    await s.on_final_transcript("Okay, the engine is smoking.")
+    assert not s.dispatch_log, "confirmed a standard tow while an emergency was reported"
+
+
+def test_incident_dedupes_across_wording_changes():
+    asyncio.run(_t_incident_dedupes())
+
+
+async def _t_incident_dedupes():
+    """The same place phrased differently must still dedupe to one dispatch."""
+    s = new_session("r3")
+    await pending_tow(s, "Highway 9")
+    await s.on_final_transcript("Yes.")
+    await s.on_final_transcript("I broke down near Highway 9 again, my sedan is blue.")
+    await s.on_final_transcript("Yes.")
+    assert len(s.dispatch_log) == 1, [d.payload for d in s.dispatch_log]
+
+
+def test_location_is_not_taken_from_unrelated_numbers():
+    asyncio.run(_t_location_not_from_numbers())
+
+
+async def _t_location_not_from_numbers():
+    """'12 volts' is not a location; the snippet stops at the sentence boundary."""
+    from core.deliberation.intents import _extract_location_snippet, _has_location
+    assert _extract_location_snippet("My car broke down near Highway 9. My battery is 12 volts.") == "Highway 9"
+    assert not _has_location("my battery is 12 volts")
+
+
+def test_corrected_hazard_is_not_active():
+    asyncio.run(_t_corrected_hazard())
+
+
+async def _t_corrected_hazard():
+    """A later negation of the same hazard supersedes the earlier report."""
+    from core.deliberation.intents import _find_emergency_reason
+    assert _find_emergency_reason("there is a fire in the engine, actually no wait, there is no fire") is None
+    assert _find_emergency_reason("the engine is on fire") == "fire"
+    assert _find_emergency_reason("the engine is smoking") == "smoke"
+
+
+def test_new_emergency_reopens_a_closed_case():
+    asyncio.run(_t_new_emergency_reopens())
+
+
+async def _t_new_emergency_reopens():
+    s = new_session("r6")
+    await pending_tow(s, "Highway 9")
+    await s.on_final_transcript("That's all, thanks.")
+    await s.on_final_transcript("The engine is on fire.")
+    spoken = " ".join(s._spoken())
+    assert "ended" not in spoken.lower(), f"a new emergency was refused by the old closure: {spoken!r}"
+    assert not s.brain.closed, "a new emergency must reopen the case"
+
+
+def test_emergency_guidance_comes_before_location_gathering():
+    asyncio.run(_t_emergency_guidance_first())
+
+
+async def _t_emergency_guidance_first():
+    """An emergency must not be gated behind the location question."""
+    s = new_session("r7")
+    await s.on_final_transcript("The engine is on fire.")
+    assert not s.dispatch_log
+    spoken = " ".join(s._spoken())
+    assert "emergency" in spoken.lower(), spoken

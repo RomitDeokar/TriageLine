@@ -21,11 +21,20 @@ from harness.runner import run_scenario
 from harness.scorer import score_scenario, format_report
 
 try:  # audio scenarios need the speech-provider keys; without them local Whisper is the only fallback
+    import os as _os
     from dotenv import load_dotenv
     from pathlib import Path as _Path
     _root = _Path(__file__).resolve().parent
-    load_dotenv(_root / ".env")
-    load_dotenv(_root / "livekit_agent/.env.local")
+    if _os.environ.get("TRIAGELINE_LOCAL_USE_ENV", "") == "1":
+        load_dotenv(_root / ".env")
+        load_dotenv(_root / "livekit_agent/.env.local")
+    if _os.environ.get("TRIAGELINE_LOCAL_LIVE_LLM", "") != "1":
+        # the practice harness must stay deterministic and offline: keep the speech keys (hosted
+        # STT/TTS) but never let a real LLM key switch the planner onto the network. Set
+        # TRIAGELINE_LOCAL_LIVE_LLM=1 to opt in to the live planner for a local run.
+        for _k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY",
+                   "MISTRAL_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY"):
+            _os.environ.pop(_k, None)
 except Exception:  # noqa: BLE001 - offline runs still work without dotenv
     pass
 

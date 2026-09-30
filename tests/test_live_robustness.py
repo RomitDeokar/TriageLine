@@ -193,3 +193,31 @@ def test_fuzz_no_duplicate_state_change_under_any_ordering():
         c, _ = run(frags, tail=0.3)
         keys = [str(sorted(a.items())) for n, a in c if n == "add_to_cart"]
         assert len(keys) == len(set(keys)), (frags, c)
+
+
+# ---------------------------------------------------------------- spoken ID corrections (audit)
+@pytest.mark.parametrize("heard,want", [
+    ("Track order 12345, actually no, order 99887", "99887"),
+    ("track order 12345 no wait 99887", "99887"),
+    ("track order 12345, sorry I mean 99887", "99887"),
+    ("The order ID is ZX48, sorry I mean ZX49", "ZX49"),
+    ("my order is 12345 actually make that 99887", "99887"),
+    ("track order 12345", "12345"),
+])
+def test_spoken_id_correction_wins(heard, want):
+    """A self-corrected id must resolve to the value AFTER the correction, never the stale one."""
+    from agent import nlu
+    assert nlu.extract_id(nlu.normalize_asr(heard), "order_id") == want, heard
+
+
+@pytest.mark.parametrize("heard,field,want", [
+    ("The order ID is q r s four five six.", "order_id", "QRS456"),
+    ("I'd like to track item P52 please", "item_id", "P52"),
+    ("my license is QRTB", "doc_number", "QRTB"),
+    ("my driver license number is q x 3 1", "doc_number", "QX31"),
+    ("The order ID is q r s", "order_id", None),
+    ("I need a flight to Boston", "order_id", None),
+])
+def test_spoken_ids_still_resolve(heard, field, want):
+    from agent import nlu
+    assert nlu.extract_id(nlu.normalize_asr(heard), field) == want, heard

@@ -46,6 +46,11 @@ if _LEGACY_ROOT not in sys.path:
     sys.path.append(_LEGACY_ROOT)
 
 from core.commit.state_machine import CommitState, CommitStateMachine  # noqa: E402
+from core.deliberation.intents import (  # noqa: E402
+    _canonical_location as _canon_loc,
+    _extract_location_snippet as _loc_snippet,
+    _find_emergency_reason as _emergency_reason,
+)
 from core.deliberation.engine import (  # noqa: E402
     DeliberationBackedInterruptionStrategy,
     DeliberationEngine,
@@ -111,9 +116,24 @@ def _is_negative(text: str) -> bool:  # kept for backwards compatibility
 
 def _incident_key(action_type: str, payload: dict) -> str:
     """Idempotency key for a real-world side effect (audit E-04): one dispatch per
-    (action type, normalised location) per call, no matter how often it is re-requested."""
-    loc = re.sub(r"[^a-z0-9]+", " ", str(payload.get("location", "")).lower()).strip()
+    (action type, CANONICAL location) per call. Canonicalisation means the same place written
+    differently ("Highway 9" / "Highway 9. My sedan") still dedupes to one dispatch (E-04)."""
+    loc = _canon_loc(str(payload.get("location", "")))
     return f"{action_type}|{loc}"
+
+
+def _reply_changes_facts(text: str, record) -> bool:
+    """True when a reply to a confirmation carries NEW facts that invalidate the proposal:
+    a different location, or an emergency hazard while a non-emergency action is pending
+    ("yes, I'm on Highway 12" / "okay, the engine is smoking") -- audit E-01/E-02."""
+    facts = dict(getattr(record, "known_facts", None) or {})
+    new_loc = _loc_snippet(text or "")
+    if new_loc and _canon_loc(new_loc) != _canon_loc(str(facts.get("location", ""))):
+        return True
+    action = str(getattr(record, "action_type", "") or "")
+    if action != "escalate_emergency" and _emergency_reason(text or ""):
+        return True
+    return False
 
 
 def _confirmation_prompt(record) -> str:
@@ -195,8 +215,12 @@ class TriageBrainLLM(LLMProvider):
         caller_text = context[-1].text if context and context[-1].speaker == "caller" else ""
 
         if self.closed:
-            return LLMResponse(text="This call has ended, so I can't take any further action on it.",
-                               intent="closed")
+            if _emergency_reason(caller_text):
+                # a NEW emergency after closure must not be swallowed by the old closure (E-06)
+                self.closed = False
+            else:
+                return LLMResponse(text="This call has ended, so I can't take any further action on it.",
+                                   intent="closed")
 
         # --- confirmation / abort handling for a pending action ---
         if self.pending_action_id is not None:
@@ -207,6 +231,11 @@ class TriageBrainLLM(LLMProvider):
                 return LLMResponse(text="That earlier request is no longer active. What do you need now?",
                                    intent="stale")
             kind = classify_confirmation(caller_text)
+            if kind == CONFIRM:
+                pending = self._commit.get(self.pending_action_id)
+                if _reply_changes_facts(caller_text, pending):
+                    # affirmative WITH new facts must never confirm the old proposal (E-01/E-02)
+                    kind = CORRECTION
             if kind == CONFIRM:
                 record = await self._commit.confirm(self.pending_action_id, confirmed_by="caller")
                 self.commit_trace.append(record)
@@ -245,6 +274,16 @@ class TriageBrainLLM(LLMProvider):
         # corrected (section 6 of the extension brief).
         if record.supersedes:
             await self._cancel_stale_actions(record.supersedes)
+
+        _facts_now = dict(record.known_facts or {})
+        if (record.chosen_option == "escalate_emergency" or _facts_now.get("severity") == "emergency"):
+            # emergency guidance must be immediate -- never gated behind location gathering (E-05)
+            reason = _facts_now.get("reason", "an emergency")
+            advisory = (f"This sounds like an emergency ({reason}). I cannot contact emergency services -- "
+                        "please call your local emergency number now.")
+            if not _facts_now.get("location"):
+                advisory += " If you can, tell me where you are and I'll also log a simulated escalation."
+            return LLMResponse(text=advisory, intent="emergency", needs_more_info=not record.resolved)
 
         if not record.resolved:
             if record.fallback_action == FALLBACK_REQUEST_MORE_INFO:
