@@ -15,6 +15,20 @@ Status and what is still left to do by a human with keys: [`docs/SUBMISSION_CHEC
 Canonical documents are this README, `docs/ARCHITECTURE.md`, `docs/SUBMISSION_CHECKLIST.md`, `submission.yaml` and
 `results/results.md`. Everything under `docs/archive/` is historical.
 
+
+## Submission (Samsung PRISM Generative AI Hackathon 2026 — Theme 05)
+
+| item | where |
+|---|---|
+| Working prototype code (public repo) | this repository (Git tag `PRISM_GENAI_HACKATHON_Y2026`) |
+| Python requirements | `requirements.txt` (app), `requirements-fdb.txt` (official FDB-v3 runner), `requirements-app.txt` (gateway + workers) |
+| Presentation (PPT/PDF) | `docs/deck/TriageLine_Submission_PRISM_2026.pptx` and `docs/deck/TriageLine_Theme05.pdf` |
+| Demo video (max 5 min) | **link to be added after recording** (YouTube or Drive — see `docs/VIDEO_SHOTLIST.md` for the shot list) |
+| Existing clip | `docs/video/pwa_interrupt.mp4` (23 s — PWA interruption, part of the demo) |
+| Reproducible setup | "Quick start" above; `docs/DEPLOY.md` for deployment |
+| AI usage disclosure | `docs/Wizards_AI_Disclosure.docx` |
+| Tag | `PRISM_GENAI_HACKATHON_Y2026` |
+
 ## Architecture (one diagram)
 
 ```
