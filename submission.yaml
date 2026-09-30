@@ -28,7 +28,7 @@ supporting:
 
 # Every number states its mode. Only the live judged run is the scored benchmark result.
 reported_scores:
-  live_livekit_exact_match: "2026-09-30 live run (100/100 examples, Deepgram nova-3 STT / aura-2 TTS, judge off per organiser guidance): turn-take 63/100, tool-selection 77.4% (N=63 turn-taken), argument accuracy 43.7%, avg response latency 5.77s. See results/20260930_live_run/. Known issue: 17 travel-domain responses were clipped by the runner's input-length recording window while slow injected tool calls (13.8s each) were still executing; offline replay proves the rules logic (91/100) and the gap is STT-surface-form + latency-window, not tool logic."
+  live_livekit_exact_match: "2026-09-30 run #2 (100/100 examples turn-taken, Deepgram nova-3 STT / aura-2 TTS, judge off per organiser guidance): turn-take 100/100, tool-selection 75.1%, argument accuracy 33.2%, strict pass 13/100 (exact match = lower bound), avg response latency 5.34s (runner perceived 3.92s). See results/20260930_live_run/ and results/results.md. The offline text replay (91/100) shows the rules logic is sound; the live gap is STT surface-form argument extraction (travel spelled ids/dates hardest). Official judged scores come from the organisers' common re-run."
   live_livekit_judged: "not run - no OPENAI_API_KEY available (organisers confirmed teams cannot be given keys/credits; official judged scores come from the organisers' common re-run)"
   offline_text_replay_diagnostic: "91/100 strict (official evaluator, judge off, exact match = lower bound); see results/results.md"
   independent_heldout_rules_only: "29/30 (96.7%) scenarios_heldout/heldout_v1.json via scripts/heldout_eval.py"
