@@ -16,6 +16,22 @@ Canonical documents are this README, `docs/ARCHITECTURE.md`, `docs/SUBMISSION_CH
 `results/results.md`. Everything under `docs/archive/` is historical.
 
 
+## Fast failure replay (diagnostic, seconds not hours)
+
+A full live FDB-v3 run takes ~2 h; a fix must not be validated by one. This harness replays the
+**live run's own transcripts and fragment timing** through the same adapter offline and diffs
+expected vs live-recorded vs replayed tool calls:
+
+```bash
+python livekit_agent/replay_live_failures.py                  # table + failure classes
+python livekit_agent/replay_live_failures.py --json out.json  # machine-readable
+python livekit_agent/replay_live_failures.py --no-replay      # only diff the live recording
+```
+
+It resolves `$RESULT_n` references the way the official evaluator does. Measured on the same 29
+live transcripts, fixing spelled letter-only ids (`track order B O B` -> `BOB`) moved pass
+**41% -> 69%**, missing calls 7 -> 1, extra calls 4 -> 0, with the offline diagnostic held at 91/100.
+
 ## Submission (Samsung PRISM Generative AI Hackathon 2026 — Theme 05)
 
 **Team Wizards · SRM Institute of Science and Technology (KTR, J1)** — Romit Deokar, Manmohan Singh, Rian K Sinu, Pragalbh Rai

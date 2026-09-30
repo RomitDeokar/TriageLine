@@ -44,3 +44,10 @@ Pinned the scored config in the recovery runner (planner OFF) and added run_conf
 Remaining before submission: full 3-5 min demo video; regenerate the deck from one canonical run; activate
 CI from docs/ci.github-workflow.yml; deep triage-extension hardening (location fact-compare on confirm,
 incident dedupe by canonical location, emergency guidance before location gathering).
+
+## Round 3 (2026-10-01)
+Done: spelled letter-only ids (BOB/CAT), self-corrected id precedence, ordinal dates, decimal-safe
+numbers; fast failure-replay harness (`livekit_agent/replay_live_failures.py`); run_local.py now
+defaults to the real ParticipantAgent (was the placeholder baseline); integrity PASS; offline 91.
+Pending: the wrong_args bucket (chained $RESULT ids, plural/singular search queries); demo video
+(3-5 min); deck slide 8 final live numbers; one clean final live run with this code.

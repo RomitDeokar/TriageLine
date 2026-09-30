@@ -54,7 +54,7 @@ def main():
     ap.add_argument("--scenario", help="path to one scenario JSON")
     ap.add_argument("--all", action="store_true",
                     help="run every scenario in scenarios/")
-    ap.add_argument("--agent", default="agent.agent:BaselineAgent",
+    ap.add_argument("--agent", default="agent.agent:ParticipantAgent",
                     help="module:Class of your agent (default: BaselineAgent)")
     ap.add_argument("--time-scale", type=float, default=1.0,
                     help="speed multiplier for local runs (official = 1.0)")
