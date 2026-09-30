@@ -466,6 +466,13 @@ def spelled_ids(text: str) -> List[str]:
     return out
 
 
+_LETTER_ID_BLOCK = {"the", "this", "that", "number", "details", "information", "status", "is", "was",
+                    "please", "document", "documents", "card", "code", "name", "order", "item", "product",
+                    "license", "licence", "passport", "visa", "mine", "my", "your", "new", "old", "same",
+                    "here", "there", "where", "now", "then", "again", "back", "up", "down", "out", "in",
+                    "on", "off", "left", "right", "for", "with", "and", "but", "you", "have", "want",
+                    "need", "find", "look", "check", "track", "update", "see", "know", "think", "like",
+                    "just", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
 _ID_CUE_NOUN = {"order": r"order", "product": r"item|product|sku", "item": r"item|product|sku",
                 "sku": r"item|product|sku", "ticket": r"ticket|support",
                 "booking": r"booking|reservation", "flight": r"flight"}
@@ -493,6 +500,12 @@ def _cue_undashed_id(text: str, field: str = "") -> Optional[str]:
         v = m.group(1).upper()
         if plausible_id(v):
             return v
+    # a letter-only id produced by the spelled-join above ("order b o b" -> "order BOB"): the joiner
+    # UPPERCASES ids while ordinary prose stays lowercase, which is the discriminator. A lowercase
+    # word after the cue ("order status") is never an id — that broadening cost 4 offline points.
+    upper = re.search(r"\b(?:" + cue + r")\b[\s\S]{0,10}?\b([A-Z]{2,8})\b", text)
+    if upper and upper.group(1).lower() not in _LETTER_ID_BLOCK:
+        return upper.group(1)
     return None
 
 
@@ -1475,7 +1488,7 @@ def _tok_char(tok: str) -> Optional[str]:
     return None
 
 
-def _join_spelled(seq: List[str]) -> Optional[str]:
+def _join_spelled(seq: List[str], allow_letters: bool = False) -> Optional[str]:
     out, i = [], 0
     while i < len(seq):
         t = seq[i].lower().strip(".,;:!?")
@@ -1491,7 +1504,12 @@ def _join_spelled(seq: List[str]) -> Optional[str]:
         out.append(c)
         i += 1
     s = "".join(out)
-    return s if 2 <= len(s) <= 14 and any(ch.isdigit() for ch in s) else None
+    if 2 <= len(s) <= 14 and any(ch.isdigit() for ch in s):
+        return s
+    # a letter-only id ("B O B" -> BOB) is accepted only in a cue context (allow_letters) and short
+    if allow_letters and 2 <= len(s) <= 8 and s.isalpha():
+        return s.upper()
+    return None
 
 
 def normalize_spoken_ids(text: str) -> str:
@@ -1514,7 +1532,7 @@ def normalize_spoken_ids(text: str) -> str:
                 j += 1
             best = None
             for k in range(min(len(words), j + 14), j + 1, -1):
-                joined = _join_spelled(words[j:k])
+                joined = _join_spelled(words[j:k], allow_letters=True)
                 if joined and (k - j) >= 2:
                     best = (k, joined)
                     break
