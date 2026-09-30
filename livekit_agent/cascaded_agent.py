@@ -223,7 +223,8 @@ class CascadedVoiceAgent(Agent):
 def build_turn_handling() -> dict:
     """livekit-agents 1.8 TurnHandlingOptions (B16: replaces deprecated min/max_endpointing_delay).
     Uses the semantic end-of-turn model when livekit-plugins-turn-detector is installed (C2)."""
-    th: dict = {"endpointing": {"min_delay": 0.5, "max_delay": 5.0}}
+    th: dict = {"endpointing": {"min_delay": 0.35,
+                                "max_delay": float(os.environ.get("TRIAGELINE_EOT_MAX_S", "1.2"))}}
     if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1":
         try:
             from livekit_agent.speech_providers import _allow_plugin_registration_in_subprocess
@@ -276,6 +277,19 @@ async def entrypoint(ctx: agents.JobContext):
     async def tool_executor(call_id: str, api_name: str, args: dict) -> None:
         """The ONLY place FDB tools are invoked; runs as its own task (adapter B-05)."""
         rec = tracker.tool_started(api_name)
+        # Progress narration: injected mock latency can run 10s+ per call (travel chains).
+        # A short non-committal line keeps the floor alive ("no dead air", Theme-05 floor
+        # management) — it never claims completion and is fully interruptible.
+        narration_state = {"n": 0}
+
+        async def _progress_narrator() -> None:
+            for delay, line in ((3.5, "Still working on that."), (11.0, "One moment, this is taking a second.")):
+                await asyncio.sleep(delay)
+                if narration_state["n"] == 0:
+                    session.say(line, allow_interruptions=True, add_to_chat_ctx=False)
+                    narration_state["n"] += 1
+
+        narrator = asyncio.create_task(_progress_narrator())
         if registry is None:
             result = {"status": "error", "error": "unavailable", "message": "mock_apis registry unavailable"}
         else:
@@ -285,6 +299,7 @@ async def entrypoint(ctx: agents.JobContext):
                 result = {"status": "error", "error": "invalid_args", "message": str(e)}
             except Exception as e:  # noqa: BLE001 - never let one bad tool call kill the session
                 result = {"status": "error", "error": "error", "message": str(e)}
+        narrator.cancel()
         rec["end"] = time.time()
         await append_async(TOOL_LOG, json.dumps({"room": room_name, "call": {
             "function": api_name, "args": args, "timestamp_start": rec["start"], "timestamp_end": rec["end"]}}))

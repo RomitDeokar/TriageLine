@@ -256,9 +256,8 @@ class TriageAdapter:
 
     def settle_for(self, text: str) -> float:
         """Commit delay for the running transcript: short when the turn plans to a complete call,
-        long when it still looks unfinished (speculative plan, nothing emitted)."""
-        if turn_looks_unfinished(text):
-            return self.max_settle_s
+        long when it still looks unfinished (speculative plan, nothing emitted). A COMPLETE plan
+        wins even when the raw text ends mid-spelling — normalization finishes the id for it."""
         try:
             from agent import nlu
             tools = self.agent.tools
@@ -266,20 +265,30 @@ class TriageAdapter:
             ranked = nlu.score_tools(norm, tools)
             if ranked and ranked[0][0] >= 1.5 and not self.agent.pending_clarify:
                 _, missing = nlu.build_args(tools[ranked[0][1]], norm, dict(self.agent.state["slots"]))
-                if missing:
-                    return self.max_settle_s
+                if not missing:
+                    return self.settle_s
+                return self.max_settle_s
         except Exception:  # noqa: BLE001 - the speculative plan is advisory only
             pass
-        return self.settle_s
+        return self.max_settle_s if turn_looks_unfinished(text) else self.settle_s
 
     async def _settle_then_route(self, delay: Optional[float] = None):
-        try:
+        waited = 0.0
+        while True:
             wait = self.settle_for(" ".join(self._pending_final)) if delay is None else delay
             await asyncio.sleep(wait)
-        except asyncio.CancelledError:
-            return
+            if delay is not None or not self._pending_final:
+                break
+            text = " ".join(self._pending_final)
+            # A dangling fragment (mid-spelled id, trailing verb) must never become a tool
+            # call: hold and merge with the next fragment until the hard cap, then flush.
+            if turn_looks_unfinished(text) and waited < 10.0:
+                waited += wait
+                continue
+            break
         text, self._pending_final = " ".join(self._pending_final), []
         if text:
+            log.info("COMMIT TURN (%d chars): %r", len(text), text)
             await self._route_final(text)
 
     async def _route_final(self, text: str):
@@ -387,8 +396,27 @@ _UNFINISHED = re.compile(r"(?i)(?:\b(?:and|or|but|then|so|to|for|of|the|a|an|my|
 
 
 def turn_looks_unfinished(text: str) -> bool:
-    """Dangling connective / filler / trailing comma or ellipsis: the speaker has more to say."""
-    return bool(_UNFINISHED.search((text or "").strip()))
+    """Dangling connective / filler / trailing comma or ellipsis: the speaker has more to say.
+    Also unfinished: a mid-spelled identifier ("order ID is a", "...is a b c") — STT delivers
+    spelled ids as separate finals, so the commit must hold until a digit closes the sequence.
+    Also unfinished: a trailing intent verb with no object yet ("...hoping you could find",
+    "then I need to") — committing there invents junk arguments (e.g. filter_name="i_need")."""
+    t = (text or "").strip()
+    if _UNFINISHED.search(t):
+        return True
+    if re.search(r"(?i)\b(?:find|book|track|update|change|check|search|get|look|cancel|modify|switch)\s*[.?!,:]?\s*$", t):
+        return True
+    m = list(re.finditer(r"(?i)\b(?:id|number|code|no\.?|#)\b", t))
+    if m:
+        tail = t[m[-1].end():].strip(" .,?!:;")
+        tail_words = [w for w in re.findall(r"[A-Za-z0-9]+", tail)
+                      if w.lower() not in ("is", "was", "it's", "its", "the", "a", "an", "number", "id", "code")]
+        if tail_words and not any(ch.isdigit() for ch in tail):
+            from agent import nlu as _nlu
+            # only spelled letters / number words so far and no digit yet: the id is incomplete
+            if all(len(w) == 1 or w.lower() in _nlu.WORD_NUM or w.lower() in ("double", "triple") for w in tail_words):
+                return True
+    return False
 
 
 _CORRECTION_CUE = re.compile(

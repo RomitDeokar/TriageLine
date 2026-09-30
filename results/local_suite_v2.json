@@ -1,0 +1,2655 @@
+[
+  {
+    "scenario_id": "pub_01_text_simple",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 1297.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Can you find flights to ",
+          "end_of_turn": false
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Chicago for Friday?",
+          "end_of_turn": true
+        },
+        "t_ms": 744.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 744.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Sure, checking flights to Chicago for Friday."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Chicago",
+            "date": "Friday"
+          }
+        },
+        "t_ms": 744.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Chicago",
+          "date": "Friday"
+        },
+        "t_ms": 744.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Chicago",
+          "date": "Friday"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "flights": [
+            {
+              "flight_id": "FL-CHI-8AM",
+              "depart": "08:00",
+              "price_usd": 129
+            },
+            {
+              "flight_id": "FL-CHI-2PM",
+              "depart": "14:00",
+              "price_usd": 99
+            }
+          ]
+        },
+        "t_ms": 3000.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "I found a flight to Chicago: FL-CHI-8AM departing 08:00 for $129. There's also FL-CHI-2PM at 14:00 for $99."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Chicago",
+            "date": "Friday",
+            "flight_id": "FL-CHI-8AM"
+          }
+        },
+        "t_ms": 3000.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_01_text_simple",
+      "total": 100.0,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 1.0,
+          "points": 61.5,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "search_called",
+                "type": "tool_called",
+                "weight": 0.5,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "final_grounded",
+                "type": "final_response_contains",
+                "weight": 0.3,
+                "passed": true,
+                "note": "matched final_response text"
+              },
+              {
+                "id": "state_dest",
+                "type": "state_snapshot",
+                "weight": 0.2,
+                "passed": true,
+                "note": "snapshot[slots.destination] = 'Chicago'"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 1.0,
+          "points": 23.1,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 44.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_02_text_interrupt",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Please book a flight to ",
+          "end_of_turn": false
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Boston for tomorrow.",
+          "end_of_turn": true
+        },
+        "t_ms": 872.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "On it \u2014 finding flights to Boston for tomorrow first."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Boston",
+            "date": "tomorrow"
+          }
+        },
+        "t_ms": 872.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Boston",
+          "date": "tomorrow"
+        },
+        "t_ms": 872.0
+      },
+      {
+        "kind": "event",
+        "event_type": "interruption",
+        "payload": {
+          "text": "Wait, actually make it New York."
+        },
+        "t_ms": 2000.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 2000.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Got it \u2014 switching to New York."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "New York",
+            "date": "tomorrow"
+          }
+        },
+        "t_ms": 2000.0
+      },
+      {
+        "kind": "tool_cancelled",
+        "call_id": "c1",
+        "t_ms": 2000.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c2",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "New York",
+          "date": "tomorrow"
+        },
+        "t_ms": 2000.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c2",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "New York",
+          "date": "tomorrow"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "flights": [
+            {
+              "flight_id": "FL-NYC-8AM",
+              "depart": "08:00",
+              "price_usd": 129
+            },
+            {
+              "flight_id": "FL-NYC-2PM",
+              "depart": "14:00",
+              "price_usd": 99
+            }
+          ]
+        },
+        "t_ms": 4248.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "I found a flight to New York: FL-NYC-8AM departing 08:00 for $129. Whose name should I book it under?"
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "New York",
+            "date": "tomorrow",
+            "flight_id": "FL-NYC-8AM"
+          }
+        },
+        "t_ms": 4248.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_02_text_interrupt",
+      "total": 100.0,
+      "breakdown": {
+        "task": {
+          "weight": 40.0,
+          "fraction": 1.0,
+          "points": 40.0,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "search_nyc",
+                "type": "tool_called",
+                "weight": 0.4,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "final_nyc",
+                "type": "final_response_contains",
+                "weight": 0.3,
+                "passed": true,
+                "note": "matched final_response text"
+              },
+              {
+                "id": "no_new_boston_calls",
+                "type": "tool_not_called",
+                "weight": 0.3,
+                "passed": true,
+                "note": "0 forbidden matching call(s) found"
+              },
+              {
+                "id": "ack_mentions_new_city",
+                "type": "spoken_contains",
+                "weight": 0.15,
+                "passed": true,
+                "note": "matching spoken action found"
+              }
+            ]
+          }
+        },
+        "recovery": {
+          "weight": 35.0,
+          "fraction": 1.0,
+          "points": 35.0,
+          "detail": {
+            "fraction": 1.0,
+            "checks": [
+              {
+                "check": "invalidated:flight_search",
+                "passed": true,
+                "note": "all stale work aborted or finished pre-interrupt"
+              },
+              {
+                "check": "state:slots.destination",
+                "passed": true,
+                "note": "snapshot value = 'New York'"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 15.0,
+          "fraction": 1.0,
+          "points": 15.0,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 72.0,
+                "fraction": 1.0
+              },
+              {
+                "event_index": 2,
+                "delta_ms": 100.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 10.0,
+          "fraction": 1.0,
+          "points": 10.0,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_03_text_chained_booking",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Find a flight to Denver and ",
+          "end_of_turn": false
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "book the 8 AM one for Alice.",
+          "end_of_turn": true
+        },
+        "t_ms": 1120.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 1120.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "On it \u2014 finding flights to Denver first."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Denver",
+            "passenger_name": "Alice",
+            "depart_time": "08:00"
+          }
+        },
+        "t_ms": 1120.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Denver"
+        },
+        "t_ms": 1120.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Denver"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "flights": [
+            {
+              "flight_id": "FL-DEN-8AM",
+              "depart": "08:00",
+              "price_usd": 129
+            },
+            {
+              "flight_id": "FL-DEN-2PM",
+              "depart": "14:00",
+              "price_usd": 99
+            }
+          ]
+        },
+        "t_ms": 3120.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Found FL-DEN-8AM at 08:00 for $129 \u2014 booking it for Alice now."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Denver",
+            "passenger_name": "Alice",
+            "depart_time": "08:00",
+            "flight_id": "FL-DEN-8AM"
+          }
+        },
+        "t_ms": 3120.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c2",
+        "api_name": "book_flight",
+        "args": {
+          "flight_id": "FL-DEN-8AM",
+          "passenger_name": "Alice"
+        },
+        "t_ms": 3120.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c2",
+        "api_name": "book_flight",
+        "args": {
+          "flight_id": "FL-DEN-8AM",
+          "passenger_name": "Alice"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "booking_id": "BK-0001",
+          "flight_id": "FL-DEN-8AM"
+        },
+        "t_ms": 4368.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "Done \u2014 you're booked on FL-DEN-8AM to Denver for Alice. Booking reference BK-0001."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Denver",
+            "passenger_name": "Alice",
+            "depart_time": "08:00",
+            "flight_id": "FL-DEN-8AM",
+            "booking_id": "BK-0001"
+          }
+        },
+        "t_ms": 4368.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_03_text_chained_booking",
+      "total": 100.0,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 1.0,
+          "points": 61.5,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "search_called",
+                "type": "tool_called",
+                "weight": 0.3,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "book_called",
+                "type": "tool_called",
+                "weight": 0.45,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "final_confirms",
+                "type": "final_response_contains",
+                "weight": 0.25,
+                "passed": true,
+                "note": "matched final_response text"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 1.0,
+          "points": 23.1,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 220.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_04_text_no_tool",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Hey, what can you help me with?",
+          "end_of_turn": true
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 0.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "I can search flights to a destination city on a given date, book a specific flight returned by flight_search, cancel an existing booking, retrieve pages from indexed device manuals. Supports hybrid text + visual-embedding search, or open a support ticket for an unresolved device issue. What would you like to do?"
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 0.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_04_text_no_tool",
+      "total": 76.9,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 1.0,
+          "points": 61.5,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "no_tools",
+                "type": "no_tool_calls",
+                "weight": 0.5,
+                "passed": true,
+                "note": "0 tool call(s) emitted (expected none)"
+              },
+              {
+                "id": "helpful_answer",
+                "type": "final_response_contains",
+                "weight": 0.5,
+                "passed": true,
+                "note": "matched final_response text"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 0.0,
+          "points": 0.0,
+          "detail": {
+            "fraction": 0.0,
+            "responses": [
+              {
+                "event_index": 0,
+                "delta_ms": null,
+                "fraction": 0.0,
+                "note": "never responded"
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_05_audio_asr_ambiguity",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_audio_chunk",
+        "payload": {
+          "audio_ref": "audio/pub_05_turn1.mp3",
+          "duration_ms": 1400,
+          "end_of_turn": true
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Mm-hm, one second."
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "action",
+        "action": "clarification_request",
+        "payload": {
+          "text": "Speech recognition is unavailable. Please type your request; check the selected speech API key, quota, or cached local Whisper model."
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_audio_chunk",
+        "payload": {
+          "audio_ref": "audio/pub_05_turn2.mp3",
+          "duration_ms": 900,
+          "end_of_turn": true
+        },
+        "t_ms": 4248.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 4248.0
+      },
+      {
+        "kind": "action",
+        "action": "clarification_request",
+        "payload": {
+          "text": "Speech recognition is unavailable. Please type your request; check the selected speech API key, quota, or cached local Whisper model."
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 4376.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_05_audio_asr_ambiguity",
+      "total": 42.3,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 0.25,
+          "points": 15.4,
+          "detail": {
+            "fraction": 0.25,
+            "checkpoints": [
+              {
+                "id": "asked_before_acting",
+                "type": "clarification",
+                "weight": 0.3,
+                "passed": false,
+                "note": "no clarification in window"
+              },
+              {
+                "id": "no_premature_search",
+                "type": "tool_not_called",
+                "weight": 0.25,
+                "passed": true,
+                "note": "0 forbidden matching call(s) found"
+              },
+              {
+                "id": "search_boston",
+                "type": "tool_called",
+                "weight": 0.3,
+                "passed": false,
+                "note": "0/1 matching call(s) emitted"
+              },
+              {
+                "id": "final_boston",
+                "type": "final_response_contains",
+                "weight": 0.15,
+                "passed": false,
+                "note": "no final_response matched any_of"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 0.5,
+          "points": 11.5,
+          "detail": {
+            "fraction": 0.5,
+            "responses": [
+              {
+                "event_index": 0,
+                "delta_ms": 4276.0,
+                "fraction": 0.0
+              },
+              {
+                "event_index": 1,
+                "delta_ms": 176.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_06_audio_disfluency",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_audio_chunk",
+        "payload": {
+          "audio_ref": "audio/pub_06_turn1_part1.mp3",
+          "duration_ms": 1200,
+          "end_of_turn": false
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_audio_chunk",
+        "payload": {
+          "audio_ref": "audio/pub_06_turn1_part2.mp3",
+          "duration_ms": 1100,
+          "end_of_turn": true
+        },
+        "t_ms": 1504.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 1504.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Mm-hm, one second."
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 1504.0
+      },
+      {
+        "kind": "action",
+        "action": "clarification_request",
+        "payload": {
+          "text": "Speech recognition is unavailable. Please type your request; check the selected speech API key, quota, or cached local Whisper model."
+        },
+        "state_snapshot": {
+          "intent": "chitchat",
+          "slots": {}
+        },
+        "t_ms": 1504.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_06_audio_disfluency",
+      "total": 56.9,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 0.3,
+          "points": 18.5,
+          "detail": {
+            "fraction": 0.3,
+            "checkpoints": [
+              {
+                "id": "search_repaired_city",
+                "type": "tool_called",
+                "weight": 0.5,
+                "passed": false,
+                "note": "0/1 matching call(s) emitted"
+              },
+              {
+                "id": "never_searched_abandoned_city",
+                "type": "tool_not_called",
+                "weight": 0.3,
+                "passed": true,
+                "note": "0 forbidden matching call(s) found"
+              },
+              {
+                "id": "final_nyc",
+                "type": "final_response_contains",
+                "weight": 0.2,
+                "passed": false,
+                "note": "no final_response matched any_of"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 1.0,
+          "points": 23.1,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 104.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_07_visual_port_lookup",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "video_frame",
+        "payload": {
+          "frame_id": "f_017",
+          "image_ref": "frames/pub_07_f017.png",
+          "device_hint": "GENERIC"
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "What is this port used for?",
+          "end_of_turn": true
+        },
+        "t_ms": 624.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 624.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Let me take a look at that and check the manual."
+        },
+        "state_snapshot": {
+          "intent": "device_support",
+          "slots": {
+            "device_model": "GENERIC"
+          }
+        },
+        "t_ms": 624.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c2",
+        "api_name": "lookup_manual",
+        "args": {
+          "query": "What is this port used for?",
+          "image_embedding": [
+            0.04837,
+            -0.03972,
+            0.00844,
+            0.04088,
+            -0.00242,
+            -0.07458,
+            0.00626,
+            0.02358,
+            0.01002,
+            0.02701,
+            0.00556,
+            0.02745,
+            0.04115,
+            -0.01063,
+            0.01082,
+            -0.00065,
+            0.04563,
+            0.04416,
+            -0.01447,
+            -0.03664,
+            -0.00707,
+            -0.01748,
+            -0.01545,
+            0.01515,
+            -0.00411,
+            -0.08634,
+            -0.01631,
+            0.03557,
+            -0.0078,
+            0.01757,
+            -0.05013,
+            -0.00508,
+            0.00136,
+            0.01173,
+            -0.01596,
+            -0.02492,
+            -0.04359,
+            0.00373,
+            -0.02501,
+            -0.05658,
+            0.00511,
+            0.04245,
+            -0.02631,
+            -0.05759,
+            -0.04992,
+            0.07132,
+            0.00381,
+            -0.01482,
+            0.02676,
+            -0.00396,
+            -0.00472,
+            0.06006,
+            -0.03513,
+            -0.05326,
+            -0.00148,
+            0.04391,
+            -0.01606,
+            -0.01981,
+            0.05472,
+            -0.02698,
+            0.0211,
+            -0.01604,
+            0.02043,
+            0.01167,
+            0.00301,
+            -0.00748,
+            0.0118,
+            0.0021,
+            0.03464,
+            0.02978,
+            -0.04035,
+            -0.01429,
+            0.02693,
+            -0.01967,
+            0.0702,
+            -0.0236,
+            -0.0159,
+            0.02243,
+            -0.02375,
+            0.02761,
+            0.03094,
+            -0.03396,
+            0.03239,
+            -0.00927,
+            0.03383,
+            -0.00738,
+            0.08796,
+            -0.01161,
+            0.03427,
+            -0.0637,
+            0.00762,
+            0.00766,
+            -0.57673,
+            -0.02173,
+            0.01631,
+            0.0152,
+            0.03386,
+            -0.06899,
+            0.01439,
+            -0.06536,
+            -0.027,
+            0.02311,
+            0.04026,
+            0.05355,
+            -0.01323,
+            -0.00159,
+            -0.11986,
+            0.01671,
+            -0.00729,
+            -0.02443,
+            -0.03956,
+            -0.01175,
+            -0.0261,
+            0.01316,
+            -0.00697,
+            -0.00754,
+            0.05327,
+            -0.00314,
+            0.01912,
+            0.06888,
+            -0.012,
+            0.05431,
+            -0.01079,
+            0.05185,
+            -0.00879,
+            0.04412,
+            -0.07032,
+            -0.03735,
+            0.00103,
+            0.01747,
+            0.02655,
+            -0.02806,
+            -0.00722,
+            0.09604,
+            0.04332,
+            -0.00625,
+            0.01814,
+            -0.06493,
+            -0.06007,
+            0.03432,
+            -0.08603,
+            -0.01874,
+            -0.01054,
+            -0.00523,
+            -0.01738,
+            0.00488,
+            -0.05127,
+            -0.01424,
+            0.00415,
+            -0.00809,
+            0.01197,
+            -0.00353,
+            0.02838,
+            0.0036,
+            0.0352,
+            0.0194,
+            0.00777,
+            -0.00966,
+            -0.04782,
+            -0.00209,
+            0.01098,
+            0.01316,
+            -0.05728,
+            -0.00357,
+            0.00847,
+            0.0358,
+            -0.01331,
+            0.00813,
+            -0.02572,
+            -0.00364,
+            -0.03809,
+            -0.06812,
+            -0.01313,
+            0.00839,
+            0.02577,
+            -0.04906,
+            -0.01217,
+            -0.05068,
+            0.02007,
+            0.03165,
+            0.00349,
+            -0.01278,
+            0.00476,
+            0.00254,
+            -0.0533,
+            0.0291,
+            0.00483,
+            -0.00855,
+            0.00303,
+            0.04252,
+            -0.04712,
+            0.01094,
+            0.02545,
+            0.00728,
+            0.00739,
+            -0.05535,
+            0.00853,
+            0.0293,
+            -0.07347,
+            0.03135,
+            -0.01054,
+            -0.03003,
+            -0.03632,
+            -0.01559,
+            -0.00933,
+            0.00083,
+            -0.06116,
+            -0.03554,
+            -0.00791,
+            -0.00674,
+            -0.037,
+            0.03361,
+            -0.03661,
+            0.01668,
+            0.00889,
+            -0.02801,
+            0.01484,
+            0.01241,
+            -0.04981,
+            -0.05249,
+            0.06354,
+            -0.05997,
+            -0.01357,
+            -0.0089,
+            0.02779,
+            0.04976,
+            0.05077,
+            0.02273,
+            -0.02757,
+            0.01026,
+            -0.08939,
+            0.01845,
+            -0.03468,
+            0.08584,
+            0.02861,
+            0.04329,
+            0.02943,
+            0.02686,
+            -0.02696,
+            -0.00331,
+            -0.03639,
+            0.0422,
+            0.05516,
+            -0.02654,
+            -0.0292,
+            0.03062,
+            -0.00276,
+            0.03387,
+            -0.0135,
+            0.01936,
+            0.03961,
+            -0.03093,
+            -0.0583,
+            -0.08171,
+            0.03486,
+            -0.03383,
+            0.01868,
+            0.01207,
+            -0.14925,
+            0.04502,
+            0.00438,
+            0.02171,
+            -0.0201,
+            0.01789,
+            -0.08139,
+            0.04441,
+            -0.0177,
+            -0.01862,
+            -0.02447,
+            0.01331,
+            -0.00081,
+            0.02875,
+            0.01109,
+            0.02253,
+            -0.05606,
+            -0.0375,
+            0.0464,
+            0.03612,
+            0.00648,
+            -0.02127,
+            0.05753,
+            0.01103,
+            -0.05268,
+            -0.02963,
+            -0.00368,
+            0.01658,
+            0.077,
+            -0.01057,
+            -0.01385,
+            -0.03345,
+            -0.00209,
+            -0.00039,
+            0.04613,
+            0.02342,
+            -0.05214,
+            0.01946,
+            -0.03104,
+            -0.02393,
+            0.01583,
+            -0.03513,
+            0.07858,
+            0.0053,
+            0.01545,
+            0.07675,
+            0.03354,
+            -0.03708,
+            -0.02246,
+            0.03564,
+            -0.03805,
+            -0.05045,
+            -0.01143,
+            0.00956,
+            0.09588,
+            -0.01209,
+            0.05031,
+            0.06351,
+            -0.00055,
+            -0.01349,
+            0.0264,
+            -0.04241,
+            0.02551,
+            0.19523,
+            -0.03494,
+            0.01846,
+            0.00669,
+            -0.02304,
+            0.03149,
+            0.01984,
+            0.02389,
+            0.00652,
+            -0.00611,
+            -0.03389,
+            0.01583,
+            -0.02277,
+            0.01053,
+            0.02495,
+            0.05047,
+            0.0286,
+            -0.0059,
+            -0.02457,
+            0.00982,
+            0.01863,
+            -0.01164,
+            -0.00861,
+            0.01534,
+            -0.02375,
+            0.03317,
+            -0.04107,
+            -0.02345,
+            -0.007,
+            -0.03255,
+            0.06113,
+            -0.01273,
+            0.00828,
+            -0.02832,
+            0.04429,
+            -0.03596,
+            0.08282,
+            0.08174,
+            0.05829,
+            -0.01182,
+            -0.01905,
+            0.01797,
+            0.00415,
+            -0.05531,
+            -0.02331,
+            0.00079,
+            0.04995,
+            0.04378,
+            -0.00272,
+            0.03559,
+            0.02715,
+            0.00844,
+            -0.00348,
+            0.02051,
+            -0.06967,
+            0.01115,
+            0.05513,
+            -0.1148,
+            0.02492,
+            -0.00147,
+            -0.05085,
+            -0.00783,
+            0.01052,
+            0.05011,
+            -0.02491,
+            -0.01896,
+            -0.00104,
+            -0.04543,
+            0.0486,
+            -0.0625,
+            -0.04992,
+            0.0136,
+            -0.00508,
+            0.04241,
+            -0.05155,
+            -0.01737,
+            -0.0101,
+            -0.01783,
+            -0.02498,
+            -0.01535,
+            -0.02587,
+            0.00634,
+            -0.00723,
+            -0.0205,
+            -0.00564,
+            -0.0323,
+            -0.01856,
+            0.04933,
+            0.03637,
+            0.06725,
+            0.02451,
+            0.02096,
+            0.01308,
+            0.0294,
+            0.00873,
+            -0.03577,
+            -0.00663,
+            0.00951,
+            -0.03491,
+            0.02408,
+            -0.09265,
+            -0.03982,
+            0.01424,
+            -0.03558,
+            0.0289,
+            0.00118,
+            0.03019,
+            -0.03704,
+            0.04662,
+            -0.00325,
+            -0.00039,
+            -0.06852,
+            -0.0851,
+            -0.05328,
+            0.00752,
+            0.02315,
+            -0.05254,
+            0.06823,
+            -0.05082,
+            0.01955,
+            0.02234,
+            0.01708,
+            -0.01475,
+            -0.02473,
+            0.00284,
+            0.02599,
+            -0.03687,
+            -0.02364,
+            0.01401,
+            -0.00109,
+            -0.03552,
+            0.01661,
+            -0.04501,
+            -0.01233,
+            -0.01436,
+            -0.01848,
+            0.03005,
+            0.01762,
+            0.03161,
+            -0.0143,
+            0.01842,
+            0.01337,
+            0.01532,
+            0.06408,
+            -0.01121,
+            0.02742,
+            -0.01887,
+            -0.02781,
+            -0.01954,
+            -0.03347,
+            0.03648,
+            -0.01305,
+            -0.02776,
+            -0.01643,
+            0.01884,
+            0.00177,
+            -0.03901,
+            0.00717,
+            -0.01002,
+            0.00691,
+            0.00325,
+            0.01,
+            0.00768,
+            0.04196,
+            0.01254,
+            -0.02378,
+            0.05348,
+            -0.03333,
+            -0.04403,
+            -0.04405,
+            0.0236,
+            0.00022,
+            -0.00354,
+            0.01271,
+            0.00682,
+            -0.00233,
+            -0.04365,
+            0.00198,
+            0.0088,
+            -0.03468,
+            -0.00785,
+            -0.02741,
+            -0.01196,
+            0.0732,
+            -0.00051,
+            -0.00211,
+            0.0171,
+            -0.01287,
+            0.03562,
+            0.00497,
+            -0.00743
+          ]
+        },
+        "t_ms": 1752.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c2",
+        "api_name": "lookup_manual",
+        "args": {
+          "query": "What is this port used for?",
+          "image_embedding": [
+            0.04837,
+            -0.03972,
+            0.00844,
+            0.04088,
+            -0.00242,
+            -0.07458,
+            0.00626,
+            0.02358,
+            0.01002,
+            0.02701,
+            0.00556,
+            0.02745,
+            0.04115,
+            -0.01063,
+            0.01082,
+            -0.00065,
+            0.04563,
+            0.04416,
+            -0.01447,
+            -0.03664,
+            -0.00707,
+            -0.01748,
+            -0.01545,
+            0.01515,
+            -0.00411,
+            -0.08634,
+            -0.01631,
+            0.03557,
+            -0.0078,
+            0.01757,
+            -0.05013,
+            -0.00508,
+            0.00136,
+            0.01173,
+            -0.01596,
+            -0.02492,
+            -0.04359,
+            0.00373,
+            -0.02501,
+            -0.05658,
+            0.00511,
+            0.04245,
+            -0.02631,
+            -0.05759,
+            -0.04992,
+            0.07132,
+            0.00381,
+            -0.01482,
+            0.02676,
+            -0.00396,
+            -0.00472,
+            0.06006,
+            -0.03513,
+            -0.05326,
+            -0.00148,
+            0.04391,
+            -0.01606,
+            -0.01981,
+            0.05472,
+            -0.02698,
+            0.0211,
+            -0.01604,
+            0.02043,
+            0.01167,
+            0.00301,
+            -0.00748,
+            0.0118,
+            0.0021,
+            0.03464,
+            0.02978,
+            -0.04035,
+            -0.01429,
+            0.02693,
+            -0.01967,
+            0.0702,
+            -0.0236,
+            -0.0159,
+            0.02243,
+            -0.02375,
+            0.02761,
+            0.03094,
+            -0.03396,
+            0.03239,
+            -0.00927,
+            0.03383,
+            -0.00738,
+            0.08796,
+            -0.01161,
+            0.03427,
+            -0.0637,
+            0.00762,
+            0.00766,
+            -0.57673,
+            -0.02173,
+            0.01631,
+            0.0152,
+            0.03386,
+            -0.06899,
+            0.01439,
+            -0.06536,
+            -0.027,
+            0.02311,
+            0.04026,
+            0.05355,
+            -0.01323,
+            -0.00159,
+            -0.11986,
+            0.01671,
+            -0.00729,
+            -0.02443,
+            -0.03956,
+            -0.01175,
+            -0.0261,
+            0.01316,
+            -0.00697,
+            -0.00754,
+            0.05327,
+            -0.00314,
+            0.01912,
+            0.06888,
+            -0.012,
+            0.05431,
+            -0.01079,
+            0.05185,
+            -0.00879,
+            0.04412,
+            -0.07032,
+            -0.03735,
+            0.00103,
+            0.01747,
+            0.02655,
+            -0.02806,
+            -0.00722,
+            0.09604,
+            0.04332,
+            -0.00625,
+            0.01814,
+            -0.06493,
+            -0.06007,
+            0.03432,
+            -0.08603,
+            -0.01874,
+            -0.01054,
+            -0.00523,
+            -0.01738,
+            0.00488,
+            -0.05127,
+            -0.01424,
+            0.00415,
+            -0.00809,
+            0.01197,
+            -0.00353,
+            0.02838,
+            0.0036,
+            0.0352,
+            0.0194,
+            0.00777,
+            -0.00966,
+            -0.04782,
+            -0.00209,
+            0.01098,
+            0.01316,
+            -0.05728,
+            -0.00357,
+            0.00847,
+            0.0358,
+            -0.01331,
+            0.00813,
+            -0.02572,
+            -0.00364,
+            -0.03809,
+            -0.06812,
+            -0.01313,
+            0.00839,
+            0.02577,
+            -0.04906,
+            -0.01217,
+            -0.05068,
+            0.02007,
+            0.03165,
+            0.00349,
+            -0.01278,
+            0.00476,
+            0.00254,
+            -0.0533,
+            0.0291,
+            0.00483,
+            -0.00855,
+            0.00303,
+            0.04252,
+            -0.04712,
+            0.01094,
+            0.02545,
+            0.00728,
+            0.00739,
+            -0.05535,
+            0.00853,
+            0.0293,
+            -0.07347,
+            0.03135,
+            -0.01054,
+            -0.03003,
+            -0.03632,
+            -0.01559,
+            -0.00933,
+            0.00083,
+            -0.06116,
+            -0.03554,
+            -0.00791,
+            -0.00674,
+            -0.037,
+            0.03361,
+            -0.03661,
+            0.01668,
+            0.00889,
+            -0.02801,
+            0.01484,
+            0.01241,
+            -0.04981,
+            -0.05249,
+            0.06354,
+            -0.05997,
+            -0.01357,
+            -0.0089,
+            0.02779,
+            0.04976,
+            0.05077,
+            0.02273,
+            -0.02757,
+            0.01026,
+            -0.08939,
+            0.01845,
+            -0.03468,
+            0.08584,
+            0.02861,
+            0.04329,
+            0.02943,
+            0.02686,
+            -0.02696,
+            -0.00331,
+            -0.03639,
+            0.0422,
+            0.05516,
+            -0.02654,
+            -0.0292,
+            0.03062,
+            -0.00276,
+            0.03387,
+            -0.0135,
+            0.01936,
+            0.03961,
+            -0.03093,
+            -0.0583,
+            -0.08171,
+            0.03486,
+            -0.03383,
+            0.01868,
+            0.01207,
+            -0.14925,
+            0.04502,
+            0.00438,
+            0.02171,
+            -0.0201,
+            0.01789,
+            -0.08139,
+            0.04441,
+            -0.0177,
+            -0.01862,
+            -0.02447,
+            0.01331,
+            -0.00081,
+            0.02875,
+            0.01109,
+            0.02253,
+            -0.05606,
+            -0.0375,
+            0.0464,
+            0.03612,
+            0.00648,
+            -0.02127,
+            0.05753,
+            0.01103,
+            -0.05268,
+            -0.02963,
+            -0.00368,
+            0.01658,
+            0.077,
+            -0.01057,
+            -0.01385,
+            -0.03345,
+            -0.00209,
+            -0.00039,
+            0.04613,
+            0.02342,
+            -0.05214,
+            0.01946,
+            -0.03104,
+            -0.02393,
+            0.01583,
+            -0.03513,
+            0.07858,
+            0.0053,
+            0.01545,
+            0.07675,
+            0.03354,
+            -0.03708,
+            -0.02246,
+            0.03564,
+            -0.03805,
+            -0.05045,
+            -0.01143,
+            0.00956,
+            0.09588,
+            -0.01209,
+            0.05031,
+            0.06351,
+            -0.00055,
+            -0.01349,
+            0.0264,
+            -0.04241,
+            0.02551,
+            0.19523,
+            -0.03494,
+            0.01846,
+            0.00669,
+            -0.02304,
+            0.03149,
+            0.01984,
+            0.02389,
+            0.00652,
+            -0.00611,
+            -0.03389,
+            0.01583,
+            -0.02277,
+            0.01053,
+            0.02495,
+            0.05047,
+            0.0286,
+            -0.0059,
+            -0.02457,
+            0.00982,
+            0.01863,
+            -0.01164,
+            -0.00861,
+            0.01534,
+            -0.02375,
+            0.03317,
+            -0.04107,
+            -0.02345,
+            -0.007,
+            -0.03255,
+            0.06113,
+            -0.01273,
+            0.00828,
+            -0.02832,
+            0.04429,
+            -0.03596,
+            0.08282,
+            0.08174,
+            0.05829,
+            -0.01182,
+            -0.01905,
+            0.01797,
+            0.00415,
+            -0.05531,
+            -0.02331,
+            0.00079,
+            0.04995,
+            0.04378,
+            -0.00272,
+            0.03559,
+            0.02715,
+            0.00844,
+            -0.00348,
+            0.02051,
+            -0.06967,
+            0.01115,
+            0.05513,
+            -0.1148,
+            0.02492,
+            -0.00147,
+            -0.05085,
+            -0.00783,
+            0.01052,
+            0.05011,
+            -0.02491,
+            -0.01896,
+            -0.00104,
+            -0.04543,
+            0.0486,
+            -0.0625,
+            -0.04992,
+            0.0136,
+            -0.00508,
+            0.04241,
+            -0.05155,
+            -0.01737,
+            -0.0101,
+            -0.01783,
+            -0.02498,
+            -0.01535,
+            -0.02587,
+            0.00634,
+            -0.00723,
+            -0.0205,
+            -0.00564,
+            -0.0323,
+            -0.01856,
+            0.04933,
+            0.03637,
+            0.06725,
+            0.02451,
+            0.02096,
+            0.01308,
+            0.0294,
+            0.00873,
+            -0.03577,
+            -0.00663,
+            0.00951,
+            -0.03491,
+            0.02408,
+            -0.09265,
+            -0.03982,
+            0.01424,
+            -0.03558,
+            0.0289,
+            0.00118,
+            0.03019,
+            -0.03704,
+            0.04662,
+            -0.00325,
+            -0.00039,
+            -0.06852,
+            -0.0851,
+            -0.05328,
+            0.00752,
+            0.02315,
+            -0.05254,
+            0.06823,
+            -0.05082,
+            0.01955,
+            0.02234,
+            0.01708,
+            -0.01475,
+            -0.02473,
+            0.00284,
+            0.02599,
+            -0.03687,
+            -0.02364,
+            0.01401,
+            -0.00109,
+            -0.03552,
+            0.01661,
+            -0.04501,
+            -0.01233,
+            -0.01436,
+            -0.01848,
+            0.03005,
+            0.01762,
+            0.03161,
+            -0.0143,
+            0.01842,
+            0.01337,
+            0.01532,
+            0.06408,
+            -0.01121,
+            0.02742,
+            -0.01887,
+            -0.02781,
+            -0.01954,
+            -0.03347,
+            0.03648,
+            -0.01305,
+            -0.02776,
+            -0.01643,
+            0.01884,
+            0.00177,
+            -0.03901,
+            0.00717,
+            -0.01002,
+            0.00691,
+            0.00325,
+            0.01,
+            0.00768,
+            0.04196,
+            0.01254,
+            -0.02378,
+            0.05348,
+            -0.03333,
+            -0.04403,
+            -0.04405,
+            0.0236,
+            0.00022,
+            -0.00354,
+            0.01271,
+            0.00682,
+            -0.00233,
+            -0.04365,
+            0.00198,
+            0.0088,
+            -0.03468,
+            -0.00785,
+            -0.02741,
+            -0.01196,
+            0.0732,
+            -0.00051,
+            -0.00211,
+            0.0171,
+            -0.01287,
+            0.03562,
+            0.00497,
+            -0.00743
+          ]
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "pages": [
+            {
+              "doc": "GENERIC-laptop-manual",
+              "page": 21,
+              "title": "Headphone / Microphone Jack"
+            },
+            {
+              "doc": "GENERIC-laptop-manual",
+              "page": 23,
+              "title": "USB Ports"
+            },
+            {
+              "doc": "GENERIC-laptop-manual",
+              "page": 25,
+              "title": "Ethernet (LAN) Port"
+            }
+          ],
+          "search_mode": "hybrid"
+        },
+        "t_ms": 4000.0
+      },
+      {
+        "kind": "action",
+        "action": "clarification_request",
+        "payload": {
+          "text": "I couldn't make out the port clearly from the camera. The GENERIC-laptop-manual manual covers several connectors \u2014 could you move a little closer or tell me what's printed next to it?"
+        },
+        "state_snapshot": {
+          "intent": "device_support",
+          "slots": {
+            "device_model": "GENERIC"
+          }
+        },
+        "t_ms": 4000.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_07_visual_port_lookup",
+      "total": 75.4,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 0.6,
+          "points": 36.9,
+          "detail": {
+            "fraction": 0.6,
+            "checkpoints": [
+              {
+                "id": "manual_lookup",
+                "type": "tool_called",
+                "weight": 0.3,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "hybrid_bonus_embedding_passed",
+                "type": "tool_called",
+                "weight": 0.15,
+                "passed": true,
+                "note": "1/1 matching call(s) emitted"
+              },
+              {
+                "id": "final_grounded_hdmi",
+                "type": "final_response_contains",
+                "weight": 0.3,
+                "passed": false,
+                "note": "no final_response matched any_of"
+              },
+              {
+                "id": "final_not_hedging",
+                "type": "spoken_not_contains",
+                "weight": 0.15,
+                "passed": true,
+                "note": "no forbidden phrase spoken"
+              },
+              {
+                "id": "cites_manual",
+                "type": "final_response_contains",
+                "weight": 0.1,
+                "passed": false,
+                "note": "no final_response matched any_of"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 1.0,
+          "points": 23.1,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 24.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_08_text_tool_failure",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "Find me flights to Seattle please.",
+          "end_of_turn": true
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 0.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Sure, checking flights to Seattle."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Seattle"
+          }
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Seattle"
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c1",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Seattle"
+        },
+        "status": "error",
+        "result": {
+          "status": "error",
+          "error": "timeout",
+          "detail": "upstream flight API timed out"
+        },
+        "t_ms": 2248.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "That's taking longer than usual \u2014 trying again."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Seattle"
+          }
+        },
+        "t_ms": 2248.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c2",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Seattle"
+        },
+        "t_ms": 2248.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c2",
+        "api_name": "flight_search",
+        "args": {
+          "destination": "Seattle"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "flights": [
+            {
+              "flight_id": "FL-SEA-8AM",
+              "depart": "08:00",
+              "price_usd": 129
+            },
+            {
+              "flight_id": "FL-SEA-2PM",
+              "depart": "14:00",
+              "price_usd": 99
+            }
+          ]
+        },
+        "t_ms": 4128.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "I found a flight to Seattle: FL-SEA-8AM departing 08:00 for $129. There's also FL-SEA-2PM at 14:00 for $99."
+        },
+        "state_snapshot": {
+          "intent": "book_flight",
+          "slots": {
+            "destination": "Seattle",
+            "flight_id": "FL-SEA-8AM"
+          }
+        },
+        "t_ms": 4128.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_08_text_tool_failure",
+      "total": 81.7,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 1.0,
+          "points": 61.5,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "retried_after_failure",
+                "type": "tool_called",
+                "weight": 0.4,
+                "passed": true,
+                "note": "2/2 matching call(s) emitted"
+              },
+              {
+                "id": "eventual_success",
+                "type": "tool_called",
+                "weight": 0.3,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "final_useful",
+                "type": "final_response_contains",
+                "weight": 0.3,
+                "passed": true,
+                "note": "matched final_response text"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 0.207,
+          "points": 4.8,
+          "detail": {
+            "fraction": 0.207,
+            "responses": [
+              {
+                "event_index": 0,
+                "delta_ms": 2148.0,
+                "fraction": 0.207
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "scenario_id": "pub_09_text_unseen_tool",
+    "trace": [
+      {
+        "kind": "agent_setup",
+        "wall_ms": 0.0,
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "tool_manifest",
+        "payload": {
+          "tools": [
+            "book_flight",
+            "cancel_booking",
+            "create_support_ticket",
+            "flight_search",
+            "lookup_manual",
+            "weather_lookup"
+          ]
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "What's the weather like ",
+          "end_of_turn": false
+        },
+        "t_ms": 0.0
+      },
+      {
+        "kind": "event",
+        "event_type": "user_speech_chunk",
+        "payload": {
+          "text": "in Denver right now?",
+          "end_of_turn": true
+        },
+        "t_ms": 752.0
+      },
+      {
+        "kind": "event",
+        "event_type": "scenario_end",
+        "payload": {},
+        "t_ms": 752.0
+      },
+      {
+        "kind": "action",
+        "action": "filler_speech",
+        "payload": {
+          "text": "Checking weather lookup for Denver."
+        },
+        "state_snapshot": {
+          "intent": "weather_lookup",
+          "slots": {
+            "destination": "Denver"
+          }
+        },
+        "t_ms": 880.0
+      },
+      {
+        "kind": "action",
+        "action": "tool_call",
+        "call_id": "c1",
+        "api_name": "weather_lookup",
+        "args": {
+          "city": "Denver"
+        },
+        "t_ms": 880.0
+      },
+      {
+        "kind": "tool_completed",
+        "call_id": "c1",
+        "api_name": "weather_lookup",
+        "args": {
+          "city": "Denver"
+        },
+        "status": "success",
+        "result": {
+          "status": "success",
+          "condition": "sunny",
+          "temp_f": 74,
+          "forecast": "clear skies through Friday"
+        },
+        "t_ms": 1752.0
+      },
+      {
+        "kind": "action",
+        "action": "final_response",
+        "payload": {
+          "text": "Here's what I found for Denver: sunny, 74\u00b0F, clear skies through Friday."
+        },
+        "state_snapshot": {
+          "intent": "weather_lookup",
+          "slots": {
+            "destination": "Denver"
+          }
+        },
+        "t_ms": 1752.0
+      }
+    ],
+    "score": {
+      "scenario_id": "pub_09_text_unseen_tool",
+      "total": 100.0,
+      "breakdown": {
+        "task": {
+          "weight": 61.5,
+          "fraction": 1.0,
+          "points": 61.5,
+          "detail": {
+            "fraction": 1.0,
+            "checkpoints": [
+              {
+                "id": "unseen_tool_called",
+                "type": "tool_called",
+                "weight": 0.5,
+                "passed": true,
+                "note": "1/1 matching call(s) completed successfully"
+              },
+              {
+                "id": "not_forced_into_known_tool",
+                "type": "tool_not_called",
+                "weight": 0.15,
+                "passed": true,
+                "note": "0 forbidden matching call(s) found"
+              },
+              {
+                "id": "final_grounded_in_result",
+                "type": "final_response_contains",
+                "weight": 0.35,
+                "passed": true,
+                "note": "matched final_response text"
+              }
+            ]
+          }
+        },
+        "latency": {
+          "weight": 23.1,
+          "fraction": 1.0,
+          "points": 23.1,
+          "detail": {
+            "fraction": 1.0,
+            "responses": [
+              {
+                "event_index": 1,
+                "delta_ms": 80.0,
+                "fraction": 1.0
+              }
+            ]
+          }
+        },
+        "safety": {
+          "weight": 15.4,
+          "fraction": 1.0,
+          "points": 15.4,
+          "detail": {
+            "fraction": 1.0,
+            "notes": [
+              "clean"
+            ]
+          }
+        }
+      }
+    }
+  }
+]

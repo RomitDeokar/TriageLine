@@ -20,6 +20,15 @@ import sys
 from harness.runner import run_scenario
 from harness.scorer import score_scenario, format_report
 
+try:  # audio scenarios need the speech-provider keys; without them local Whisper is the only fallback
+    from dotenv import load_dotenv
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parent
+    load_dotenv(_root / ".env")
+    load_dotenv(_root / "livekit_agent/.env.local")
+except Exception:  # noqa: BLE001 - offline runs still work without dotenv
+    pass
+
 
 def load_agent_factory(spec: str):
     module_name, _, class_name = spec.partition(":")

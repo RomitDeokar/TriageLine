@@ -440,6 +440,27 @@ def spelled_ids(text: str) -> List[str]:
     return out
 
 
+_ID_CUE_NOUN = {"order": r"order", "product": r"item|product|sku", "item": r"item|product|sku",
+                "sku": r"item|product|sku", "ticket": r"ticket|support",
+                "booking": r"booking|reservation", "flight": r"flight"}
+
+
+def _cue_undashed_id(text: str, field: str = "") -> Optional[str]:
+    """Undashed spoken ids that STT delivers in mixed case right after the field's own noun:
+    "order ID is ABC123" -> ABC123, "track order 456" -> 456, "item P52" -> P52 (C1)."""
+    noun = (field or "").split("_")[0]
+    cue = _ID_CUE_NOUN.get(noun, "") or (r"(?:id|number|code)" if (field or "").endswith("_id") or field == "id" else "")
+    if not cue:
+        return None
+    m = re.search(r"\b(?:" + cue + r")\s*(?:id|number|no\.?|#)?\s*(?:is|was|as|:|=)?\s*"
+                  r"([A-Za-z]{1,6}\d{1,8}|\d{2,8}|[A-Za-z]\d[A-Za-z0-9]{0,6})\b", text or "", re.I)
+    if m:
+        v = m.group(1).upper()
+        if plausible_id(v):
+            return v
+    return None
+
+
 def extract_id(text: str, field: str = "") -> Optional[str]:
     if not ID_PREFIX.get(field):
         sp = [(m.start(), "".join(re.split(r"[\-\s]", m.group(1))).upper()) for m in _SPELLED_RE.finditer(text or "")
@@ -452,6 +473,10 @@ def extract_id(text: str, field: str = "") -> Optional[str]:
                 if near:
                     return near[-1]
             return sp[-1][1]
+        # STT collapses spelled ids into one undashed token ("ABC123") — cue-anchored, case-insensitive
+        und = _cue_undashed_id(text, field)
+        if und:
+            return und
     ids = [m.group(1).upper() for m in ID_RE.finditer(text or "")]
     pre = ID_PREFIX.get(field)
     if pre:
@@ -976,7 +1001,11 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     words = lname.replace("_", " ")
     m = re.search(re.escape(words) + r"\s+(?:is|to|as|=|:)?\s*([\w][\w\-./]*(?:\s+[\w][\w\-./]*){0,2})", text, re.I)
     if m:
-        return norm(m.group(1)).strip(" .,")
+        cand = norm(m.group(1)).strip(" .,")
+        # an id-shaped field must look like an id ("ABC123"), never multi-word STT debris ("a b c")
+        if lname.endswith("_id") or lname == "id":
+            return cand if plausible_id(cand) else None
+        return cand
     return None
 
 
@@ -1163,6 +1192,52 @@ BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up,? to|at most
 WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
             "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
 
+_TENS_WORDS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "sixty": 60,
+               "seventy": 70, "eighty": 80, "ninety": 90}
+_TEEN_WORDS = {"eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+               "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19}
+_MAGNITUDE_WORDS = {"hundred": 100, "thousand": 1000}
+
+# Compound spoken amounts STT leaves as words: "two hundred", "fifteen hundred", "one thousand five hundred"
+def _compound_normalize(text: str) -> str:
+    """Replace maximal runs of spoken number words with their value: "two hundred fifty" -> 250,
+    "fifteen hundred" -> 1500, "two hundred" -> 200. Single words map through WORD_NUM."""
+    out, buf = [], []
+
+    def flush():
+        if buf:
+            v = _compound_value(buf)
+            out.append(str(v) if v is not None else " ".join(buf))
+            buf.clear()
+
+    for w in re.findall(r"[A-Za-z]+|\d+", text or ""):
+        wl = w.lower()
+        if wl in WORD_NUM or wl in _TENS_WORDS or wl in _TEEN_WORDS or wl in _MAGNITUDE_WORDS:
+            buf.append(wl)
+        else:
+            flush()
+            out.append(w)
+    flush()
+    return " ".join(out)
+
+
+def _compound_value(words: List[str]) -> Optional[int]:
+    total, cur = 0, 0
+    for w in words:
+        w = w.lower().strip(".,")
+        if w in WORD_NUM:
+            cur += WORD_NUM[w]
+        elif w in _TENS_WORDS:
+            cur += _TENS_WORDS[w]
+        elif w in _TEEN_WORDS:
+            cur += _TEEN_WORDS[w]
+        elif w in _MAGNITUDE_WORDS:
+            if cur == 0:
+                cur = 1
+            total += cur * _MAGNITUDE_WORDS[w]
+            cur = 0
+    return (total + cur) or None
+
 
 _AMOUNT_UNIT = r"(?:(?:us|u\.s\.|canadian|australian|british|swiss|japanese|indian|chinese|mexican|american)\s+)?" \
                r"(?:dollars?|bucks|euros?|pounds?|yen|rupees?|yuan|francs?|pesos?|usd|eur|gbp|jpy|inr|cny|chf|cad|aud|mxn)\b"
@@ -1197,6 +1272,9 @@ def extract_number(text: str, name: str, spec: Dict[str, Any], integer: bool = F
     t = norm(re.sub(r"(?i)\b(?:um+|uh+|uhm|hmm+|erm?|like)\b[,.]*", " ", t))     # "raise it... uh, to 2200"
     t = re.sub(r"(?i)\b(add|put|get|order|buy|want|make it)\s*,\s*", r"\1 ", t)    # "add, like, 2" (B6)
     t = re.sub(r"\s*,\s*(?=\d)", " ", t) if re.search(r"(?i)\b(add|buy|order)\b", t) else t
+    # compound spoken amounts FIRST ("two hundred fifty" -> 250, "fifteen hundred" -> 1500);
+    # the single-word loop then only handles the space-containing forms ("a couple")
+    t = _compound_normalize(t)
     for w, n in WORD_NUM.items():
         t = re.sub(r"\b" + w + r"\b", str(n), t, flags=re.I)
     t = TIME_RE.sub(" ", t)
@@ -1420,6 +1498,14 @@ def normalize_asr(text: str) -> str:
     t = text or ""
     for rx, rep in _ASR_CONFUSIONS:
         t = rx.sub(rep, t)
+    # NATO spell-cues and spoken separators inside ids ("v as in Victor, dash four" -> "V-4")
+    t = re.sub(r"(?i)\b([a-z])\s+as\s+in\s+(?:the\s+letter\s+)?"
+               r"(alpha|bravo|charlie|delta|echo|foxtrot|golf|hotel|india|juliet|kilo|lima|mike|"
+               r"november|oscar|papa|quebec|romeo|sierra|tango|uniform|victor|whiskey|x-?ray|"
+               r"yankee|zulu)\b",
+               lambda m: m.group(1).upper() if m.group(1).lower() == m.group(2)[0].lower()
+               else m.group(2)[0].upper(), t)
+    t = re.sub(r"(?i)(?<=[A-Za-z0-9])\s*[-,]?\s*dash\s*(?=[A-Za-z0-9])", "-", t)
     return normalize_spoken_ids(t)
 
 
