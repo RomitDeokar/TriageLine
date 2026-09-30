@@ -195,6 +195,7 @@ async def entrypoint(ctx: agents.JobContext):
     triage = TriageCallSession(call_id=call_id, stt=None, tts=tts_adapter, audio_io=audio_io)
     final_segments: list[str] = []
     flush_handle: asyncio.TimerHandle | None = None
+    flush_task: asyncio.Task | None = None
 
     async def flush_final_transcript() -> None:
         """Coalesce Deepgram final segments; a final segment is not necessarily a whole turn."""
@@ -210,18 +211,21 @@ async def entrypoint(ctx: agents.JobContext):
             log.exception("failed to process caller transcript for call %s", call_id)
 
     def schedule_transcript_flush(delay: float) -> None:
-        nonlocal flush_handle
+        nonlocal flush_handle, flush_task
         if flush_handle is not None:
             flush_handle.cancel()
+        if flush_task is not None and not flush_task.done():
+            flush_task.cancel()                        # a newer segment supersedes a queued flush
+            flush_task = None
         if torn_down:
             return                                    # never schedule work after teardown (E-07)
 
         def launch_flush() -> None:
-            nonlocal flush_handle
+            nonlocal flush_handle, flush_task
             flush_handle = None
             if torn_down:
                 return
-            asyncio.create_task(flush_final_transcript())
+            flush_task = asyncio.create_task(flush_final_transcript())
 
         flush_handle = asyncio.get_running_loop().call_later(delay, launch_flush)
 
@@ -271,6 +275,9 @@ async def entrypoint(ctx: agents.JobContext):
         if flush_handle is not None:
             flush_handle.cancel()
         flush_handle = None
+        if flush_task is not None and not flush_task.done():
+            flush_task.cancel()                        # a queued flush must not process after teardown
+        flush_task = None
         final_segments.clear()
         resolved = await triage.teardown(reason="caller_disconnected")
         if resolved:

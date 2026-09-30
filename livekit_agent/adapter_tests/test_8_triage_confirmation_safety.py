@@ -240,3 +240,18 @@ async def _t_emergency_guidance_first():
     assert not s.dispatch_log
     spoken = " ".join(s._spoken())
     assert "emergency" in spoken.lower(), spoken
+
+
+def test_closure_resolves_a_pending_action():
+    """Closing the case must leave no action in 'pending confirmation' (audit E-06)."""
+    asyncio.run(_t_closure_resolves_pending())
+
+
+async def _t_closure_resolves_pending():
+    s = new_session("r8")
+    await pending_tow(s, "Highway 9")
+    aid = s.brain.pending_action_id
+    await s.on_final_transcript("That's all, thanks.")
+    assert s.commit.get(aid).current_state != CommitState.PENDING_CONFIRMATION, \
+        "a pending tow was left open after the case was closed"
+    assert s.brain.closed, "closure was not applied"

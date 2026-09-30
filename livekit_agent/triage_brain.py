@@ -285,6 +285,19 @@ class TriageBrainLLM(LLMProvider):
                 advisory += " If you can, tell me where you are and I'll also log a simulated escalation."
             return LLMResponse(text=advisory, intent="emergency", needs_more_info=not record.resolved)
 
+        if record.chosen_option == "close_case":
+            # closing the case must also resolve any pending action — an old tow left in
+            # "pending confirmation" after closure is a real safety defect (audit E-06).
+            resolved = await self._commit.force_resolve_pending(self._call_id, reason="case_closed")
+            self.pending_action_id = None
+            self.pending_decision_id = None
+            self.closed = True
+            tail = (" I've also cancelled the pending simulated request so nothing is left open."
+                    if resolved else "")
+            return LLMResponse(text=f"Understood — closing this out.{tail} "
+                                    f"These are simulated actions only; no real service was contacted.",
+                               intent="close_case")
+
         if not record.resolved:
             if record.fallback_action == FALLBACK_REQUEST_MORE_INFO:
                 missing = ", ".join(record.uncertainties) or "a few more details"
