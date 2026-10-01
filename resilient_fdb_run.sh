@@ -33,7 +33,7 @@ for d in base.iterdir():
     if r.exists():
         try:
             j = json.loads(r.read_text(encoding="utf-8"))
-            if j.get("status") == "completed" and ((j.get("transcript") or "").strip() or j.get("asr_chunks")):
+            if j.get("status") == "completed" and (j.get("transcript") or "").strip():
                 n += 1
         except Exception:
             pass
@@ -50,7 +50,7 @@ for d in base.iterdir():
     if r.exists():
         try:
             j = json.loads(r.read_text(encoding="utf-8"))
-            ok = j.get("status") == "completed" and ((j.get("transcript") or "").strip() or j.get("asr_chunks"))
+            ok = j.get("status") == "completed" and (j.get("transcript") or "").strip()
             if not ok:
                 r.unlink()
                 for extra in ("output_triageline.wav", "result_triageline_text.json"):
@@ -89,14 +89,27 @@ for pass in $(seq 1 40); do
   V=$(valid_count)
   echo "[pass $pass] valid=$V/100 $(date -u +%T)" | tee -a "$LOG"
   if [ "$V" -ge 100 ]; then break; fi
-  # kill only the BENCHMARK worker (bench_worker.py) — never the demo workers (cascaded_agent.py)
-  powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python" -and $_.CommandLine -match "bench_worker" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }' 2>/dev/null
+  # kill only the worker THIS loop started (pid file) — never the demo workers
+  if [ -f "$OUT/worker.pid" ]; then
+    WID=$(tr -d '
+' < "$OUT/worker.pid")
+    [ -n "$WID" ] && taskkill //PID "$WID" //F >/dev/null 2>&1
+    rm -f "$OUT/worker.pid"
+  fi
   sleep 2
-  ( cd "$ROOT/livekit_agent" && exec "$PY" bench_worker.py dev ) >"$OUT/worker_$pass.log" 2>&1 &
-  WORKER=$!
-  sleep 20
-  if ! kill -0 "$WORKER" 2>/dev/null; then
-    echo "[pass $pass] worker died at startup; retrying" | tee -a "$LOG"
+  ( cd "$ROOT/livekit_agent" && "$PY" cascaded_agent.py dev ) >"$OUT/worker_$pass.log" 2>&1 &
+  sleep 3
+  WID=$(powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "python" -and $_.CommandLine -match "cascaded_agent" } | Sort-Object CreationDate -Descending | Select-Object -First 1 -ExpandProperty ProcessId' 2>/dev/null | tr -d '\r\n')
+  echo "$WID" > "$OUT/worker.pid"
+  # liveness: is the worker WE started still alive? (pid-scoped, so demo workers never matter)
+  ALIVE=0
+  for _ in $(seq 1 15); do
+    ALIVE=$(powershell -NoProfile -Command "if ($WID -and (Get-Process -Id $WID -ErrorAction SilentlyContinue)) { 1 } else { 0 }" 2>/dev/null | tr -d '\r\n')
+    [ "${ALIVE:-0}" -ge 1 ] && break
+    sleep 2
+  done
+  if [ "${ALIVE:-0}" -lt 1 ]; then
+    echo "[pass $pass] worker failed to start; retrying" | tee -a "$LOG"
     continue
   fi
   ( cd "$V3" && "$PY" run_tool_benchmark_all_released.py --provider triageline ) >>"$LOG" 2>&1

@@ -65,3 +65,26 @@ Measured on the same 29 live transcripts (diagnostic harness, not the official s
 
 Offline text replay held at **91/100**; integrity audit PASS; 242 Python tests pass.
 Residual work: the wrong_args bucket (chained `$RESULT` ids, plural/singular queries).
+
+
+## FINAL LIVE RUN — pinned config, judge off (2026-10-01, run dir `results/live_20260930T200524Z/`)
+
+100 examples streamed through LiveKit (Deepgram nova-3 STT / aura-2 TTS, official FDB-v3 runner and
+evaluators, planner OFF, automatic dispatch), scored by the official `evaluate_tool_calls.py` and
+`evaluate_pass_rate.py`. Coverage: **99/100 produced an agent response** (the single outlier,
+`housing_14_61517db6`, joined its room but never spoke on any of 40 retry passes; its sibling
+recording of the same scenario scores normally — reported as a miss, not hidden).
+
+| metric | run #1 | run #2 | **final (fixed)** |
+|---|---|---|---|
+| strict pass (exact match, judge off) | 13/100 | 13/100 | **28/100** |
+| tool-selection accuracy | 77.4% (N=63) | 75.1% | **80.6%** |
+| argument accuracy | 43.7% (N=63) | 33.2% | **39.7%** |
+| turn-take | 63/100 | 100/100 | **99/100** |
+| avg response latency | 5.77 s | 5.34 s | 5.82 s |
+
+Failure breakdown: wrong tools 43, wrong arguments 29. By domain: finance_billing 52.0%,
+ecommerce_support 34.5%, housing_location (argument accuracy 26.3% remains the weakest), travel 0%.
+The gains came from the live-audio fixes (dispatch/turn handling, spoken-id corrections incl.
+letter-only ids, ordinal dates, decimal-safe numbers, continuation dedupe). The organisers re-run
+with their pinned gpt-4o judge, which is more forgiving on wording than this exact-match diagnostic.

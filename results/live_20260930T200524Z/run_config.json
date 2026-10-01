@@ -1,0 +1,16 @@
+{
+  "runner": "resilient_fdb_run.sh (local recovery; canonical path is run_fdb_v3.sh)",
+  "started_at": "2026-09-30T20:05:24Z",
+  "pinned_config": {
+    "TRIAGELINE_MODE": "benchmark",
+    "TRIAGELINE_BENCHMARK_POLICY": "1",
+    "TRIAGELINE_LLM_PLANNER": "0",
+    "TRIAGELINE_LLM_MODE": "fallback",
+    "TRIAGELINE_AGENT_NAME": "",
+    "TRIAGELINE_STT_PROVIDER": "deepgram",
+    "TRIAGELINE_TTS_PROVIDER": "deepgram"
+  },
+  "fdb_v3_commit": "",
+  "repo_commit": "",
+  "judge": "off (no OPENAI_API_KEY; organisers re-run with their pinned judge)"
+}
