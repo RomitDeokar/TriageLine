@@ -119,7 +119,14 @@ def register_plugins(cfg: dict | None = None) -> None:
 def load_vad():
     _allow_plugin_registration_in_subprocess()
     from livekit.plugins import silero
-    return silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
+    # min_speech_duration 0.05 lets a click/breath count as user speech and cut the agent off;
+    # 0.2 is still well below a real word. min_silence_duration is the trailing-silence wait before
+    # end-of-turn, so it is a direct latency cost (the FDB-v3 recordings end with ~30 s of ambient
+    # noise, so a twitchy VAD also truncates the agent's own reply). Both overridable.
+    return silero.VAD.load(
+        min_speech_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SPEECH_S", "0.2")),
+        min_silence_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SILENCE_S", "0.4")),
+    )
 
 
 def bias_terms(tools: dict | None = None) -> list:
@@ -136,8 +143,12 @@ def bias_terms(tools: dict | None = None) -> list:
 
 
 def whisper_prompt(terms: list) -> str:
-    return ("Customer support call. The caller may spell IDs letter by letter, e.g. order ID QRT417, "
-            "item P52, flight UA318. Vocabulary: " + ", ".join(terms)) if terms else ""
+    """STT decoding hint. Intentionally contains NO vocabulary and NO example identifier values:
+    biasing a Whisper-style decoder — even with domain words — measurably degrades it (on the
+    official released recordings whole utterances came back as a single filler word). The
+    manifest vocabulary is still exposed via `bias_terms` for Deepgram's `keyterm` mechanism."""
+    del terms  # vocabulary words, even domain words, measurably degrade Whisper decoding
+    return "Customer support call. The caller may spell an identifier letter by letter."
 
 
 def build_stt(cfg: dict, tools: dict | None = None):
@@ -150,7 +161,16 @@ def build_stt(cfg: dict, tools: dict | None = None):
     if p == "deepgram":
         from livekit.plugins import deepgram
         kw = {"keyterm": terms[:50]} if terms and model.startswith("nova-3") else {}
-        return deepgram.STT(model=model, language="en-US", interim_results=True, filler_words=True, **kw)
+        # LiveKit's Deepgram plugin defaults are endpointing_ms=25 with smart_format/numerals off:
+        # it then emits a final every ~25 ms of silence and returns spoken numbers as words. That
+        # fragments one request into many finals (the adapter has to merge them back) and pushes
+        # number words into the rule extractors. Ask for punctuation, smart formatting and digits,
+        # and endpoint on a real pause instead; the settle gate then only merges genuinely split
+        # fragments. Override the pause with TRIAGELINE_DEEPGRAM_ENDPOINTING_MS.
+        return deepgram.STT(model=model, language="en-US", interim_results=True, filler_words=True,
+                            punctuate=True, smart_format=True, numerals=True,
+                            endpointing_ms=int(os.environ.get("TRIAGELINE_DEEPGRAM_ENDPOINTING_MS", "350")),
+                            **kw)
     from livekit.plugins import openai
     kw = {"temperature": 0.0}
     if terms:

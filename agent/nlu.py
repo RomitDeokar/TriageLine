@@ -466,7 +466,7 @@ def spelled_ids(text: str) -> List[str]:
     return out
 
 
-_LETTER_ID_BLOCK = {"the", "this", "that", "number", "details", "information", "status", "is", "was",
+_LETTER_ID_BLOCK = {"id", "ids", "the", "this", "that", "number", "details", "information", "status", "is", "was",
                     "please", "document", "documents", "card", "code", "name", "order", "item", "product",
                     "license", "licence", "passport", "visa", "mine", "my", "your", "new", "old", "same",
                     "here", "there", "where", "now", "then", "again", "back", "up", "down", "out", "in",
@@ -1576,14 +1576,21 @@ def filler_only(text: str) -> bool:
 
 
 def tool_vocabulary(tools: Dict[str, Any], limit: int = 80) -> List[str]:
-    """Key terms from the tool manifest, used to bias STT (Whisper prompt / Deepgram keyterm)."""
+    """Key terms from the tool manifest, used to bias STT (Whisper prompt / Deepgram keyterm).
+
+    Deliberately does NOT harvest the quoted example values inside tool/argument
+    descriptions (place names, ids, currency codes, card tiers, ...): biasing an ASR
+    decoder with concrete example answers makes it prefer them over the true audio.
+    Measured on the official released recordings, the leaked examples degraded whole
+    utterances (some were transcribed as a single filler word). Only tool names,
+    argument names and generic words from descriptions are biased.
+    """
     words: List[str] = []
     for name, spec in (tools or {}).items():
         words += name.split("_")
         words += re.findall(r"[A-Za-z]{3,}", str(spec.get("description", "")))
         for arg, a in (spec.get("args") or {}).items():
             words += arg.split("_")
-            words += re.findall(r"'([^']{2,20})'", str(a.get("description", "")))
     seen, out = set(), []
     for w in ["order ID", "cart", "SKU", "passport", "autopay", "exchange rate", "bedroom"] + words:
         k = w.lower()

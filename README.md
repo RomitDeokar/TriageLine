@@ -134,13 +134,16 @@ hit rate limits, so prefer Deepgram ($200 signup credit) for the scored run.
 |---|---|---|
 | **Live LiveKit, exact match, judge off** (final, 99/100 turn-taken) | **28/100** | `results/live_20260930T200524Z/` — tool-sel 80.6%, arg-acc 39.7%, latency 5.82 s; exact match is a harsh lower bound (run #1 was 13/100) |
 | **Live LiveKit, judged** (what is scored) | **organisers re-run** | no OpenAI key is provided to teams (confirmed by the organisers); their common re-run supplies the pinned judge |
-| Offline text replay (official transcripts → adapter → official evaluator, judge off) | **91/100** | diagnostic upper bound; no audio, no STT |
+| Offline text replay (official transcripts → adapter → official evaluator, judge off) | **92/100** | diagnostic upper bound; no audio, no STT |
 | Practice kit (9 public scenarios, local Whisper ASR, offline by default) | **87/100** | `run_local.py --all`; set `TRIAGELINE_LOCAL_USE_ENV=1` only if you want the live planner |
 | Independent held-out paraphrase set (`scenarios_heldout/`, rules only) | **29/30** | never used to tune rules |
 
-Audio replay with a small offline Whisper model has scored well below the text replay (≈50/100 before the
-current fixes). Most losses there are STT errors on spelled ids and fillers, which is why the live run uses a
-hosted streaming STT biased with the tool vocabulary. The live number is the only one that counts.
+Audio replay with a small offline Whisper model scored below the text replay (54/100 strict before the
+2026-10-01 audio fix pass, 65/100 after; tool-selection 76.0% → 93.3%, argument 60.7% → 72.8%). That pass
+removed a self-inflicted STT biasing bug (the decoder prompt leaked the benchmark's own example answers and
+turned whole utterances into a single filler word), bounded the commit gate, and enabled Deepgram
+`smart_format`/`numerals` with a real endpoint. See the top of `results/results.md`. The live number is the
+only one that counts.
 
 ### Integrity (guide §6: no memorising benchmark items)
 
@@ -191,7 +194,7 @@ agent. Transcript of a full call: `legacy/docs/EXTENSION_DEMO_TRANSCRIPT.md`.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-fdb.txt -r requirements-app.txt pytest
-.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q      # 215 passed; 12 environment-only failures (project .env sets providers, TestClient version)
+.venv/bin/python -m pytest tests livekit_agent/adapter_tests -q      # 243 passed; 8 environment-only failures (livekit SDK absent, TestClient version)
 bash tests/shell/test_run_fdb_v3_failures.sh                          # run-script failure detection
 (cd ui && npm ci && npm test)                                         # 10 passed
 .venv/bin/python scripts/heldout_eval.py                              # 29/30

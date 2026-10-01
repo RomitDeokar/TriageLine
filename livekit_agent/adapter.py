@@ -275,19 +275,24 @@ class TriageAdapter:
         return self.max_settle_s if turn_looks_unfinished(text) else self.settle_s
 
     async def _settle_then_route(self, delay: Optional[float] = None):
-        waited = 0.0
+        # A dangling fragment (mid-spelled id, trailing verb) must never become a tool call, but
+        # the wait is bounded by max_settle_s: the old loop kept re-arming while the text "looked
+        # unfinished" with a hard 10 s cap, which produced 15-26 s reply latency on spelled ids.
+        # Bounding it here means the commit is at most ~max_settle_s after the last final, and the
+        # live endpointing/turn-detector (not this gate) decides the true end of turn.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (delay if delay is not None else self.max_settle_s)
         while True:
-            wait = self.settle_for(" ".join(self._pending_final)) if delay is None else delay
-            await asyncio.sleep(wait)
+            wait = delay if delay is not None else self.settle_for(" ".join(self._pending_final))
+            await asyncio.sleep(max(0.0, wait))
             if delay is not None or not self._pending_final:
                 break
             text = " ".join(self._pending_final)
-            # A dangling fragment (mid-spelled id, trailing verb) must never become a tool
-            # call: hold and merge with the next fragment until the hard cap, then flush.
-            if turn_looks_unfinished(text) and waited < 10.0:
-                waited += wait
-                continue
-            break
+            # a complete plan (settle_for <= settle_s) commits even if a raw regex still thinks the
+            # text is unfinished; otherwise keep merging until the bounded deadline.
+            complete = self.settle_for(text) <= self.settle_s + 1e-9
+            if complete or not turn_looks_unfinished(text) or loop.time() >= deadline:
+                break
         text, self._pending_final = " ".join(self._pending_final), []
         if text:
             log.debug("commit turn (%d chars): %r", len(text), text)

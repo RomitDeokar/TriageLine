@@ -72,7 +72,12 @@ def test_auto_prefers_stronger_stt():
     finally:
         restore(s)
     terms = sp.bias_terms()
-    assert any("cart" in t.lower() for t in terms) and "order ID" in sp.whisper_prompt(terms)
+    assert any("cart" in t.lower() for t in terms)          # Deepgram keyterm keeps domain words
+    # ...but the Whisper/openai prompt must NOT carry vocabulary or example values: measured on
+    # the official released audio, a vocabulary prompt makes Whisper hallucinate (whole utterances
+    # transcribed as a single filler word). It is now a fixed generic spelling hint.
+    prompt = sp.whisper_prompt(terms)
+    assert "cart" not in prompt and "order ID" not in prompt, prompt
 
 
 def test_unknown_provider_rejected():

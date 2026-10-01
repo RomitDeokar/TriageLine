@@ -95,9 +95,9 @@ TOOL_LOG = os.environ.get("TRIAGELINE_TOOL_LOG", "/tmp/agent_tool_calls.log")
 # Commit gate (C2). VAD endpointing (0.5 s) + the semantic turn detector already decide end-of-turn;
 # this gate only merges endpointer-split fragments, so it is kept short. Turns that still look
 # unfinished (dangling connective, a ranked tool missing a required argument) wait MAX_SETTLE_S.
-_default_settle = "1.0" if MODE == "benchmark" else "0.9"
+_default_settle = "0.4" if MODE == "benchmark" else "0.9"
 SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", _default_settle))
-MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.0"))
+MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "1.4"))
 # FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4).
 # Assistant mode asks and confirms instead.
 os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1" if MODE == "benchmark" else "0")
@@ -223,8 +223,8 @@ class CascadedVoiceAgent(Agent):
 def build_turn_handling() -> dict:
     """livekit-agents 1.8 TurnHandlingOptions (B16: replaces deprecated min/max_endpointing_delay).
     Uses the semantic end-of-turn model when livekit-plugins-turn-detector is installed (C2)."""
-    th: dict = {"endpointing": {"min_delay": 0.35,
-                                "max_delay": float(os.environ.get("TRIAGELINE_EOT_MAX_S", "1.2"))}}
+    th: dict = {"endpointing": {"min_delay": 0.25,
+                                "max_delay": float(os.environ.get("TRIAGELINE_EOT_MAX_S", "0.9"))}}
     if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1":
         try:
             from livekit_agent.speech_providers import _allow_plugin_registration_in_subprocess

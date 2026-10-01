@@ -801,7 +801,11 @@ class ParticipantAgent:
         return [t for t, _ in merged] if len(merged) > 1 else [turn]
 
     _AND_SPLIT = re.compile(r"(?i),?\s+and\s+(?=\S)|,\s+(?=(?:if|when|once)\b)|\s+(?=\bif\b)")
-    _COND = re.compile(r"(?i)^\s*(?:and\s+)?(?:if|when|as long as|provided)\b(.*?)(?:,|\bthen\b|(?=\b(?:add|book|buy|put|"
+    # "if ..." clauses, including an else branch that opens with a conjunction ("but if everything is
+    # over 50, ... instead", "otherwise, if..."). Recognising the else branch means its comparison is
+    # evaluated before the branch action runs, instead of the action being taken unconditionally.
+    _COND = re.compile(r"(?i)^\s*(?:(?:and|but|or|otherwise|so)\s+)?(?:if|when|as long as|provided)\b(.*?)"
+                       r"(?:,|\bthen\b|(?=\b(?:add|book|buy|put|"
                        r"update|set|change|calculate|track|search|find|get|modify|turn|cancel)\b))(.*)$")
 
     def _split_more(self, parts: List[str]) -> List[str]:
@@ -861,8 +865,16 @@ class ParticipantAgent:
                       cond or "")
         if not m or not self.results:
             return None
-        _api, res = self.results[-1]
-        val = _find_key(res, ["price", "cost", "rate", "total", "amount", "cart_total", "duration_minutes", "minutes"])
+        # Prefer the entity's own price/rate over a later aggregate (a cart_total / fees total from
+        # a subsequent state change): "if the item is over 50" must test the item's price, not the
+        # running cart total. Fall back to the newest result if no entity price is present.
+        val = None
+        for _api, res in reversed(self.results[-4:]):
+            val = _find_key(res, ["price", "cost", "rate", "amount"])
+            if val is not None:
+                break
+        if val is None:
+            val = _find_key(self.results[-1][1], ["total", "cart_total", "duration_minutes", "minutes"])
         try:
             val = float(val)
         except (TypeError, ValueError):
