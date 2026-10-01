@@ -1,3 +1,22 @@
+/* LOCAL PATCH (not committed): crypto.randomUUID is only defined in secure contexts.
+   Over plain HTTP on the LAN it is undefined and the page throws, so build an RFC-4122 v4 id
+   from crypto.getRandomValues when needed. */
+(function () {
+  try {
+    var c = window.crypto || {};
+    if (typeof c.randomUUID === 'function') return;
+    function uuid() {
+      var b = new Uint8Array(16);
+      if (typeof c.getRandomValues === 'function') c.getRandomValues(b);
+      else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+      b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+      var h = []; for (var j = 0; j < 16; j++) h.push(('0' + b[j].toString(16)).slice(-2));
+      return h.slice(0,4).join('') + '-' + h.slice(4,6).join('') + '-' + h.slice(6,8).join('') + '-' + h.slice(8,10).join('') + '-' + h.slice(10,16).join('');
+    }
+    c.randomUUID = uuid;
+    window.crypto = c;
+  } catch (e) { /* ignore */ }
+})();
 "use strict";
 // TriageLine Live Assistant — mobile PWA client.
 //   mic → (on-device SpeechRecognition | server Whisper) → POST /say → agent → SSE → bubbles + TTS.

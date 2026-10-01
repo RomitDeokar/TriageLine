@@ -1,6 +1,6 @@
 // Service worker: network-first app shell so the PWA installs and opens offline.
 // API calls and the SSE stream are never cached (live sessions must hit the server).
-const C = "triageline-v6";
+const C = "triageline-v7";
 const SHELL = ["/live.html", "/live.css", "/live.js", "/auth.js", "/manifest.json", "/icon.svg", "/sample_port.png"];
 self.addEventListener("install", (e) => e.waitUntil(caches.open(C).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (e) => e.waitUntil(
