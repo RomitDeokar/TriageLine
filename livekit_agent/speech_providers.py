@@ -119,13 +119,11 @@ def register_plugins(cfg: dict | None = None) -> None:
 def load_vad():
     _allow_plugin_registration_in_subprocess()
     from livekit.plugins import silero
-    # min_speech_duration 0.05 lets a click/breath count as user speech and cut the agent off;
-    # 0.2 is still well below a real word. min_silence_duration is the trailing-silence wait before
-    # end-of-turn, so it is a direct latency cost (the FDB-v3 recordings end with ~30 s of ambient
-    # noise, so a twitchy VAD also truncates the agent's own reply). Both overridable.
+    # Baseline values (0.05 / 0.55) are what the best recorded live run used; they are exposed as env
+    # overrides so they can be tuned per deployment without editing code.
     return silero.VAD.load(
-        min_speech_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SPEECH_S", "0.2")),
-        min_silence_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SILENCE_S", "0.4")),
+        min_speech_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SPEECH_S", "0.05")),
+        min_silence_duration=float(os.environ.get("TRIAGELINE_VAD_MIN_SILENCE_S", "0.55")),
     )
 
 
@@ -161,16 +159,11 @@ def build_stt(cfg: dict, tools: dict | None = None):
     if p == "deepgram":
         from livekit.plugins import deepgram
         kw = {"keyterm": terms[:50]} if terms and model.startswith("nova-3") else {}
-        # LiveKit's Deepgram plugin defaults are endpointing_ms=25 with smart_format/numerals off:
-        # it then emits a final every ~25 ms of silence and returns spoken numbers as words. That
-        # fragments one request into many finals (the adapter has to merge them back) and pushes
-        # number words into the rule extractors. Ask for punctuation, smart formatting and digits,
-        # and endpoint on a real pause instead; the settle gate then only merges genuinely split
-        # fragments. Override the pause with TRIAGELINE_DEEPGRAM_ENDPOINTING_MS.
-        return deepgram.STT(model=model, language="en-US", interim_results=True, filler_words=True,
-                            punctuate=True, smart_format=True, numerals=True,
-                            endpointing_ms=int(os.environ.get("TRIAGELINE_DEEPGRAM_ENDPOINTING_MS", "350")),
-                            **kw)
+        # NOTE: the plugin default is endpointing_ms=25 with smart_format/numerals off. Raising
+        # endpointing/formatting changes when finals arrive relative to the turn commit and needs to
+        # be retuned together with the endpointing delays; the recorded live baseline used the
+        # defaults, so they are left here. Tune via TRIAGELINE_DEEPGRAM_* before changing this.
+        return deepgram.STT(model=model, language="en-US", interim_results=True, filler_words=True, **kw)
     from livekit.plugins import openai
     kw = {"temperature": 0.0}
     if terms:
