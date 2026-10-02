@@ -67,6 +67,45 @@ def test_settle_wait_is_bounded_by_max_settle(unfinished):
     assert dt < 3.0, f"settle wait {dt:.1f}s — not bounded by max_settle_s"
 
 
+# ---------------------------------------------------------------- speech floor: no commit mid-utterance
+def test_no_commit_while_user_is_still_speaking():
+    """A final that arrives while VAD says the caller is still speaking is a FRAGMENT: it must be
+    merged into the turn, never executed. Committing it was the main live duplicate/stale-call cause."""
+    async def main():
+        calls = []
+
+        async def execute(cid, api, args):
+            calls.append((api, dict(args)))
+            await ad.on_tool_completed(cid, {"status": "success"}, status="ok")
+
+        async def speak(kind, text):
+            pass
+
+        async def cancel(cid):
+            pass
+
+        from livekit_agent.adapter import TriageAdapter
+
+        ad = TriageAdapter(tool_executor=execute, tool_canceller=cancel, speak=speak,
+                           settle_s=0.1, max_settle_s=0.2)
+        await ad.start(FDB_TOOLS)
+        await ad.on_user_speech_start()
+        await ad.on_user_final("search for a desk")
+        await asyncio.sleep(1.0)
+        assert calls == [], f"committed a mid-utterance fragment: {calls}"
+        await ad.on_user_final("under 300")
+        await asyncio.sleep(1.0)
+        assert calls == [], f"committed while still speaking: {calls}"
+        await ad.on_user_speech_end()
+        await ad.wait_idle(timeout=5)
+        await ad.stop()
+        return calls
+
+    calls = asyncio.run(main())
+    assert [c[0] for c in calls] == ["search_products"], calls
+    assert calls[0][1].get("max_price") == 300 and calls[0][1].get("query") == "desk", calls
+
+
 # ---------------------------------------------------------------- cue words are never ids
 def test_extract_id_never_returns_the_cue_word():
     for heard in ("The order ID is ID", "my order id is number", "order code is code"):

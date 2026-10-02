@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -117,6 +118,13 @@ class TriageAdapter:
         self._closed = False
         self._settle_task: Optional[asyncio.Task] = None
         self._interrupt_speech = interrupt_speech
+        # Speech floor (VAD onset -> VAD end). No commit may happen inside this window: an STT final
+        # received while the caller is still speaking is a FRAGMENT, not a finished turn. Committing
+        # it was the main cause of the official live run's duplicate / stale / partial tool calls
+        # (e.g. a search fired on "...2 bedrooms" before "actually 3" arrived). A hard cap bounds the
+        # wait so a lost VAD-end event cannot strand a finished request forever.
+        self._user_speaking = False
+        self._speech_hard_cap_s = max(2.0, float(os.environ.get("TRIAGELINE_SPEECH_CAP_S", "15")))
         # FDB/LiveKit path never uses local ASR/CLIP (LiveKit does STT), so the
         # 700 MB model load is skipped unless explicitly requested (audit B-11).
         self._load_models = load_models
@@ -165,18 +173,17 @@ class TriageAdapter:
                                                    and self.agent.last_api is not None)
 
     async def on_user_speech_start(self):
-        """VAD onset of user speech (audit B-08). If the agent is talking or working,
-        stop its queued/playing speech immediately so the user can barge in; the
-        actual interruption semantics (revise / retract / switch) are decided when
-        the final transcript arrives."""
+        """VAD onset of user speech (audit B-08): take the floor. Stop the agent's queued/playing
+        speech so the caller can barge in, and CANCEL any pending commit — a fragment must not be
+        executed while the caller is still mid-turn. A bounded safety timer is armed only if text is
+        already buffered, so a lost VAD-end can never strand a finished request."""
         if self._closed:
             return
-        # A new speech segment owns the floor; do not commit the preceding fragment
-        # while the caller is still speaking. The timer is RE-ARMED with the long wait, never
-        # just cancelled: onset without a following transcript (a breath, a click, an STT that
-        # returns "" for noise) must not strand a finished request in the buffer forever.
-        # The next final (or the end of this speech segment) restarts settling normally.
+        self._user_speaking = True
+        self._cancel_settle()
         if self._pending_final:
+            # provisional safety: a false onset (breath/click) with no further real final must not
+            # strand the buffered turn. A real continuation final cancels this (see on_user_final).
             self._arm_settle(self.max_settle_s)
         if self._interrupt_speech is not None:
             try:
@@ -185,42 +192,58 @@ class TriageAdapter:
                 log.warning("interrupt_speech failed: %s", e)
 
     async def on_user_partial(self, text: str):
-        """Interim STT transcript. An explicit correction marker ("actually",
-        "no wait", "instead", "scratch that") while the agent is speaking cuts the
-        agent's speech right away (fast path) — the correction itself is applied
-        once the final transcript arrives, so nothing is decided on a partial."""
-        if text and self.busy() and _CORRECTION_CUE.search(text):
-            await self.on_user_speech_start()
+        """Interim STT transcript. An explicit correction marker ("actually", "no wait", "instead",
+        "scratch that") while the agent is speaking cuts the agent's speech right away (fast path).
+        It must NOT set the speech floor: the floor is owned by real VAD onset/end, otherwise a
+        partial would mark the user as speaking with no matching end event."""
+        if text and self.busy() and _CORRECTION_CUE.search(text) and self._interrupt_speech is not None:
+            try:
+                await self._interrupt_speech()
+            except Exception as e:  # noqa: BLE001
+                log.warning("interrupt_speech failed: %s", e)
 
     async def on_user_speech_end(self):
-        """VAD end of a user speech segment. If text is buffered, commit on the normal schedule
-        (an onset may have pushed it to the long wait)."""
-        if self._closed or not self._pending_final:
+        """VAD end of a user speech segment: release the floor and commit the assembled turn."""
+        if self._closed:
             return
-        self._arm_settle()
+        self._user_speaking = False
+        if self._pending_final:
+            self._arm_settle()
 
     async def on_user_final(self, text: str):
-        """Final STT transcript for a user turn.
+        """Final STT transcript for a user utterance.
 
-        With `settle_s > 0` finals are buffered briefly and merged (see B-09);
-        otherwise they are routed immediately (unit tests / offline replay).
-        An EMPTY final (STT heard only noise) still restarts the commit timer for anything buffered."""
+        With `settle_s > 0` finals are buffered briefly and merged (see B-09); otherwise they are
+        routed immediately (unit tests / offline replay). While VAD says the caller is still speaking,
+        the final is buffered but NOT scheduled for commit — it is a fragment of the turn in
+        progress. An EMPTY final (STT heard only noise) restarts the timer for anything buffered."""
         text = (text or "").strip()
         if self._closed:
             return
         if not text:
             if self._pending_final and self.settle_s > 0:
-                self._arm_settle()
+                # a noise final inside a speech segment keeps the bounded safety timer alive
+                self._arm_settle(self.max_settle_s if self._user_speaking else None)
             return
         if self.settle_s <= 0:
             return await self._route_final(text)
         self._pending_final.append(text)
+        if self._user_speaking:
+            # a real (non-empty) continuation: the caller is still building this turn, so wait for
+            # the VAD-end event to commit the assembled turn. The long safety timer only fires if
+            # that end event is lost, so the buffer can never be stranded forever.
+            self._arm_settle(self._speech_hard_cap_s)
+            return
         self._arm_settle()
+
+    def _cancel_settle(self):
+        if self._settle_task and not self._settle_task.done():
+            self._settle_task.cancel()
+        self._settle_task = None
 
     def _arm_settle(self, delay: Optional[float] = None):
         """(Re)start the single commit timer for the buffered transcript."""
-        if self._settle_task and not self._settle_task.done():
-            self._settle_task.cancel()
+        self._cancel_settle()
         self._settle_task = asyncio.create_task(self._settle_then_route(delay))
 
     async def flush(self):
@@ -293,6 +316,14 @@ class TriageAdapter:
             complete = self.settle_for(text) <= self.settle_s + 1e-9
             if complete or not turn_looks_unfinished(text) or loop.time() >= deadline:
                 break
+        # Floor guard: an ordinary settle must never fire while the caller is still speaking — the
+        # buffered text is a fragment and the VAD-end event will re-arm the commit. Only the bounded
+        # safety timer (delay is not None) may force a commit, and it then releases the stuck floor.
+        if delay is None and self._user_speaking:
+            return
+        if delay is not None and self._user_speaking:
+            log.warning("speech-floor hard cap reached; committing buffered turn")
+            self._user_speaking = False
         text, self._pending_final = " ".join(self._pending_final), []
         if text:
             log.debug("commit turn (%d chars): %r", len(text), text)
