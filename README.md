@@ -138,8 +138,8 @@ hit rate limits, so prefer Deepgram ($200 signup credit) for the scored run.
 | Practice kit (9 public scenarios, local Whisper ASR, offline by default) | **87/100** | `run_local.py --all`; set `TRIAGELINE_LOCAL_USE_ENV=1` only if you want the live planner |
 | Independent held-out paraphrase set (`scenarios_heldout/`, rules only) | **29/30** | never used to tune rules |
 
-Audio replay with a small offline Whisper model scored below the text replay (54/100 strict before the
-2026-10-01 audio fix pass, 65/100 after; tool-selection 76.0% → 93.3%, argument 60.7% → 72.8%). That pass
+Audio replay with a small offline Whisper model scored below the text replay (54/100 strict before the 2026-10-01/02 audio+parser fix passes, 71/100 after; tool-selection
+76.0% → 94.2%, argument 60.7% → 77.3%). That pass
 removed a self-inflicted STT biasing bug (the decoder prompt leaked the benchmark's own example answers and
 turned whole utterances into a single filler word), bounded the commit gate, and enabled Deepgram
 `smart_format`/`numerals` with a real endpoint. See the top of `results/results.md`. The live number is the

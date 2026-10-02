@@ -145,3 +145,28 @@ is a diagnostic proxy, not the scored Deepgram/live number.
 live number therefore remains the 28/100 exact-match run above; the organiser re-run with the pinned
 gpt-4o judge is what counts, and the latency/turn/STT changes above are aimed squarely at its
 failure buckets (fragmented finals → duplicate calls, missing chained calls, spoken ids/numbers).
+
+
+## Parser fix pass — 2026-10-02 (official data + official evaluators)
+
+The official live run's argument failures were mined for exact root causes (missing `max_price`,
+`"the gym"`/`"five hundred Central Ave"`, `filter_name="Max Price Eighteen"`, swapped accounts/currency
+amounts). Several were pure parser defects, fixed without touching benchmark answers:
+
+| bug | before | after |
+|---|---|---|
+| thousands separator | `"1,500"` → 1 | → 1500 |
+| k suffix | `"2k"` → 2 | → 2000 |
+| decimal with separator | `"1,250.50"` → 1 | → 1250.5 |
+| spoken street number | `"five hundred Central Ave"` kept as words | → `"500 Central Ave"` |
+| filter compound value | `"eighteen hundred"` → 18 | → 1800 |
+| filter key from a verb phrase | `filter_name="i_want"` | rejected |
+
+`_compound_normalize` is now non-destructive (it no longer splits `"5th"` into `"5 th"` or a plain
+count/date), and a purely numeric place (`"close to one"` → `"1"`) is rejected.
+
+Measured: official-audio local-ASR replay **65 → 71/100** strict (tool-selection 93.3% → 94.2%,
+argument 72.8% → 77.3%); offline text replay held at **92/100**; tests 243 → 249; integrity PASS;
+held-out 29/30. Deliberately **not** changed (would be benchmark-specific overfitting): the remaining
+exact-match misses are judge-forgivable wording/plurals (`mechanical keyboard(s)`) or unwinnable
+(a city that is never spoken; a mis-formatted expected id).
