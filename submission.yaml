@@ -29,10 +29,10 @@ supporting:
 
 # Every number states its mode. Only the live judged run is the scored benchmark result.
 reported_scores:
-  live_livekit_exact_match: "FINAL 2026-10-01 (pinned config, planner off, judge off, 99/100 turn-taken): strict pass 28/100, tool-selection 80.6%, argument accuracy 39.7%, avg latency 5.82s. Run dir results/live_20260930T200524Z/. Run #1 was 13/100; the gain came from the live-audio fixes. Exact match is a harsh lower bound; the organisers re-run with their pinned judge."
+  live_livekit_exact_match: "2026-10-02 (current code, pinned config, planner off, judge off, 85/100 turn-taken — 15 rooms lost to a worker-killing process on the dev machine, counted as failures): strict pass 39/100, tool-selection 84.9%, argument accuracy 56.9% (turn-taken). Per-responding-sample strict pass 45.9%. Previous committed run: 28/100 (results/live_20260930T200524Z). Artifacts: results/live_20261002T143553Z/. Exact match is a harsh lower bound; the organisers re-run with their pinned judge."
   live_livekit_judged: "not run - no OPENAI_API_KEY available (organisers confirmed teams cannot be given keys/credits; official judged scores come from the organisers' common re-run)"
   offline_text_replay_diagnostic: "92/100 strict (official evaluator, judge off, exact match = lower bound); tool-selection 98.8%, argument 93.7%; see results/results.md"
-  offline_audio_replay_diagnostic: "NOT the live number: official released audio replayed with a local faster-whisper ASR through the same adapter/agent, official evaluators (judge off): strict 65/100, tool-selection 93.3%, argument 72.8% after the 2026-10-01 audio fix pass (was 54 / 76.0% / 60.7%). Local-ASR proxy; the scored Deepgram live path was not re-run here (no keys)."
+  offline_audio_replay_diagnostic: "NOT the live number: official released audio replayed with a local faster-whisper ASR through the same adapter/agent, official evaluators (judge off): strict 71/100, tool-selection 94.2%, argument 77.3% after the 2026-10-01/02 audio+parser fix passes (was 54 / 76.0% / 60.7%). Local-ASR proxy."
   independent_heldout_rules_only: "29/30 (96.7%) scenarios_heldout/heldout_v1.json via scripts/heldout_eval.py"
 integrity:
   audit: "python3 scripts/integrity_audit.py --strict-comments -> PASS (decision code, comments, docstrings, test fixtures)"
