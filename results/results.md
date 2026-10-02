@@ -170,3 +170,30 @@ argument 72.8% → 77.3%); offline text replay held at **92/100**; tests 243 →
 held-out 29/30. Deliberately **not** changed (would be benchmark-specific overfitting): the remaining
 exact-match misses are judge-forgivable wording/plurals (`mechanical keyboard(s)`) or unwinnable
 (a city that is never spoken; a mis-formatted expected id).
+
+
+## Live run — 2026-10-02 (current code, judge off)
+
+Full official 100-recording run on a real LiveKit + Deepgram + GPU box (local recovery runner with a
+worker watchdog; the dev machine's external process kills the worker, so 85/100 rooms answered and 15
+were lost to worker deaths — those count as failures here, not omitted).
+
+| metric | committed 2026-09-30 | this run (2026-10-02) |
+|---|---|---|
+| strict pass (all 100) | 28/100 | **39/100** |
+| tool-selection (turn-taken) | 80.6% | **84.9%** |
+| argument accuracy (turn-taken) | 39.7% | **56.9%** |
+| tool-selection / argument (all 100) | — | 72.2% / 48.3% |
+| turn-taken | 99/100 | 85/100 (worker deaths) |
+
+Per-responding-sample strict pass rose from 28.3% to **45.9%** (39/85). By domain (turn-taken):
+finance 90.4% tool / 76.7% arg, travel 82.1% / 36.7%, housing 66.5% / 37.2%, ecommerce 54.7% / 42.0%.
+Failure breakdown: 43 wrong-tools, 18 wrong-arguments (argument failures nearly halved).
+
+This is exact-match (judge off); the organisers' pinned gpt-4o judge is expected to be at or above it.
+Remaining losses are dominated by (a) the 15 worker-death rooms and (b) long multi-pause utterances
+where VAD genuinely ends mid-turn and the duplicate call is already logged — fixing that needs the
+semantic turn detector, which requires an inference executor this worker does not have.
+
+Run artifacts: `results/live_20261002T143553Z/` (run.log, worker logs, evaluation_report.json,
+pass_rate_report.json).
