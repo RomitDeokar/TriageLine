@@ -858,12 +858,18 @@ _FILTER_KEYS = [
     (r"\bfurnished\b", "furnished"),
 ]
 _BOOL_FILTERS = {"pets_allowed", "parking", "furnished"}
+# words that never belong to a filter key (verb phrases / pronouns that a loose "X to Y" match picks up)
+_FILTER_KEY_BAD = {"i", "you", "we", "want", "need", "please", "can", "could", "would", "should",
+                   "search", "filter", "filters", "it", "that", "this", "the", "a", "an", "be", "is",
+                   "me", "my", "your", "and", "or", "so", "then", "like", "just"}
 
 
 def extract_filters(text: str) -> List[Tuple[str, Any]]:
     """Every (filter_key, value) the user asks to set, in order, self-repair aware per key
     ("cap it at 2800 ... hmm, make the cap 3100" -> one max_price=3100)."""
-    t = text or ""
+    # Normalise spoken/compound amounts first: "set max price to eighteen hundred" -> "... 1800",
+    # otherwise the value regex only sees the first word ("eighteen").
+    t = _compound_normalize(text or "")
     low = t.lower()
     found: Dict[str, Tuple[int, Any]] = {}
     order: List[str] = []
@@ -896,13 +902,25 @@ def extract_filters(text: str) -> List[Tuple[str, Any]]:
             found[key] = (m.start(), val)         # later mention (a correction) wins
     # generic "<key> to <value>" pairs after a filter cue ("... and <key> to <value>") — B7
     if re.search(r"\bfilters?\b|\bset\b|\bupdate\b|\bchange\b", low):
-        for m in re.finditer(r"\b([a-z][a-z_\- ]{1,20}?)\s+(?:to|=|as)\s+([a-z0-9][a-z0-9_\-]*)", low):
+        for m in re.finditer(r"\b([a-z][a-z_\- ]{0,20}?)\s+(?:to|=|as)\s+([a-z0-9][a-z0-9_\-]*)", low):
             k = re.sub(r"^(?:.*\b(?:for|filter|the|set|update|change|and|my)\s+)", "", m.group(1)).strip().replace(" ", "_")
             if not k or k in STOP or k in ("filter", "search", "it", "that", "search_filter") or \
                     any(m.start() <= pos < m.end() + 1 for pos, _ in found.values()):
                 continue
+            # a filter key is a short noun phrase, never a verb phrase / pronoun sentence
+            if len(k.split("_")) > 3 or any(w in _FILTER_KEY_BAD for w in k.split("_")) or \
+                    not re.fullmatch(r"[a-z][a-z_]*", k):
+                continue
             raw = m.group(2)
-            val = True if raw in ("true", "yes", "on") else False if raw in ("false", "no", "off") else raw
+            if raw in ("true", "yes", "on"):
+                val: Any = True
+            elif raw in ("false", "no", "off"):
+                val = False
+            elif re.fullmatch(r"\d+(?:\.\d+)?", raw):
+                fv = float(raw)
+                val = int(fv) if fv.is_integer() else fv
+            else:
+                val = raw
             if k not in found:
                 order.append(k)
             found[k] = (m.start(), val)
@@ -926,7 +944,10 @@ def _clean_place(s: str) -> Optional[str]:
     s = _ADDR_STOP.sub("", norm(s or "")).strip(" .,'\"")
     s = re.sub(r"(?i)\b(?:um+|uh+|like|you know)\b", "", s)
     s = norm(s).strip(" .,")
+    s = _compound_normalize(s)                          # spoken street numbers -> digits ("five hundred Elm Rd" -> "500 Elm Rd")
     if not s or s.lower() in STOP or len(s.split()) > 7:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", s):               # "close to one" -> a number, never a place
         return None
     # a named place is a name: "the University" -> "University"; common nouns keep it ("the gym")
     return re.sub(r"^(?:the)\s+(?=[A-Z])", "", s)
@@ -1246,27 +1267,37 @@ _TEEN_WORDS = {"eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fift
                "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19}
 _MAGNITUDE_WORDS = {"hundred": 100, "thousand": 1000}
 
+_NUM_WORD_ALT = "|".join(re.escape(w) for w in sorted(
+    set(WORD_NUM) | set(_TENS_WORDS) | set(_TEEN_WORDS) | set(_MAGNITUDE_WORDS), key=len, reverse=True))
+_NUM_WORD_RUN = re.compile(r"(?i)\b(?:" + _NUM_WORD_ALT + r")(?:\s+(?:" + _NUM_WORD_ALT + r"))*\b")
+
+
 # Compound spoken amounts STT leaves as words: "two hundred", "fifteen hundred", "one thousand five hundred"
 def _compound_normalize(text: str) -> str:
     """Replace maximal runs of spoken number words with their value: "two hundred fifty" -> 250,
-    "fifteen hundred" -> 1500, "two hundred" -> 200. Single words map through WORD_NUM."""
-    out, buf = [], []
+    "fifteen hundred" -> 1500 — and canonicalise numeric tokens that carry a thousands separator or a
+    k/m suffix ("1,500" -> 1500, "2k" -> 2000). Everything else (punctuation, ordinals like "5th",
+    plain years and calendar dates) is left untouched."""
+    t = text or ""
 
-    def flush():
-        if buf:
-            v = _compound_value(buf)
-            out.append(str(v) if v is not None else " ".join(buf))
-            buf.clear()
+    def _num_token(m: "re.Match") -> str:
+        base, suffix = m.group(1), m.group(2)
+        if not suffix and "," not in base:
+            return m.group(0)                       # plain integer/decimal: leave as-is
+        v = float(base.replace(",", ""))
+        if suffix and suffix.lower() == "k":
+            v *= 1000
+        elif suffix and suffix.lower() == "m":
+            v *= 1_000_000
+        return str(int(v)) if v.is_integer() else str(v)
 
-    for w in re.findall(r"[A-Za-z]+|\d+(?:\.\d+)?", text or ""):
-        wl = w.lower()
-        if wl in WORD_NUM or wl in _TENS_WORDS or wl in _TEEN_WORDS or wl in _MAGNITUDE_WORDS:
-            buf.append(wl)
-        else:
-            flush()
-            out.append(w)
-    flush()
-    return " ".join(out)
+    t = re.sub(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)([kKmM]?)(?![\w])", _num_token, t)
+
+    def _word_run(m: "re.Match") -> str:
+        v = _compound_value(m.group(0).lower().split())
+        return str(v) if v is not None else m.group(0)
+
+    return _NUM_WORD_RUN.sub(_word_run, t)
 
 
 def _compound_value(words: List[str]) -> Optional[int]:
@@ -1297,7 +1328,13 @@ _BED_RE = re.compile(r"\b(\d+)\s*[- ]?(?:bed(?:room)?s?|br|bd)\b|\bbed(?:room)?s
 
 
 def _num(g: str, integer: bool):
-    v = float(g.replace(",", ""))
+    s = str(g).strip().lower().replace(",", "")
+    mult = 1
+    if s.endswith("k"):
+        s, mult = s[:-1], 1000
+    elif s.endswith("m"):
+        s, mult = s[:-1], 1_000_000
+    v = float(s) * mult
     if integer and not v.is_integer():
         return v                                    # keep the fraction so validation rejects it (R15)
     return int(v) if integer or v.is_integer() else v
