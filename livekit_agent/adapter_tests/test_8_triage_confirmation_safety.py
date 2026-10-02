@@ -229,6 +229,11 @@ async def _t_new_emergency_reopens():
     assert not s.brain.closed, "a new emergency must reopen the case"
 
 
+def test_emergency_with_location_proposes_simulated_escalation():
+    """A resolved emergency must create a pending escalate_emergency proposal (not just advisory)."""
+    asyncio.run(e05_negated_hazard_is_not_emergency())
+
+
 def test_emergency_guidance_comes_before_location_gathering():
     asyncio.run(_t_emergency_guidance_first())
 

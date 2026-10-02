@@ -276,14 +276,27 @@ class TriageBrainLLM(LLMProvider):
             await self._cancel_stale_actions(record.supersedes)
 
         _facts_now = dict(record.known_facts or {})
-        if (record.chosen_option == "escalate_emergency" or _facts_now.get("severity") == "emergency"):
-            # emergency guidance must be immediate -- never gated behind location gathering (E-05)
+        _is_emergency = (record.chosen_option == "escalate_emergency"
+                         or _facts_now.get("severity") == "emergency")
+        _emergency_advisory = None
+        if _is_emergency:
+            # emergency guidance must be immediate -- never gated behind location gathering (E-05).
             reason = _facts_now.get("reason", "an emergency")
-            advisory = (f"This sounds like an emergency ({reason}). I cannot contact emergency services -- "
-                        "please call your local emergency number now.")
-            if not _facts_now.get("location"):
-                advisory += " If you can, tell me where you are and I'll also log a simulated escalation."
-            return LLMResponse(text=advisory, intent="emergency", needs_more_info=not record.resolved)
+            _emergency_advisory = (
+                f"This sounds like an emergency ({reason}). I cannot contact emergency services -- "
+                "please call your local emergency number now."
+            )
+            if not record.resolved:
+                # not enough facts to propose anything yet: deliver the advisory and ask for location.
+                return LLMResponse(
+                    text=_emergency_advisory + " If you can, tell me where you are and I'll also log a "
+                                               "simulated escalation.",
+                    intent="emergency",
+                    needs_more_info=True,
+                )
+            # RESOLVED emergency: do NOT return here (audit E-03). Fall through so the simulated
+            # escalation is actually proposed and can be confirmed; _confirmation_prompt carries the
+            # advisory for escalate_emergency, and we prepend it for any other action below.
 
         if record.chosen_option == "close_case":
             # closing the case must also resolve any pending action — an old tow left in
@@ -326,8 +339,11 @@ class TriageBrainLLM(LLMProvider):
         self.pending_action_id = action_record.action_id
         self.pending_decision_id = record.decision_id
 
+        prompt = _confirmation_prompt(record)
+        if _emergency_advisory and record.chosen_option != "escalate_emergency":
+            prompt = _emergency_advisory + " " + prompt
         return LLMResponse(
-            text=_confirmation_prompt(record),
+            text=prompt,
             intent=record.intent,
             action_proposal=ActionProposal(action_type=record.chosen_option, details=dict(record.known_facts)),
         )

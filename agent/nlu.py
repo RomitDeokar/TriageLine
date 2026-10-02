@@ -1292,6 +1292,9 @@ def _compound_normalize(text: str) -> str:
         return str(int(v)) if v.is_integer() else str(v)
 
     t = re.sub(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)([kKmM]?)(?![\w])", _num_token, t)
+    # "a hundred" / "a thousand" -> the magnitude word alone (otherwise "a" blocks BUDGET_RE:
+    # "under a hundred dollars" failed to bind max_price because of the stray article).
+    t = re.sub(r"(?i)\b(?:a|an)\s+(?=(?:hundred|thousand|million)\b)", "", t)
 
     def _word_run(m: "re.Match") -> str:
         v = _compound_value(m.group(0).lower().split())

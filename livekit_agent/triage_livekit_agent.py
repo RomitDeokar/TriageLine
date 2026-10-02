@@ -266,7 +266,10 @@ async def entrypoint(ctx: agents.JobContext):
     torn_down = False
 
     async def _teardown(*_args, **_kwargs) -> None:
-        nonlocal torn_down
+        # flush_handle/flush_task are assigned below, so without declaring them here Python treats
+        # them as local and the first read raises UnboundLocalError before any pending action is
+        # resolved (audit E-01) — cleanup silently never ran on disconnect.
+        nonlocal torn_down, flush_handle, flush_task
         if torn_down:
             return
         torn_down = True
