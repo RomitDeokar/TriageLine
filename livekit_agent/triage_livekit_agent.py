@@ -278,9 +278,10 @@ async def entrypoint(ctx: agents.JobContext):
         if flush_handle is not None:
             flush_handle.cancel()
         flush_handle = None
-        if flush_task is not None and not flush_task.done():
-            flush_task.cancel()                        # a queued flush must not process after teardown
-        flush_task = None
+        task, flush_task = flush_task, None
+        if task is not None and not task.done():
+            task.cancel()                        # a queued flush must not process after teardown
+            await asyncio.gather(task, return_exceptions=True)  # let it unwind before resolving actions
         final_segments.clear()
         resolved = await triage.teardown(reason="caller_disconnected")
         if resolved:
