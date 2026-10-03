@@ -1476,21 +1476,28 @@ class ParticipantAgent:
 
     TYPED_ROLE = ("city", "destination", "location", "origin", "date")
 
-    def _typed_field(self, name: str, spec: Dict[str, Any]) -> bool:
-        return bool(spec.get("enum") or spec.get("type") in ("number", "integer", "boolean")
-                    or name.endswith("_id") or any(k in name.lower() for k in self.TYPED_ROLE))
+    def _typed_field(self, name: str, spec: Dict[str, Any], repair: bool = False) -> bool:
+        if (spec.get("enum") or spec.get("type") in ("number", "integer", "boolean")
+                or name.endswith("_id") or any(k in name.lower() for k in self.TYPED_ROLE)):
+            return True
+        # a free-text field (e.g. search query, passenger name) is revisable ONLY on an explicit
+        # correction ("actually a lamp instead"), never on an ordinary new turn — otherwise a fresh
+        # request would be mistaken for a revision of the previous one.
+        return bool(repair and spec.get("type", "string") == "string"
+                    and name.lower() in ("query", "passenger_name"))
 
     async def revise_schema_fields(self, text: str) -> bool:
         """Typed corrections built from the running tool's own schema (R09): enums, numbers, booleans,
         ids, places. Only calls whose arguments actually change are cancelled and re-issued."""
         hit = False
+        repair = bool(nlu.REPAIR_MARKERS.search(text))
         if not self.inflight and self.last_done and self.last_done["api"] not in FLIGHT_FAMILY:
             ld = self.last_done
             props = (self.tools.get(ld["api"], {}).get("args") or {})
             found, _ = nlu.build_args({"args": {k: {**v, "required": False} for k, v in props.items()}}, text, {})
-            diff = {k: v for k, v in found.items() if self._typed_field(k, props.get(k, {}))
+            diff = {k: v for k, v in found.items() if self._typed_field(k, props.get(k, {}), repair=repair)
                     and str(v).casefold() != str(ld["args"].get(k, "")).casefold()
-                    and (k in ld["args"] or nlu.REPAIR_MARKERS.search(text))}
+                    and (k in ld["args"] or repair)}
             if diff:
                 new = {**ld["args"], **diff}
                 self.last_done = None
@@ -1504,8 +1511,11 @@ class ParticipantAgent:
                 continue                                   # the flight family has its dedicated revise path
             props = (self.tools.get(c["api"], {}).get("args") or {})
             found, _ = nlu.build_args({"args": {k: {**v, "required": False} for k, v in props.items()}}, text, {})
-            diff = {k: v for k, v in found.items() if k in c["args"] and self._typed_field(k, props.get(k, {}))
-                    and str(v).casefold() != str(c["args"][k]).casefold()}
+            # on an explicit correction, a newly introduced optional field (e.g. a late max_price)
+            # is a valid patch even though it was absent from the first call
+            diff = {k: v for k, v in found.items() if (k in c["args"] or repair)
+                    and self._typed_field(k, props.get(k, {}), repair=repair)
+                    and str(v).casefold() != str(c["args"].get(k, "")).casefold()}
             if not diff:
                 continue
             hit = True

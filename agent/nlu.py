@@ -193,11 +193,48 @@ _QUERY_BAD = set("""something anything one thing things it that this them what s
 new good nice few some any options option place places gift""".split())
 
 
+_QUERY_REPAIR = re.compile(r"(?i)\b(?:actually|instead|no wait|wait|i mean|i meant|scratch that|rather|please)\b")
+_QUERY_LEAD = re.compile(r"(?i)^(?:a|an|the|some|any|new|a new|pair of|a pair of|nice|good|cheap)\s+")
+# A "make it X" / "change it to X" correction targets a slot (place/date/mode), NOT a product query.
+_QUERY_SLOT_CORRECTION = re.compile(r"(?i)\b(?:make it|make that|change (?:it|that) to|set (?:it|that) to)\b")
+# A tail that starts with a budget/relational cue is an argument, not a query.
+_QUERY_TAIL_LEAD_BAD = {"under", "below", "above", "over", "less", "more", "at", "for", "with",
+                        "in", "on", "by", "from", "to", "about", "around", "between"}
+
+
+def _clean_query_phrase(s: str) -> Optional[str]:
+    """A bare elliptical-correction phrase ("a lamp instead") -> "lamp"; None if it carries no
+    content or is really a slot/argument correction ("make it Seattle", "under 180")."""
+    s0 = strip_fillers(s or "")
+    # a contrast/negation or a comma means the tail is not a bare noun phrase ("not a laptop, a
+    # tablet" must be resolved by the cue scan, not returned verbatim)
+    if _QUERY_SLOT_CORRECTION.search(s0) or "," in s0 \
+            or re.search(r"(?i)\b(?:not|no|never|without|but)\b", s0):
+        return None
+    s = _QUERY_REPAIR.sub(" ", s0)
+    s = _QUERY_LEAD.sub("", s.strip())
+    s = s.strip(" ,.")
+    words = s.split()
+    if not words or len(words) > 4 or words[0].lower() in _QUERY_TAIL_LEAD_BAD \
+            or all(w.lower() in _QUERY_BAD | STOP for w in words):
+        return None
+    return s
+
+
 def extract_query(text: str) -> Optional[str]:
     """Free-text search term = the noun phrase after the search verb, from the clause the user settled
     on (after the last correction), with disfluencies removed (A-02). Falls back to None so a search
     is never issued with the whole rambling utterance as its query."""
-    for seg in (_repaired_tail(text), text):
+    tail = _repaired_tail(text)
+    # An elliptical correction ("search for a desk ... actually a lamp instead") has no search verb
+    # in the tail, so the cue-based scan below would fall back to the pre-correction text and keep the
+    # old query. When a repair marker is present, the tail itself is the new value.
+    if tail and tail.strip() and tail.strip() != (text or "").strip() \
+            and not _QUERY_SLOT_CORRECTION.search(text or ""):
+        cand = _clean_query_phrase(tail)
+        if cand:
+            return cand
+    for seg in (tail, text):
         clean = strip_fillers(seg)
         cands = []
         for m in _QUERY_CUE.finditer(clean):
@@ -747,9 +784,16 @@ def _currency_mentions(text: str) -> List[Tuple[int, int, str]]:
 
 
 def _repaired_tail(text: str) -> str:
-    """The part of the utterance after the last self-repair marker (the version the user settled on)."""
-    last = max((m.end() for m in REPAIR_MARKERS.finditer(text or "")), default=-1)
-    return text[last:] if last >= 0 else text
+    """The part of the utterance after the last self-repair marker that actually introduces content
+    (the version the user settled on). A trailing filler marker with nothing after it ("... a lamp
+    instead") is not a repair boundary, so the earlier marker ("actually") must win."""
+    t = text or ""
+    best = -1
+    for m in REPAIR_MARKERS.finditer(t):
+        tail = t[m.end():]
+        if re.search(r"[A-Za-z0-9]", tail):
+            best = m.end()
+    return t[best:] if best >= 0 else t
 
 
 def _currency_pair(text: str) -> Tuple[Optional[str], Optional[str]]:
@@ -1018,6 +1062,12 @@ def _arg_for(name: str, spec: Dict[str, Any], text: str, ctx: Dict[str, Any]) ->
     special = _special_string_arg(lname, spec, text)
     if special is not None:
         return special
+    # An *_address field must be a real place/address. It must NEVER fall through to the generic
+    # city/destination role match below, which would leak a city from context or the utterance into
+    # an address ("destination_address"="Portland" on a commute). Resolve it only from the commute
+    # relation; if nothing is found, stay missing so result-binding can fill it.
+    if "address" in lname:
+        return extract_address(text, origin=("origin" in lname or lname.startswith("from")))
     # strings: match by semantic role of the arg name
     if "origin" in lname or lname.startswith("from") or "departure_city" in lname:
         return ctx.get("origin") or extract_origin(text)

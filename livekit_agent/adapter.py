@@ -115,6 +115,7 @@ class TriageAdapter:
         self.max_settle_s = max(self.settle_s, float(max_settle_s if max_settle_s is not None else self.settle_s * 2))
         self._pending_final: list = []
         self._last_route_at: float = 0.0
+        self._last_route_text: str = ""      # the previous committed turn, for late-fragment merging
         self._closed = False
         self._settle_task: Optional[asyncio.Task] = None
         self._interrupt_speech = interrupt_speech
@@ -147,17 +148,26 @@ class TriageAdapter:
         for t in pending:
             t.cancel()
         self._tool_tasks.clear()
-        if pending:   # await them so no "Task was destroyed but it is pending" (B14)
-            await asyncio.gather(*pending, return_exceptions=True)
+        # Await cancelled work, but BOUND the wait: a task that ignores cancellation (a blocked
+        # asyncio.to_thread, a wedged executor) must never hang teardown. A hung teardown is what
+        # makes the LiveKit job miss its shutdown ack and get the whole worker killed ("job did not
+        # ack shutdown in time"), which is what dropped rooms in the full live run.
+        if pending:
+            try:
+                await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=5.0)
+            except asyncio.TimeoutError:
+                log.warning("stop(): %d task(s) did not finish within 5s; continuing teardown", len(pending))
         for t in (self._pump_task, self._run_task):
             if t:
                 t.cancel()
         for t in (self._pump_task, self._run_task):
             if t:
                 try:
-                    await t
+                    await asyncio.wait_for(t, timeout=5.0)
                 except asyncio.CancelledError:
                     pass
+                except asyncio.TimeoutError:
+                    log.warning("stop(): pump/run task did not finish within 5s; continuing teardown")
 
     @property
     def epoch(self) -> int:
@@ -341,14 +351,19 @@ class TriageAdapter:
         if self.busy():
             await self.on_barge_in(text)
             return
-        # a late fragment that only adds arguments ("on May 12", "under 200") amends the call
-        # just made instead of starting a second request (audit: duplicate search_flights calls)
+        # A late fragment that only adds arguments ("on May 12", "under 200") OR carries a correction
+        # marker ("actually a lamp", "no wait, savings") amends the call just made instead of starting
+        # a second request. The PREVIOUS turn text is merged in so the re-plan sees the whole request
+        # and can build the complete/corrected arguments — otherwise a correction fragment alone is
+        # parsed in isolation and the pre-correction value is kept (audit: duplicate + stale-value calls).
         if (self._last_route_at and (time.time() - self._last_route_at) < 8.0
-                and _is_arg_continuation(text)):
-            log.info("late arg continuation, amending instead of re-issuing: %r", text)
-            await self.on_barge_in(text)
+                and (_is_arg_continuation(text) or _CORRECTION_CUE.search(text))):
+            merged = ((self._last_route_text + " ") if self._last_route_text else "") + text
+            log.info("late continuation/correction, merging instead of re-issuing: %r", merged)
+            await self.on_barge_in(merged)
             return
         self._last_route_at = time.time()
+        self._last_route_text = text
         await self.in_q.put({"event_type": "user_speech_chunk",
                               "payload": {"text": text, "end_of_turn": True}})
 
