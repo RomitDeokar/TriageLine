@@ -1319,7 +1319,7 @@ _MAGNITUDE_WORDS = {"hundred": 100, "thousand": 1000}
 
 _NUM_WORD_ALT = "|".join(re.escape(w) for w in sorted(
     set(WORD_NUM) | set(_TENS_WORDS) | set(_TEEN_WORDS) | set(_MAGNITUDE_WORDS), key=len, reverse=True))
-_NUM_WORD_RUN = re.compile(r"(?i)\b(?:" + _NUM_WORD_ALT + r")(?:\s+(?:" + _NUM_WORD_ALT + r"))*\b")
+_NUM_WORD_RUN = re.compile(r"(?i)\b(?:" + _NUM_WORD_ALT + r")(?:\s+(?:and\s+)?(?:" + _NUM_WORD_ALT + r"))*\b")
 
 
 # Compound spoken amounts STT leaves as words: "two hundred", "fifteen hundred", "one thousand five hundred"
@@ -1342,6 +1342,9 @@ def _compound_normalize(text: str) -> str:
         return str(int(v)) if v.is_integer() else str(v)
 
     t = re.sub(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)([kKmM]?)(?![\w])", _num_token, t)
+    # hyphenated cardinals are one number ("twenty-five" -> 25), not a range
+    t = re.sub(r"(?i)\b(twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety)"
+               r"-(one|two|three|four|five|six|seven|eight|nine)\b", r"\1 \2", t)
     # "a hundred" / "a thousand" -> the magnitude word alone (otherwise "a" blocks BUDGET_RE:
     # "under a hundred dollars" failed to bind max_price because of the stray article).
     t = re.sub(r"(?i)\b(?:a|an)\s+(?=(?:hundred|thousand|million)\b)", "", t)
@@ -1354,19 +1357,23 @@ def _compound_normalize(text: str) -> str:
 
 
 def _compound_value(words: List[str]) -> Optional[int]:
+    """Cardinal value of a spoken-number run. Scales correctly ("one hundred thousand" -> 100000,
+    not 1100) and ignores the connector "and" ("one hundred and five" -> 105)."""
     total, cur = 0, 0
     for w in words:
         w = w.lower().strip(".,")
+        if w in ("and",):
+            continue
         if w in WORD_NUM:
             cur += WORD_NUM[w]
         elif w in _TENS_WORDS:
             cur += _TENS_WORDS[w]
         elif w in _TEEN_WORDS:
             cur += _TEEN_WORDS[w]
-        elif w in _MAGNITUDE_WORDS:
-            if cur == 0:
-                cur = 1
-            total += cur * _MAGNITUDE_WORDS[w]
+        elif w == "hundred":
+            cur = (cur or 1) * 100
+        elif w in ("thousand", "million"):
+            total += (cur or 1) * (1000 if w == "thousand" else 1_000_000)
             cur = 0
     return (total + cur) or None
 

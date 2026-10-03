@@ -46,3 +46,16 @@ def test_extract_filters_normalizes_compound_value():
 def test_extract_filters_rejects_verb_phrase_key():
     # a loose "X to Y" match must not turn a sentence into a filter key
     assert nlu.extract_filters("yeah i want to update it to something") == []
+
+
+def test_compound_normalize_large_scales_and_and():
+    assert nlu._compound_normalize("one hundred thousand") == "100000"
+    assert nlu._compound_normalize("one hundred and five") == "105"
+    assert nlu._compound_normalize("one thousand five hundred") == "1500"
+    assert nlu._compound_normalize("twenty-five dollars") == "25 dollars"
+    assert nlu.extract_number("under one hundred and fifty dollars", "max_price", {"type": "number"}) == 150
+
+
+def test_spelled_digit_id_is_not_summed():
+    # ids go through normalize_asr's digit-join, not the cardinal parser
+    assert nlu.extract_id(nlu.normalize_asr("order id is one two three"), "order_id") == "123"

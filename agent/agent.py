@@ -102,6 +102,26 @@ def _find_key(obj: Any, keys: List[str]) -> Any:
     return None
 
 
+def _find_all(obj: Any, keys: List[str]) -> List[Any]:
+    """Every scalar value for any of `keys` in a (nested) tool result — used to evaluate an
+    'all/any' condition over a whole product/listing list, not just the first entity."""
+    out: List[Any] = []
+
+    def walk(o: Any):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in keys and not isinstance(v, (dict, list)):
+                    out.append(v)
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(obj)
+    return out
+
+
 def _depart(f: Dict[str, Any]) -> str:
     """Departure wording from whatever keys the backend returned (depart/time/date); '' if none (B-12)."""
     v = f.get("depart") or f.get("departure_time") or f.get("time") or f.get("date")
@@ -865,23 +885,44 @@ class ParticipantAgent:
                       cond or "")
         if not m or not self.results:
             return None
+        op = m.group(1).lower()
+        lim = float(m.group(2))
+        low = (cond or "").lower()
+        quant = "all" if re.search(r"\b(?:all|every|everything|each)\b", low) else \
+            "any" if re.search(r"\b(?:any|some|at least one)\b", low) else "single"
         # Prefer the entity's own price/rate over a later aggregate (a cart_total / fees total from
         # a subsequent state change): "if the item is over 50" must test the item's price, not the
         # running cart total. Fall back to the newest result if no entity price is present.
-        val = None
+        # An "all/any" condition evaluates the WHOLE list of entities, not just the first price.
+        vals: List[Any] = []
         for _api, res in reversed(self.results[-4:]):
-            val = _find_key(res, ["price", "cost", "rate", "amount"])
-            if val is not None:
+            vals = _find_all(res, ["price", "cost", "rate", "amount"])
+            if vals:
                 break
-        if val is None:
-            val = _find_key(self.results[-1][1], ["total", "cart_total", "duration_minutes", "minutes"])
-        try:
-            val = float(val)
-        except (TypeError, ValueError):
+        if not vals:
+            one = _find_key(self.results[-1][1], ["total", "cart_total", "duration_minutes", "minutes"])
+            vals = [one] if one is not None else []
+        nums = []
+        for v in vals:
+            try:
+                nums.append(float(v))
+            except (TypeError, ValueError):
+                pass
+        if not nums:
             return None
-        lim = float(m.group(2))
-        return val < lim if m.group(1).lower() in ("under", "below", "less than", "cheaper than") else \
-            val <= lim if m.group(1).lower() == "at most" else val >= lim if m.group(1).lower() == "at least" else val > lim
+        if op in ("under", "below", "less than", "cheaper than"):
+            checks = [a < lim for a in nums]
+        elif op == "at most":
+            checks = [a <= lim for a in nums]
+        elif op == "at least":
+            checks = [a >= lim for a in nums]
+        else:
+            checks = [a > lim for a in nums]
+        if quant == "all":
+            return all(checks)
+        if quant == "any":
+            return any(checks)
+        return checks[0]
 
     async def _drain_compound(self):
         if self.llm_queue:
