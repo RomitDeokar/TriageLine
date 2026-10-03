@@ -197,3 +197,23 @@ semantic turn detector, which requires an inference executor this worker does no
 
 Run artifacts: `results/live_20261002T143553Z/` (run.log, worker logs, evaluation_report.json,
 pass_rate_report.json).
+
+
+## Live run — 2026-10-03 (2 workers + OTel off, judge off)
+
+Second full official 100-recording run (2 workers registered so a random worker death does not stall
+rooms; OTel exporter disabled). Same pinned config.
+
+| metric | 2026-09-30 | 2026-10-02 | **2026-10-03** |
+|---|---|---|---|
+| strict pass (all 100) | 28/100 | 39/100 | **42/100** |
+| tool-selection (turn-taken) | 80.6% | 84.9% | **87.7%** |
+| argument accuracy (turn-taken) | 39.7% | 56.9% | **58.8%** |
+| tool-selection / argument (all 100) | — | 72.2% / 48.3% | 74.6% / 50.0% |
+| turn-taken | 99/100 | 85/100 | 85/100 |
+
+Failure split: 37 wrong-tools, 21 wrong-arguments (down from 43/29 on 2026-09-30). The 15 unanswered
+rooms are **different each run** — they are rooms whose audio was streaming while the dev machine's
+process-killer had all workers down (restart takes ~15 s), not a code fault. On the organisers' stable
+machine turn-taken should be ~99-100, so the strict pass there should be above the 42/85 = 49.4%
+per-responding-sample figure. Artifacts: `results/live_20261002T224815Z/`.
