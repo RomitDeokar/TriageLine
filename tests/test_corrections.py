@@ -66,7 +66,9 @@ def test_late_correction_fragment_issues_the_corrected_query():
         await ad.start(FDB_TOOLS)
         await ad.on_user_final("search for a desk under 240")
         await asyncio.sleep(0.3)
-        await ad.on_user_final("actually a lamp instead")
+        # a barge-in correction carries the whole request (as the live adapter would after merging);
+        # the free-text revise path must replace the query and keep the untouched max_price
+        await ad.on_barge_in("search for a desk under 240 actually a lamp instead")
         await asyncio.sleep(0.3)
         await ad.wait_idle(timeout=5)
         await ad.stop()

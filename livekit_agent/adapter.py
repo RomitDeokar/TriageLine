@@ -115,7 +115,6 @@ class TriageAdapter:
         self.max_settle_s = max(self.settle_s, float(max_settle_s if max_settle_s is not None else self.settle_s * 2))
         self._pending_final: list = []
         self._last_route_at: float = 0.0
-        self._last_route_text: str = ""      # the previous committed turn, for late-fragment merging
         self._closed = False
         self._settle_task: Optional[asyncio.Task] = None
         self._interrupt_speech = interrupt_speech
@@ -351,19 +350,14 @@ class TriageAdapter:
         if self.busy():
             await self.on_barge_in(text)
             return
-        # A late fragment that only adds arguments ("on May 12", "under 200") OR carries a correction
-        # marker ("actually a lamp", "no wait, savings") amends the call just made instead of starting
-        # a second request. The PREVIOUS turn text is merged in so the re-plan sees the whole request
-        # and can build the complete/corrected arguments — otherwise a correction fragment alone is
-        # parsed in isolation and the pre-correction value is kept (audit: duplicate + stale-value calls).
+        # a late fragment that only adds arguments ("on May 12", "under 200") amends the call
+        # just made instead of starting a second request (audit: duplicate search_flights calls)
         if (self._last_route_at and (time.time() - self._last_route_at) < 8.0
-                and (_is_arg_continuation(text) or _CORRECTION_CUE.search(text))):
-            merged = ((self._last_route_text + " ") if self._last_route_text else "") + text
-            log.info("late continuation/correction, merging instead of re-issuing: %r", merged)
-            await self.on_barge_in(merged)
+                and _is_arg_continuation(text)):
+            log.info("late arg continuation, amending instead of re-issuing: %r", text)
+            await self.on_barge_in(text)
             return
         self._last_route_at = time.time()
-        self._last_route_text = text
         await self.in_q.put({"event_type": "user_speech_chunk",
                               "payload": {"text": text, "end_of_turn": True}})
 
