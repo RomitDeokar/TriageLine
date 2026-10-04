@@ -217,3 +217,24 @@ rooms are **different each run** — they are rooms whose audio was streaming wh
 process-killer had all workers down (restart takes ~15 s), not a code fault. On the organisers' stable
 machine turn-taken should be ~99-100, so the strict pass there should be above the 42/85 = 49.4%
 per-responding-sample figure. Artifacts: `results/live_20261002T224815Z/`.
+
+
+## Live run — 2026-10-03 #2 (clean HEAD fed015c, judge off)
+
+Full official 100-recording run, no config overrides, 2 workers. 84/100 rooms answered (16 lost to the
+dev machine's worker-killer). Artifacts: `results/live_20261003T112137Z/`.
+
+| metric | baseline | best strict | **this run (HEAD)** |
+|---|---|---|---|
+| strict pass | 28/100 | 42/100 | **41/100** |
+| tool-selection (turn-taken) | 80.6% | 87.7% | **88.5% (best)** |
+| argument accuracy (turn-taken) | 39.7% | 58.8% | **60.1% (best)** |
+| turn-taken | 99 | 85 | 84 |
+
+By domain (turn-taken): finance 90.4% tool / 76.7% arg, travel 74.7% / 33.3%, housing 69.9% / 42.3%,
+ecommerce 64.1% / 47.1%. Failure split: 39 wrong-tools, 20 wrong-arguments.
+
+Strict pass is statistically tied with the best (41 vs 42 = one room) while tool-selection and argument
+accuracy are the highest of any run. The residual strict-pass gap is (a) the ~16 rooms with no agent
+response and (b) ~14 scenarios that log a duplicate call from a VAD end-of-turn split — both require a
+stable machine / working semantic turn detector, not further regex work.
