@@ -112,7 +112,20 @@ for pass in $(seq 1 40); do
     echo "[pass $pass] worker failed to start; retrying" | tee -a "$LOG"
     continue
   fi
-  ( cd "$V3" && "$PY" run_tool_benchmark_all_released.py --provider triageline ) >>"$LOG" 2>&1
+  ( cd "$V3" && "$PY" run_tool_benchmark_all_released.py --provider triageline ) >>"$LOG" 2>&1 &
+  RPID=$!
+  # Abort this pass the moment OUR worker dies, so the next pass restarts a fresh worker
+  # immediately instead of spending an hour recording empty rooms behind a dead worker.
+  while kill -0 "$RPID" 2>/dev/null; do
+    ALIVE=$(powershell -NoProfile -Command "if ($WID -and (Get-Process -Id $WID -ErrorAction SilentlyContinue)) { 1 } else { 0 }" 2>/dev/null | tr -d '\r\n')
+    if [ "${ALIVE:-0}" -lt 1 ]; then
+      echo "[pass $pass] worker died mid-pass -> restarting worker" | tee -a "$LOG"
+      powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { \$_.CommandLine -match 'run_tool_benchmark' } | ForEach-Object { try{ Stop-Process -Id \$_.ProcessId -Force }catch{} }" >/dev/null 2>&1
+      break
+    fi
+    sleep 3
+  done
+  wait "$RPID" 2>/dev/null
   echo "[pass $pass] inference done $(date -u +%T)" | tee -a "$LOG"
 done
 

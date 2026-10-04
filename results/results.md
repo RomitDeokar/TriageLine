@@ -1,5 +1,20 @@
 # FDB-v3 results — TriageLine
 
+## Live run — 2026-10-04 (current best, judge off)
+
+`results/live_20261004T130647Z/` — official FDB-v3 runner + evaluators, pinned config, planner OFF,
+semantic multilingual turn detector **active** (fix: the plugin registers its inference runner at import,
+which must happen on the main thread — see `livekit_agent/cascaded_agent.py`).
+
+| strict pass | turn-take | tool-selection | argument acc | avg latency |
+|---|---|---|---|---|
+| **45/100** | 99/100 | 86.4% | 55.2% | 5.01 s |
+
+Highest live score recorded (previous best 42/100, committed artifact 28/100). The single non-responding
+room is the deterministic outlier `housing_14_61517db6` (VAD never triggers), counted as a failure.
+Exact match (judge off) is a harsh lower bound; the organisers re-run with their pinned gpt-4o judge.
+
+
 Generated: 2026-09-30T18:24:25+00:00
 
 Run directory: `results\20260930T182148Z`  

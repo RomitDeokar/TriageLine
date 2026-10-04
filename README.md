@@ -132,7 +132,7 @@ hit rate limits, so prefer Deepgram ($200 signup credit) for the scored run.
 
 | Mode | Strict pass | Notes |
 |---|---|---|
-| **Live LiveKit, exact match, judge off** (latest clean HEAD, 84/100 turn-taken) | **41/100** | best **42/100** (2026-10-03); tool-sel 88.5%, arg-acc 60.1%, 48.8% per responding sample; exact match is a harsh lower bound. Earlier committed artifact `results/live_20260930T200524Z/` was 28/100 at 99/100 turn-taken |
+| **Live LiveKit, exact match, judge off** (2026-10-04, semantic turn detector active, 99/100 turn-taken) | **45/100** | tool-sel 86.4%, arg-acc 55.2%, 45.5% per responding sample; exact match is a harsh lower bound. Artifacts: `results/live_20261004T130647Z/`. Earlier committed artifact `results/live_20260930T200524Z/` was 28/100 |
 | **Live LiveKit, judged** (what is scored) | **organisers re-run** | no OpenAI key is provided to teams (confirmed by the organisers); their common re-run supplies the pinned judge |
 | Offline text replay (official transcripts → adapter → official evaluator, judge off) | **92/100** | diagnostic upper bound; no audio, no STT |
 | Practice kit (9 public scenarios, local Whisper ASR, offline by default) | **87/100** | `run_local.py --all`; set `TRIAGELINE_LOCAL_USE_ENV=1` only if you want the live planner |

@@ -86,6 +86,18 @@ from mock_apis import MockAPIRegistry
 
 log = logging.getLogger("triageline.cascaded_agent")
 
+# Eagerly register the semantic end-of-turn inference runner on THIS (main) thread. The plugin calls
+# InferenceRunner.register_runner() at *import* time and refuses registration from a job thread, so
+# importing it lazily inside the job entrypoint raised "InferenceRunner must be registered on the main
+# thread" and silently degraded every live run to VAD-only endpointing. Importing here (module scope,
+# before agents.cli.run_app starts the worker) registers it once. The model itself is still built per
+# job in build_turn_handling() because construction needs a live job context.
+if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1" and getattr(sys.modules.get("livekit"), "__path__", None):
+    try:
+        import livekit.plugins.turn_detector.multilingual as _eou_plugin  # noqa: F401
+    except Exception as _eager_e:  # noqa: BLE001 - plugin optional; build_turn_handling() guards the live path
+        log.warning("semantic turn detector plugin unavailable at import: %s", _eager_e)
+
 MODE = os.environ.get("TRIAGELINE_MODE", "benchmark").strip().lower()
 if MODE not in ("benchmark", "assistant"):
     raise SystemExit("TRIAGELINE_MODE must be benchmark or assistant")
@@ -98,6 +110,10 @@ TOOL_LOG = os.environ.get("TRIAGELINE_TOOL_LOG", "/tmp/agent_tool_calls.log")
 _default_settle = "1.0" if MODE == "benchmark" else "0.9"
 SETTLE_S = float(os.environ.get("TRIAGELINE_SETTLE_S", _default_settle))
 MAX_SETTLE_S = float(os.environ.get("TRIAGELINE_MAX_SETTLE_S", "2.0"))
+# Used only when the semantic EOU model is active (it decides turn boundaries, so the gate that
+# merges endpointer splits can be short => less dead air). Falls back to the values above otherwise.
+SETTLE_S_DETECTOR = float(os.environ.get("TRIAGELINE_SETTLE_DETECTOR_S", "0.6"))
+MAX_SETTLE_S_DETECTOR = float(os.environ.get("TRIAGELINE_MAX_SETTLE_DETECTOR_S", "1.6"))
 # FDB-v3 template never asks clarifying questions; the scorer checks expected args only (C4).
 # Assistant mode asks and confirms instead.
 os.environ.setdefault("TRIAGELINE_BENCHMARK_POLICY", "1" if MODE == "benchmark" else "0")
@@ -105,6 +121,8 @@ BACKCHANNEL = os.environ.get("TRIAGELINE_BACKCHANNEL", "1") == "1"
 # Only backchannel on turns long enough to need processing time (guide penalises excessive fillers).
 BACKCHANNEL_MIN_WORDS = int(os.environ.get("TRIAGELINE_BACKCHANNEL_MIN_WORDS", "3"))
 AGENT_NAME = os.environ.get("TRIAGELINE_AGENT_NAME", "").strip()
+# Set true by build_turn_handling() when the semantic EOU model actually loads for a job (telemetry).
+TURN_DETECTOR_ACTIVE = False
 
 
 def should_backchannel(transcript: str, busy: bool, already: bool) -> bool:
@@ -223,16 +241,34 @@ class CascadedVoiceAgent(Agent):
 def build_turn_handling() -> dict:
     """livekit-agents 1.8 TurnHandlingOptions (B16: replaces deprecated min/max_endpointing_delay).
     Uses the semantic end-of-turn model when livekit-plugins-turn-detector is installed (C2)."""
-    th: dict = {"endpointing": {"min_delay": 0.35,
-                                "max_delay": float(os.environ.get("TRIAGELINE_EOT_MAX_S", "1.2"))}}
+    global TURN_DETECTOR_ACTIVE
+    detector = None
     if os.environ.get("TRIAGELINE_TURN_DETECTOR", "1") == "1":
         try:
             from livekit_agent.speech_providers import _allow_plugin_registration_in_subprocess
             _allow_plugin_registration_in_subprocess()
+            # The plugin was already imported (and its inference runner registered) at module scope on
+            # the main thread; this import is a no-op unless that failed. Construction needs a live job
+            # context, which is why it happens here rather than at import time.
             from livekit.plugins.turn_detector.multilingual import MultilingualModel
-            th["turn_detection"] = MultilingualModel()
+            detector = MultilingualModel()
+            TURN_DETECTOR_ACTIVE = True
+            log.info("semantic turn detector ACTIVE (multilingual EOU model)")
         except Exception as e:  # noqa: BLE001 - plugin optional; VAD endpointing + commit gate still apply
-            log.info("semantic turn detector unavailable (%s); using VAD endpointing", e)
+            detector = None
+            log.warning("semantic turn detector UNAVAILABLE (%s); using VAD endpointing", e)
+    if detector is not None:
+        # The semantic model decides end-of-turn, so the VAD endpointer only has to close a segment
+        # quickly (shorter delay => less dead air). Env-overridable for A/B replay.
+        min_delay = float(os.environ.get("TRIAGELINE_EOT_MIN_S", "0.25"))
+        max_delay = float(os.environ.get("TRIAGELINE_EOT_MAX_S", "0.9"))
+    else:
+        # VAD-only endpointing: keep the conservative grace that merges pause-filled turns.
+        min_delay = float(os.environ.get("TRIAGELINE_EOT_MIN_S_FALLBACK", "0.35"))
+        max_delay = float(os.environ.get("TRIAGELINE_EOT_MAX_S_FALLBACK", "1.2"))
+    th: dict = {"endpointing": {"min_delay": min_delay, "max_delay": max_delay}}
+    if detector is not None:
+        th["turn_detection"] = detector
     return th
 
 
@@ -329,8 +365,10 @@ async def entrypoint(ctx: agents.JobContext):
         except RuntimeError:  # nothing playing / session not running yet
             pass
 
+    _settle, _max_settle = ((SETTLE_S_DETECTOR, MAX_SETTLE_S_DETECTOR) if TURN_DETECTOR_ACTIVE
+                            else (SETTLE_S, MAX_SETTLE_S))
     adapter = TriageAdapter(tool_executor=tool_executor, tool_canceller=tool_canceller, speak=speak,
-                            settle_s=SETTLE_S, max_settle_s=MAX_SETTLE_S, interrupt_speech=interrupt_speech)
+                            settle_s=_settle, max_settle_s=_max_settle, interrupt_speech=interrupt_speech)
     await adapter.start(FDB_TOOLS)
 
     # per-turn backchannel state: one "Mm-hm." per substantive user turn, never counted as the response
