@@ -10,11 +10,11 @@ worker_mode: "TRIAGELINE_MODE=benchmark (pinned by run_fdb_v3.sh)"
 scored_configuration:                              # exactly what run_fdb_v3.sh pins (also written to results/<stamp>/run_config.json)
   llm_planner: "OFF (TRIAGELINE_LLM_PLANNER=0). Rules-only ParticipantAgent: deterministic given the transcript."
   llm_mode: "fallback (rules first)"
-  vad: "Silero + livekit-plugins-turn-detector (weights fetched by `python -m livekit.agents download-files`)"
+  vad: "Silero VAD (local), min_speech 0.05 / min_silence 0.55. The semantic livekit-plugins-turn-detector loads only when its weights and an inference executor are available; otherwise VAD endpointing is used (this worker has no inference executor)."
   stt: "auto: Deepgram nova-3 (streaming) if DEEPGRAM_API_KEY, else Gemini gemini-3.5-flash-lite"
-  stt_options: "Deepgram punctuate=True, smart_format=True, numerals=True, endpointing_ms=350 (plugin defaults are smart_format/numerals off, endpointing 25 ms); STT keyterm vocabulary holds tool/argument names only, never example answers"
+  stt_options: "Deepgram punctuate=True, smart_format=True, numerals=True, endpointing_ms=350 (plugin defaults are smart_format/numerals off, endpointing 25 ms), all env-overridable via TRIAGELINE_DEEPGRAM_PUNCTUATE/_SMART_FORMAT/_NUMERALS/_ENDPOINTING_MS for A/B replay; STT keyterm vocabulary holds tool/argument names only, never example answers"
   tts: "auto: Deepgram aura-2 if DEEPGRAM_API_KEY, else Gemini gemini-3.8-flash-lite-tts"
-  commit_gate: "TRIAGELINE_SETTLE_S=0.4 / TRIAGELINE_MAX_SETTLE_S=1.4; VAD min_silence 0.4 / min_speech 0.2; endpointing 0.25/0.9"
+  commit_gate: "TRIAGELINE_SETTLE_S=1.0 / TRIAGELINE_MAX_SETTLE_S=2.0; VAD min_silence 0.55 / min_speech 0.05; endpointing 0.35/1.2 (a 2026-10-01 retune to 0.4/1.4 + 0.4/0.2 was reverted in 7421de4 after a live run; env-overridable)"
   judge: "official evaluators, OpenAI gpt-4o (coverage asserted by scripts/judge_coverage.py)"
 
 extension:

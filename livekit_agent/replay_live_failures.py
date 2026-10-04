@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -59,6 +60,7 @@ def replay_actual_calls(fragments: list[str], gaps: list[float], busy_wait: floa
     """Drive the same adapter/agent offline with the live fragments and return the emitted calls."""
     registry = load_registry()
     calls: list[dict] = []
+    results: list = []
 
     async def main():
         async def execute(cid, api, args):
@@ -67,6 +69,7 @@ def replay_actual_calls(fragments: list[str], gaps: list[float], busy_wait: floa
             except Exception as e:  # official mocks raise on bad kwargs
                 res = {"status": "error", "error": "invalid_args", "message": f"{type(e).__name__}: {e}"}
             calls.append({"function": api, "args": args})
+            results.append(res)
             st = "error" if (isinstance(res, dict) and res.get("status") == "error") else "success"
             await adapter.on_tool_completed(cid, res, status=st)
 
@@ -92,7 +95,7 @@ def replay_actual_calls(fragments: list[str], gaps: list[float], busy_wait: floa
             await adapter.stop()
 
     asyncio.run(main())
-    return calls
+    return calls, results
 
 
 def fragments_from_result(res: dict) -> tuple[list[str], list[float]]:
@@ -115,28 +118,66 @@ def fragments_from_result(res: dict) -> tuple[list[str], list[float]]:
     return ([whole] if whole else []), [0.4]
 
 
-def _args_match(e_args: dict, a_args: dict) -> bool:
-    """The official evaluator resolves $RESULT_n.* references against the previous call's result;
-    here such an arg is treated as satisfied when the actual value is non-empty."""
+_REFERENCE = re.compile(r"^\$RESULT_(\d+)(.*)$")
+_PATH_TOKEN = re.compile(r"\.([A-Za-z_]\w*)|\[(\d+)\]")
+
+
+def resolve_reference(value: str, prior_results: list):
+    """Resolve the official evaluator's $RESULT_n(.path|.index) syntax against the preceding calls'
+    real results. Returns None when the reference is unavailable/invalid (a FAILURE, not a wildcard)."""
+    m = _REFERENCE.match(value)
+    if not m:
+        return value
+    idx = int(m.group(1))
+    if idx >= len(prior_results):
+        return None
+    cur = prior_results[idx]
+    path = m.group(2)
+    consumed = 0
+    for tok in _PATH_TOKEN.finditer(path):
+        if tok.start() != consumed:
+            return None
+        if tok.group(1) is not None:
+            cur = cur.get(tok.group(1)) if isinstance(cur, dict) else None
+        else:
+            i = int(tok.group(2))
+            cur = cur[i] if isinstance(cur, (list, tuple)) and i < len(cur) else None
+        if cur is None:
+            return None
+        consumed = tok.end()
+    if consumed != len(path):
+        return None
+    return cur
+
+
+def _args_match(e_args: dict, a_args: dict, prior_results: list | None = None) -> bool:
+    """The official evaluator resolves $RESULT_n.* references against the previous call's result.
+    When prior_results is available the reference is resolved and compared for real (so a wrong but
+    non-empty value FAILS); otherwise it falls back to requiring a non-empty value."""
     if set(e_args) != set(a_args):
         return False
     for k, ev in e_args.items():
         av = a_args.get(k)
         if isinstance(ev, str) and ev.startswith("$RESULT"):
-            if av in (None, ""):
+            if prior_results is not None:
+                resolved = resolve_reference(ev, prior_results)
+                if resolved is None or str(resolved) != str(av):
+                    return False
+            elif av in (None, ""):
                 return False
         elif ev != av:
             return False
     return True
 
 
-def classify(expected: list[dict], actual: list[dict]) -> tuple[bool, str]:
+def classify(expected: list[dict], actual: list[dict], results: list | None = None) -> tuple[bool, str]:
     e_names = [c.get("function") for c in expected]
     a_names = [c.get("function") for c in actual]
     if e_names == a_names:
         e_args = [c.get("args") or c.get("arguments") or {} for c in expected]
         a_args = [c.get("args") or {} for c in actual]
-        if all(_args_match(e, a) for e, a in zip(e_args, a_args)):
+        if all(_args_match(e, a, (results[:i] if results is not None else None))
+               for i, (e, a) in enumerate(zip(e_args, a_args))):
             return True, "pass"
         return False, "wrong_args"
     if sorted(e_names) == sorted(a_names) and len(a_names) > len(set(a_names)):
@@ -177,9 +218,9 @@ def main():
         expected = exp_by_id.get(scenario, [])
         live_calls = res.get("actual_tool_calls") or []
         frags, gaps = fragments_from_result(res)
-        replay = [] if a.no_replay else replay_actual_calls(frags, gaps)
+        replay, replay_results = ([], []) if a.no_replay else replay_actual_calls(frags, gaps)
         ok_live, why_live = classify(expected, live_calls)
-        ok_replay, why_replay = classify(expected, replay) if not a.no_replay else (ok_live, why_live)
+        ok_replay, why_replay = classify(expected, replay, replay_results) if not a.no_replay else (ok_live, why_live)
         counts[why_replay] = counts.get(why_replay, 0) + 1
         rows.append({
             "example": d.name, "scenario": scenario,

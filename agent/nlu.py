@@ -540,9 +540,21 @@ def _cue_undashed_id(text: str, field: str = "") -> Optional[str]:
     # a letter-only id produced by the spelled-join above ("order b o b" -> "order BOB"): the joiner
     # UPPERCASES ids while ordinary prose stays lowercase, which is the discriminator. A lowercase
     # word after the cue ("order status") is never an id — that broadening cost 4 offline points.
-    upper = re.search(r"\b(?:" + cue + r")\b[\s\S]{0,10}?\b([A-Z]{2,8})\b", text)
-    if upper and upper.group(1).lower() not in _LETTER_ID_BLOCK:
-        return upper.group(1)
+    # explicit separator ("<cue> number|id|code|#") followed by a short word: "order number bob" ->
+    # BOB, "order ID is FRESH" -> FRESH. The cue word itself is blocked, so "order id" is never the id.
+    sep = re.search(r"(?i)\b(?:" + cue + r")\b[\s\S]{0,12}?\b(?:number|id|code|no\.?|#)\s*"
+                    r"(?:is|was|to|as|:|=)?\s*([A-Za-z]{2,8})\b", text)
+    if sep and sep.group(1).lower() not in _LETTER_ID_BLOCK:
+        cand = sep.group(1)
+        # accept a plain word ("order number bob" -> BOB) or anything with a digit; an all-uppercase
+        # letter run is what the spelled-join produces from ambiguous lowercase letters ("q r s"),
+        # and that must stay unresolved (audit: it must not be invented from prose).
+        if any(ch.isdigit() for ch in cand) or not cand.isupper():
+            return cand.upper()
+    # an uppercase run produced by the spelled-join ("order b o b" -> "order BOB")
+    for um in re.finditer(r"\b(?:" + cue + r")\b[\s\S]{0,14}?\b([A-Z]{2,8})\b", text):
+        if um.group(1).lower() not in _LETTER_ID_BLOCK:
+            return um.group(1)
     return None
 
 
@@ -833,6 +845,48 @@ def _currency_pair(text: str) -> Tuple[Optional[str], Optional[str]]:
     return src, tgt
 
 
+_DOC_NOUN = (r"(?:driver'?s?\s+licen[cs]e|licen[cs]e|passport|visa|id\s+card|identity\s+card|"
+             r"document|doc|permit|aadhaar|aadhar|social\s+security)")
+_DOC_ID_TOKEN = re.compile(r"\b([A-Za-z]{1,6}\d{1,8}|\d{1,8}[A-Za-z]{1,6})\b")
+
+
+def _undot_ids(t: str) -> str:
+    """'D.L. 555.' -> 'DL 555.' — a dotted run of single letters is a spelled id, not an abbreviation
+    sentence, and stops the following digit/spelled run from being joined to it."""
+    return re.sub(r"\b(?:[A-Za-z]\.){2,}", lambda m: m.group(0).replace(".", ""), t or "")
+
+
+def _looks_like_id(v: str) -> bool:
+    v = str(v or "").strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-_]{1,13}", v) and re.search(r"\d", v))
+
+
+def _doc_number(text: str) -> Optional[str]:
+    """Document/licence/passport number: accepts hyphenated spelled ids, dotted letters, an explicit
+    number/id cue even without the literal word "number", and letter-only ids."""
+    if not text:
+        return None
+    sp = spelled_ids(text)
+    if sp:
+        return sp[-1]
+    t = normalize_spoken_ids(_undot_ids(text))
+    # explicit cue word then a token: 'number <id>', 'id is <id>', '# <id>'
+    m = re.search(r"(?i)\b(?:number|no\.?|#|id)\s*(?:is|was|to|as|:|=)?\s*([A-Za-z0-9][A-Za-z0-9\-]{1,13})\b", t)
+    if m and _looks_like_id(m.group(1)):
+        return m.group(1).upper()
+    # a mixed letter+digit token next to the document noun or a filler cue: 'license to <id>'
+    for mm in _DOC_ID_TOKEN.finditer(t):
+        head = t[max(0, mm.start() - 40):mm.start()]
+        if re.search(_DOC_NOUN, head, re.I) or re.search(r"(?i)\b(?:to|is|was|number|no\.?|#)\s*$", head):
+            return mm.group(1).upper()
+    # letter-only id right after an explicit cue ("license number BOB") — never a common word
+    m = re.search(r"(?i)\b(?:number|no\.?|#|id)\s*(?:is|was|to|as|:|=)?\s*([A-Za-z]{2,8})\b", t)
+    if m and m.group(1).lower() not in _LETTER_ID_BLOCK:
+        if m.group(1).isupper() or m.group(1).lower() not in STOP:
+            return m.group(1).upper()
+    return None
+
+
 def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
     low = text.lower()
     if "currency" in lname:
@@ -846,12 +900,7 @@ def _special_string_arg(lname: str, spec: Dict[str, Any], text: str) -> Any:
                 return DOC_TYPES[k]
         return None
     if lname in ("doc_number", "document_number"):
-        sp = spelled_ids(text)
-        if sp:
-            return sp[-1]
-        m = re.search(r"\b(?:number|no\.?|#)\s*(?:is|to|as|:)?\s*([A-Za-z0-9]*\d[A-Za-z0-9\-]*)", text, re.I) or \
-            re.search(r"\b([A-Z]{0,3}\d{5,}[A-Z0-9]*)\b", text)
-        return m.group(1) if m else None
+        return _doc_number(text)
     if lname.endswith("_type") and lname not in ("doc_type", "document_type", "bill_type"):
         noun = lname[:-5].split("_")[-1]                       # card_type -> card
         examples = re.findall(r"'([^']+)'", str(spec.get("description", "")))
@@ -1304,9 +1353,21 @@ def parse_field_answer(answer: str, name: str, fspec: Dict[str, Any]) -> Any:
 
 
 BUDGET_FIELD_HINTS = ("price", "budget", "rent", "cost", "limit", "amount")
-BUDGET_RE = re.compile(r"\b(?:under|below|less than|no more than|up,? to|at most|max(?:imum)?(?: price| rent| budget)?"
-                       r"(?: of| is| to| at)?|budget(?: of| is| to)?|cheaper than|within|raise (?:it |my budget |the budget )?to|"
-                       r"bump (?:it )?up to)\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
+BUDGET_RE = re.compile(
+    r"\b(?:"
+    r"under|below|less than|no more than|not more than|up,? to|at most|"
+    r"no higher than|no greater than|nothing (?:over|above|more than|past)|"
+    r"(?:can['\u2019]?t|can ?not|cannot|won['\u2019]?t|wouldn['\u2019]?t|don['\u2019]?t)\s+(?:go\s+)?"
+    r"(?:over|above|higher than|more than|past|beyond)|"
+    r"(?:go(?:ing)?|come(?:s)?)\s+(?:up\s+)?to|"
+    r"max(?:imum)?(?: price| rent| budget| spend)?(?: of| is| to| at)?|"
+    r"budget(?: of| is| to| around| about| of around| of about)?|"
+    r"cheaper than|within|"
+    r"cap(?:ped)?(?: it| the \w+| my budget)?(?: at| to)|limit(?: it| the \w+)?(?: at| to)|"
+    r"spend(?: at most| no more than| up to)?|keep(?: it)? (?:under|below|at|around)|"
+    r"raise(?: it| my budget| the budget)?(?: up)? to|bump(?: it)?(?: up)? to|"
+    r"anywhere (?:up to|under|below)"
+    r")\s*\$?\s*(\d[\d,]*(?:\.\d+)?)", re.I)
 
 WORD_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
             "nine": 9, "ten": 10, "a couple": 2, "a single": 1}
@@ -1345,6 +1406,8 @@ def _compound_normalize(text: str) -> str:
     # hyphenated cardinals are one number ("twenty-five" -> 25), not a range
     t = re.sub(r"(?i)\b(twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety)"
                r"-(one|two|three|four|five|six|seven|eight|nine)\b", r"\1 \2", t)
+    # "a grand" -> 1000 (informal magnitude); keep it before the article strip below
+    t = re.sub(r"(?i)\b(?:a|an)\s+grand\b", "1000", t)
     # "a hundred" / "a thousand" -> the magnitude word alone (otherwise "a" blocks BUDGET_RE:
     # "under a hundred dollars" failed to bind max_price because of the stray article).
     t = re.sub(r"(?i)\b(?:a|an)\s+(?=(?:hundred|thousand|million)\b)", "", t)
@@ -1353,15 +1416,23 @@ def _compound_normalize(text: str) -> str:
         v = _compound_value(m.group(0).lower().split())
         return str(v) if v is not None else m.group(0)
 
-    return _NUM_WORD_RUN.sub(_word_run, t)
+    t = _NUM_WORD_RUN.sub(_word_run, t)
+    # informal magnitudes left after the word run: "two grand" -> "2 grand" -> 2000, "ten k" -> 10000
+    t = re.sub(r"(?i)\b(\d[\d,]*(?:\.\d+)?)\s*(?:grand|k)\b",
+               lambda m: str(int(float(m.group(1).replace(",", "")) * 1000)), t)
+    return t
 
 
 def _compound_value(words: List[str]) -> Optional[int]:
     """Cardinal value of a spoken-number run. Scales correctly ("one hundred thousand" -> 100000,
-    not 1100) and ignores the connector "and" ("one hundred and five" -> 105)."""
+    not 1100) and ignores the connector "and" ("one hundred and five" -> 105). A run of >=3
+    single-digit number words is a SPOKEN DIGIT STRING, not a sum ("five five five" -> 555, never 15):
+    ids, licence numbers and spelled phone-ish values are delivered exactly that way."""
+    ws = [w.lower().strip(".,") for w in words]
+    if len(ws) >= 3 and all(w in WORD_NUM and WORD_NUM[w] < 10 for w in ws):
+        return int("".join(str(WORD_NUM[w]) for w in ws))
     total, cur = 0, 0
-    for w in words:
-        w = w.lower().strip(".,")
+    for w in ws:
         if w in ("and",):
             continue
         if w in WORD_NUM:
@@ -1655,6 +1726,10 @@ def normalize_asr(text: str) -> str:
                r"yankee|zulu)\b",
                lambda m: m.group(1).upper() if m.group(1).lower() == m.group(2)[0].lower()
                else m.group(2)[0].upper(), t)
+    # "B as in Bob" / "B for Bob" where the word is NOT a NATO name: still take the named letter when
+    # the word starts with it (STT hears the disambiguating word, not "bee")
+    t = re.sub(r"(?i)\b([a-z])\s+(?:as\s+in|for)\s+(?:the\s+letter\s+)?([a-z]{2,})\b",
+               lambda m: m.group(1).upper() if m.group(2)[0].lower() == m.group(1).lower() else m.group(0), t)
     t = re.sub(r"(?i)(?<=[A-Za-z0-9])\s*[-,]?\s*dash\s*(?=[A-Za-z0-9])", "-", t)
     return normalize_spoken_ids(t)
 
