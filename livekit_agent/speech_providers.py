@@ -28,6 +28,11 @@ import threading
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
+def _env_flag(name: str, default: str = "1") -> bool:
+    """Env-driven boolean, so the scored Deepgram STT options can be A/B-tuned without editing code."""
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _allow_plugin_registration_in_subprocess() -> None:
     """livekit-agents raises 'Plugins must be registered on the main thread' when a plugin
     (silero/deepgram/...) is first imported inside a job subprocess (prewarm runs off the
@@ -159,11 +164,21 @@ def build_stt(cfg: dict, tools: dict | None = None):
     if p == "deepgram":
         from livekit.plugins import deepgram
         kw = {"keyterm": terms[:50]} if terms and model.startswith("nova-3") else {}
-        # NOTE: the plugin default is endpointing_ms=25 with smart_format/numerals off. Raising
-        # endpointing/formatting changes when finals arrive relative to the turn commit and needs to
-        # be retuned together with the endpointing delays; the recorded live baseline used the
-        # defaults, so they are left here. Tune via TRIAGELINE_DEEPGRAM_* before changing this.
-        return deepgram.STT(model=model, language="en-US", interim_results=True, filler_words=True, **kw)
+        # LiveKit's Deepgram plugin defaults to endpointing_ms=25 with smart_format/numerals/punctuate
+        # OFF: it then emits a final every ~25 ms of silence (one spoken request arrives as many finals,
+        # which the commit gate must merge and can still commit early) and returns spoken numbers as
+        # words. Ask for punctuation, smart formatting and digits and endpoint on a real pause instead.
+        # Every kwarg is verified against livekit-plugins-deepgram==1.8.3. Each is env-overridable for
+        # A/B tuning: TRIAGELINE_DEEPGRAM_PUNCTUATE / _SMART_FORMAT / _NUMERALS / _ENDPOINTING_MS
+        # (set _ENDPOINTING_MS=25 and the three flags to 0 to restore the plugin defaults).
+        return deepgram.STT(
+            model=model, language="en-US", interim_results=True, filler_words=True,
+            punctuate=_env_flag("TRIAGELINE_DEEPGRAM_PUNCTUATE", "1"),
+            smart_format=_env_flag("TRIAGELINE_DEEPGRAM_SMART_FORMAT", "1"),
+            numerals=_env_flag("TRIAGELINE_DEEPGRAM_NUMERALS", "1"),
+            endpointing_ms=int(os.environ.get("TRIAGELINE_DEEPGRAM_ENDPOINTING_MS", "350")),
+            **kw,
+        )
     from livekit.plugins import openai
     kw = {"temperature": 0.0}
     if terms:
